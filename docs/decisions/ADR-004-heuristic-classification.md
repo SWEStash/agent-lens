@@ -33,3 +33,19 @@ without schema changes, if richer labels are wanted while staying on-device.
 - **Local LLM (Ollama).** Richer, on-device, but adds a heavy dependency + model weights. Deferred as
   a pluggable upgrade.
 - **Cloud LLM (Claude API).** Best quality but **violates the local-only NFR**. Rejected.
+
+## Update — v2 (2026-06-26)
+
+`CLASSIFIER_VERSION = 2`, re-runnable via `agent-lens-metrics` (no re-ingest). Same design; tuned
+against the real session distribution:
+
+- **Complexity ceilings raised to realistic p90s** (LoC churn 2k→6k, files 20→40, work-tokens
+  2M→40M, duration 120→600 min). v1 pegged most main sessions' subscores at 1.0, so two-thirds
+  landed in "large"; the bands were re-cut (`22/40/55/68`) so main work now spreads across all five
+  bands and subagent sessions fall into "trivial".
+- **Subagent sessions are categorized by their spawner's role** (schema-v3 linkage: `Explore`/`Plan`/
+  reviewer roles ⇒ `review`) instead of keyword-matching a read-only exploration transcript;
+  general-purpose/unknown subagents still use the heuristic. The spawner role is recorded in
+  `signals_json.subagent_role`. Dashboards already scope category/complexity to main sessions.
+- **Category denoise:** dropped the over-eager `"new "` feature keyword; added an edit-dominated
+  refactor signal so rework reads as `refactor`, not `feature`.

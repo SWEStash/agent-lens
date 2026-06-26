@@ -10,20 +10,35 @@
  */
 import type { DB } from "./db.js";
 
-export const CLASSIFIER_VERSION = 1;
+// v2 (ADR-004): realistic complexity ceilings so real (long, substantial) main sessions spread
+// across bands instead of pegging in "large"; subagent sessions categorized by their spawner role
+// rather than keyword heuristics on a read-only exploration transcript.
+export const CLASSIFIER_VERSION = 2;
 
 export type Category = "feature" | "bugfix" | "refactor" | "docs" | "ops" | "review" | "chore";
 
 /** Fixed order = deterministic tie-break when scores are equal. */
 const CATEGORIES: Category[] = ["bugfix", "refactor", "docs", "ops", "review", "feature", "chore"];
 
+// Cutoffs tuned to the real main-session score distribution (v2 ceilings) so the five bands
+// partition main work meaningfully (~9/19/32/32/8%). Subagents score low and land "trivial".
 const BANDS: Array<{ max: number; band: string }> = [
-  { max: 10, band: "trivial" },
-  { max: 30, band: "small" },
+  { max: 22, band: "trivial" },
+  { max: 40, band: "small" },
   { max: 55, band: "medium" },
-  { max: 80, band: "large" },
+  { max: 68, band: "large" },
   { max: Infinity, band: "xl" },
 ];
+
+/**
+ * Subagent roles whose work is inherently investigative/planning ⇒ "review". A general-purpose (or
+ * unknown) subagent does varied work, so fall back to the heuristic on its own transcript.
+ */
+const REVIEW_SUBAGENT_ROLES = new Set(["Explore", "Plan", "code-reviewer", "claude-code-guide"]);
+function categoryForSubagentRole(role: string | undefined): Category | null {
+  if (!role) return null;
+  return REVIEW_SUBAGENT_ROLES.has(role) ? "review" : null;
+}
 
 /** Number of lines in a string (0 for empty/undefined). Trailing newline doesn't add a line. */
 function countLines(s: string | undefined | null): number {
@@ -106,7 +121,8 @@ function scoreCategories(s: Signals, text: string): Record<Category, number> {
   scores.docs += hits(t, ["readme", "document", "documentation", "changelog", "docstring", "comment", "write docs", "usage guide"]) * 1.0;
   scores.ops += hits(t, ["deploy", "docker", "pipeline", "ci/cd", "ci ", "systemd", "infra", "kubernetes", "terraform", "release", "rollback", "container"]) * 1.0;
   scores.review += hits(t, ["review", "audit", "inspect", "look over", "feedback on"]) * 1.0;
-  scores.feature += hits(t, ["add ", "implement", "build ", "create ", "feature", "support for", "new "]) * 0.8;
+  // "new " dropped — too noisy ("the new X", "new file"); "new feature" stays as a strong signal.
+  scores.feature += hits(t, ["add ", "implement", "build ", "create ", "feature", "support for", "new feature"]) * 0.8;
 
   // Structural evidence (tools + files), scaled so it complements but doesn't drown keywords.
   const docFiles = s.loc.files > 0 ? countMatch(s, DOC_EXT) : 0;
@@ -117,6 +133,8 @@ function scoreCategories(s: Signals, text: string): Record<Category, number> {
   }
   // Edit-heavy + low net churn relative to gross churn ⇒ rework, not new code.
   if (writes >= 3 && s.loc.churn > 0 && Math.abs(s.loc.net) / s.loc.churn < 0.34) scores.refactor += 1.5;
+  // Edit-dominated (lots of Edits, few/no new Writes) ⇒ reworking existing code, not adding it.
+  if (editN >= 4 && editN >= writeN * 2) scores.refactor += 1.0;
   // Read-dominated, little writing ⇒ review/exploration.
   if (readN >= 5 && writes <= 2) scores.review += 1.5;
   // New files written with net-positive LoC ⇒ feature work.
@@ -137,13 +155,16 @@ function countMatch(s: Signals & { _files?: string[] }, re: RegExp): number {
 }
 
 function complexity(s: Signals): { score: number; subscores: Record<string, number>; weights: Record<string, number> } {
+  // v2 ceilings: tuned to the real p90 of substantial main sessions (churn ~2.6k, files ~29,
+  // work-tokens in the tens of millions, multi-hour durations) so a median session sits mid-range
+  // instead of pegging every subscore at 1.0. See ADR-004.
   const weights = { loc: 0.25, files: 0.15, turns: 0.2, tokens: 0.2, duration: 0.1, subagents: 0.1 };
   const subscores = {
-    loc: clamp01(Math.log1p(s.loc.churn) / Math.log1p(2000)),
-    files: clamp01(s.loc.files / 20),
+    loc: clamp01(Math.log1p(s.loc.churn) / Math.log1p(6000)),
+    files: clamp01(s.loc.files / 40),
     turns: clamp01(s.turn_count / 40),
-    tokens: clamp01(Math.log1p(s.work_tokens) / Math.log1p(2_000_000)),
-    duration: clamp01(s.duration_ms / (120 * 60_000)),
+    tokens: clamp01(Math.log1p(s.work_tokens) / Math.log1p(40_000_000)),
+    duration: clamp01(s.duration_ms / (600 * 60_000)),
     subagents: clamp01(s.subagent_count / 10),
   };
   let acc = 0;
@@ -206,6 +227,16 @@ export function classify(db: DB): { count: number; version: number } {
   for (const r of db.prepare("SELECT session_id, prompt_preview FROM turns WHERE prompt_preview IS NOT NULL").all() as any[]) {
     promptText.set(r.session_id, (promptText.get(r.session_id) ?? "") + " " + r.prompt_preview);
   }
+  // Subagent role from the spawning Task/Agent tool_call (schema-v3 linkage). Lets us categorize a
+  // sidechain session by what it was spawned to do, rather than keyword-matching its transcript.
+  const subagentRole = new Map<string, string>();
+  for (const r of db
+    .prepare(
+      "SELECT s.id id, tc.agent_type role FROM sessions s JOIN tool_calls tc ON tc.spawned_session_id = s.id WHERE s.is_sidechain = 1 AND tc.agent_type IS NOT NULL",
+    )
+    .all() as any[]) {
+    if (!subagentRole.has(r.id)) subagentRole.set(r.id, r.role);
+  }
 
   const upsert = db.prepare(
     `INSERT INTO classifications (scope, target_id, category, complexity_score, complexity_band, signals_json, classifier_version)
@@ -248,6 +279,12 @@ export function classify(db: DB): { count: number; version: number } {
           category = c;
         }
       }
+      // For subagents, prefer the spawner's role (Explore/Plan/… ⇒ review) over keyword heuristics.
+      const role = subagentRole.get(sess.id);
+      if (sess.is_sidechain) {
+        const roleCat = categoryForSubagentRole(role);
+        if (roleCat) category = roleCat;
+      }
       const cx = complexity(signals);
 
       // Deterministic, explainable signal blob (stable key order; _files dropped, exposed as loc.files).
@@ -263,6 +300,7 @@ export function classify(db: DB): { count: number; version: number } {
         duration_ms: signals.duration_ms,
         subagent_count: signals.subagent_count,
         is_sidechain: signals.is_sidechain,
+        subagent_role: role ?? null,
         category_scores: catScores,
         complexity_subscores: cx.subscores,
         complexity_weights: cx.weights,
