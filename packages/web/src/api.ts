@@ -24,6 +24,7 @@ export interface ToolCall {
   tool_name: string;
   skill_name: string | null;
   agent_type: string | null;
+  spawned_session_id: string | null;
   status: string | null;
   total_duration_ms: number | null;
   input_json: string | null;
@@ -51,11 +52,18 @@ export interface Classification {
   signals: any;
 }
 
+export interface SessionParent {
+  id: string;
+  title: string | null;
+  turn_seq: number | null;
+}
+
 export interface SessionDetail {
   session: any;
   turns: any[];
   events: EventNode[];
   classification: Classification | null;
+  parent: SessionParent | null;
 }
 
 export interface TokenSplit {

@@ -179,6 +179,7 @@ export class ClaudeCodeAdapter implements SourceAdapter {
             skill_name: name === "Skill" ? asString(input.skill) ?? asString(input.command) : null,
             agent_type:
               name === "Task" || name === "Agent" ? asString(input.subagent_type) : null,
+            spawned_session_id: null, // patched in once the tool_result carries toolUseResult.agentId
             resolved_model: null,
             status: null,
             total_duration_ms: null,
@@ -195,6 +196,9 @@ export class ClaudeCodeAdapter implements SourceAdapter {
               ? {
                   status: asString(tur.status),
                   agent_type: asString(tur.agentType),
+                  // Deterministic link: a Task/Agent subagent's transcript is keyed off its agentId
+                  // ('agent-'||agentId is the session id assigned by discover()'s filename stem).
+                  spawned_session_id: asString(tur.agentId) ? `agent-${tur.agentId}` : null,
                   resolved_model: asString(tur.resolvedModel),
                   total_duration_ms: typeof tur.totalDurationMs === "number" ? tur.totalDurationMs : null,
                   total_tokens: typeof tur.totalTokens === "number" ? tur.totalTokens : null,

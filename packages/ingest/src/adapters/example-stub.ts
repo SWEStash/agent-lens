@@ -117,6 +117,7 @@ export class ExampleStubAdapter implements SourceAdapter {
           caller: null,
           skill_name: null,
           agent_type: null,
+          spawned_session_id: null,
           resolved_model: null,
           status: null,
           total_duration_ms: null,

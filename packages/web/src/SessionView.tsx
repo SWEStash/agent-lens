@@ -38,6 +38,11 @@ function ToolChip({ t }: { t: ToolCall }) {
         {t.total_duration_ms ? <span className="muted">{fmtDuration(t.total_duration_ms)}</span> : null}
         <span className="chev">{open ? "▾" : "▸"}</span>
       </button>
+      {t.spawned_session_id && (
+        <Link className="subagent-link small" to={`/session/${t.spawned_session_id}`}>
+          view subagent transcript →
+        </Link>
+      )}
       {open && (
         <div className="tool-body">
           {t.input_json && t.input_json !== "{}" && (
@@ -108,6 +113,10 @@ export default function SessionView() {
   const s = d.session;
 
   let lastTurn: string | null | undefined = undefined;
+  // Events that actually render something (mirrors EventBlock's body check). A session with none
+  // (e.g. a zero-turn session whose only line was a meta/command with no text) gets an empty-state
+  // instead of a blank transcript area.
+  const renderable = d.events.filter((e) => e.text || e.thinking || e.toolCalls.length);
 
   return (
     <div className="detail">
@@ -120,6 +129,13 @@ export default function SessionView() {
           <span><b>{s.source_id}</b></span>
           <span className="path">{s.project_path}</span>
           {s.is_sidechain ? <span className="tag subagent">subagent</span> : null}
+          {d.parent && (
+            <span className="spawned-by">
+              ↖ spawned by{" "}
+              <Link to={`/session/${d.parent.id}`}>{d.parent.title || d.parent.id.slice(0, 12)}</Link>
+              {d.parent.turn_seq != null ? ` · turn ${d.parent.turn_seq + 1}` : ""}
+            </span>
+          )}
           <span>{d.turns.length} turns</span>
           <span>{s.event_count} events</span>
           <span>{fmtTokens(s.tokens)} tok</span>
@@ -134,7 +150,12 @@ export default function SessionView() {
       </div>
 
       <div className="transcript">
-        {d.events.map((e) => {
+        {renderable.length === 0 && (
+          <div className="muted pad" role="status">
+            This session has no rendered messages.
+          </div>
+        )}
+        {renderable.map((e) => {
           const turnBreak = e.turn_id !== lastTurn && e.turn_id != null;
           lastTurn = e.turn_id;
           const turn = turnBreak ? d.turns.find((t) => t.id === e.turn_id) : null;

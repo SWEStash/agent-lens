@@ -80,11 +80,13 @@ Parses the archive (mirror **and** `.versions/` backups, deduped by event `uuid`
 
 ```bash
 pnpm ingest            # incremental — skips files unchanged since last run
-pnpm ingest --full     # wipe and re-derive everything from the archive
+pnpm ingest --full     # drop, recreate, and re-derive everything from the archive
 ```
 
 Use `--full` after changing parser/classifier logic (an incremental run won't rewrite existing
-rows). The archive is the source of truth, so rebuilding the DB is always safe.
+rows). It **drops and recreates** the tables before rebuilding, so it is also the migration path:
+a `SCHEMA_VERSION` bump takes effect on the next `--full` run with no separate migration step. The
+archive is the source of truth, so rebuilding the DB is always safe.
 
 It prints a summary: `files / skipped / new_events`, then `sessions / turns / events / tool_calls`,
 then `tokens / est_cost`.

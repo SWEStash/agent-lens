@@ -156,8 +156,9 @@ export function getSession(db: DB, id: string) {
     .all(id) as any[];
   const toolRows = db
     .prepare(
-      `SELECT event_uuid, tool_name, skill_name, agent_type, status, total_duration_ms, total_tokens,
-              input_json, result_summary FROM tool_calls WHERE session_id = ?`,
+      `SELECT event_uuid, tool_name, skill_name, agent_type, spawned_session_id, status,
+              total_duration_ms, total_tokens, input_json, result_summary
+       FROM tool_calls WHERE session_id = ?`,
     )
     .all(id) as any[];
   const toolsByEvent = new Map<string, any[]>();
@@ -229,5 +230,19 @@ export function getSession(db: DB, id: string) {
     };
   }
 
-  return { session, turns, events, classification };
+  // Subagent linkage (schema v3): if this is a sidechain session, resolve the parent turn/session
+  // that spawned it so the UI can offer a "spawned by" crumb back to the originating turn.
+  let parent: { id: string; title: string | null; turn_seq: number | null } | null = null;
+  if (session.parent_session_id) {
+    const p = db
+      .prepare(
+        `SELECT ps.id, ps.ai_title, ps.slug, t.seq AS turn_seq
+         FROM sessions ps LEFT JOIN turns t ON t.id = ?
+         WHERE ps.id = ?`,
+      )
+      .get(session.parent_turn_id, session.parent_session_id) as any;
+    if (p) parent = { id: p.id, title: p.ai_title || p.slug || null, turn_seq: p.turn_seq ?? null };
+  }
+
+  return { session, turns, events, classification, parent };
 }

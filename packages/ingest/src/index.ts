@@ -15,7 +15,7 @@ import { readFileSync, statSync, mkdirSync, existsSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { costForUsage, type SourceAdapter, type TurnRow } from "@agent-lens/core";
-import { openDb, type DB } from "./db.js";
+import { openDb, openRaw, resetSchema, type DB } from "./db.js";
 import { ClaudeCodeAdapter } from "./adapters/claude-code.js";
 import { classify } from "./classify.js";
 
@@ -106,27 +106,13 @@ function buildTurns(
   return { turns, eventTurn };
 }
 
-/** Wipe all ingested data so a changed parser fully re-derives (archive is the source of truth). */
-function clearAll(db: DB) {
-  db.exec(`
-    DELETE FROM token_usage;
-    DELETE FROM tool_calls;
-    DELETE FROM events;
-    DELETE FROM turns;
-    DELETE FROM classifications;
-    DELETE FROM sessions;
-    DELETE FROM sources;
-    DELETE FROM projects;
-    DELETE FROM ingest_state;
-  `);
-}
-
 function rebuildDerived(db: DB) {
   // Recompute turns from the (idempotent) events table.
-  // Null referencing turn_ids BEFORE deleting turns (FK: events/token_usage/tool_calls -> turns).
+  // Null referencing turn_ids BEFORE deleting turns (FK: events/token_usage/tool_calls/sessions -> turns).
   db.exec("UPDATE events SET turn_id = NULL");
   db.exec("UPDATE token_usage SET turn_id = NULL");
   db.exec("UPDATE tool_calls SET turn_id = NULL");
+  db.exec("UPDATE sessions SET parent_turn_id = NULL");
   db.exec("DELETE FROM turns");
 
   const sessionIds = db.prepare("SELECT id FROM sessions").all() as Array<{ id: string }>;
@@ -152,6 +138,15 @@ function rebuildDerived(db: DB) {
   // Propagate turn_id to dependent tables.
   db.exec("UPDATE token_usage SET turn_id = (SELECT turn_id FROM events WHERE events.uuid = token_usage.event_uuid)");
   db.exec("UPDATE tool_calls SET turn_id = (SELECT turn_id FROM events WHERE events.uuid = tool_calls.event_uuid)");
+
+  // Link subagent (sidechain) sessions back to the parent turn/session that spawned them. The
+  // deterministic key is the spawning Task/Agent tool_call's spawned_session_id (== this session id).
+  db.exec(`
+    UPDATE sessions SET
+      parent_session_id = (SELECT tc.session_id FROM tool_calls tc WHERE tc.spawned_session_id = sessions.id),
+      parent_turn_id    = (SELECT tc.turn_id    FROM tool_calls tc WHERE tc.spawned_session_id = sessions.id)
+    WHERE EXISTS (SELECT 1 FROM tool_calls tc WHERE tc.spawned_session_id = sessions.id)
+  `);
 
   // Recompute session aggregates from events/turns.
   db.exec(`
@@ -181,8 +176,11 @@ function main() {
   }
   mkdirSync(dirname(dbPath), { recursive: true });
 
-  const db = openDb(dbPath);
-  if (args.full) clearAll(db);
+  // --full: open WITHOUT applying schema (the on-disk schema may be a stale version), then
+  // drop+recreate from the archive (source of truth). This is also the migration path — a
+  // SCHEMA_VERSION bump's new columns take effect here without a separate migration step.
+  const db = args.full ? openRaw(dbPath) : openDb(dbPath);
+  if (args.full) resetSchema(db);
 
   // Adapter registry keyed by agent type; configured sources resolved by the shared resolver.
   const adapterList: SourceAdapter[] = [new ClaudeCodeAdapter()];
@@ -214,14 +212,15 @@ function main() {
      ON CONFLICT(event_uuid) DO NOTHING`,
   );
   const insTool = db.prepare(
-    `INSERT INTO tool_calls (id, event_uuid, session_id, turn_id, tool_name, caller, skill_name, agent_type, resolved_model, status, total_duration_ms, total_tokens, total_tool_use_count, input_json, result_summary)
-     VALUES (@id, @event_uuid, @session_id, @turn_id, @tool_name, @caller, @skill_name, @agent_type, @resolved_model, @status, @total_duration_ms, @total_tokens, @total_tool_use_count, @input_json, @result_summary)
+    `INSERT INTO tool_calls (id, event_uuid, session_id, turn_id, tool_name, caller, skill_name, agent_type, spawned_session_id, resolved_model, status, total_duration_ms, total_tokens, total_tool_use_count, input_json, result_summary)
+     VALUES (@id, @event_uuid, @session_id, @turn_id, @tool_name, @caller, @skill_name, @agent_type, @spawned_session_id, @resolved_model, @status, @total_duration_ms, @total_tokens, @total_tool_use_count, @input_json, @result_summary)
      ON CONFLICT(id) DO NOTHING`,
   );
   const patchTool = db.prepare(
     `UPDATE tool_calls SET
        status = COALESCE(@status, status),
        agent_type = COALESCE(@agent_type, agent_type),
+       spawned_session_id = COALESCE(@spawned_session_id, spawned_session_id),
        resolved_model = COALESCE(@resolved_model, resolved_model),
        total_duration_ms = COALESCE(@total_duration_ms, total_duration_ms),
        total_tokens = COALESCE(@total_tokens, total_tokens),
@@ -310,6 +309,7 @@ function main() {
                 tool_use_id: tr.tool_use_id,
                 status: tr.status ?? null,
                 agent_type: tr.agent_type ?? null,
+                spawned_session_id: tr.spawned_session_id ?? null,
                 resolved_model: tr.resolved_model ?? null,
                 total_duration_ms: tr.total_duration_ms ?? null,
                 total_tokens: tr.total_tokens ?? null,

@@ -30,6 +30,8 @@ export interface SessionRow {
   entrypoint: string | null;
   git_branch: string | null;
   is_sidechain: number;
+  parent_session_id: string | null;
+  parent_turn_id: string | null;
   started_at: string | null;
   ended_at: string | null;
   duration_ms: number | null;
@@ -87,6 +89,7 @@ export interface ToolCallRow {
   caller: string | null;
   skill_name: string | null;
   agent_type: string | null;
+  spawned_session_id: string | null;
   resolved_model: string | null;
   status: string | null;
   total_duration_ms: number | null;
@@ -116,6 +119,8 @@ export interface ToolResultPatch {
   tool_use_id: string;
   status?: string | null;
   agent_type?: string | null;
+  /** for Task/Agent results: the spawned subagent session id, 'agent-'||toolUseResult.agentId */
+  spawned_session_id?: string | null;
   resolved_model?: string | null;
   total_duration_ms?: number | null;
   total_tokens?: number | null;

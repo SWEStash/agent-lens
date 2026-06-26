@@ -16,7 +16,7 @@
  * (Phase 2). Bump SCHEMA_VERSION on any DDL change.
  */
 
-export const SCHEMA_VERSION = 2;
+export const SCHEMA_VERSION = 3;
 
 export const SCHEMA_SQL = /* sql */ `
 PRAGMA journal_mode = WAL;
@@ -67,6 +67,8 @@ CREATE TABLE IF NOT EXISTS sessions (
   entrypoint        TEXT,
   git_branch        TEXT,
   is_sidechain      INTEGER NOT NULL DEFAULT 0,  -- 1 = subagent thread
+  parent_session_id TEXT REFERENCES sessions(id), -- spawning session (subagents only)
+  parent_turn_id    TEXT REFERENCES turns(id),     -- the turn that spawned this subagent
   started_at        TEXT,               -- ISO8601 of first event
   ended_at          TEXT,               -- ISO8601 of last event
   duration_ms       INTEGER,
@@ -76,6 +78,8 @@ CREATE TABLE IF NOT EXISTS sessions (
 CREATE INDEX IF NOT EXISTS idx_sessions_project ON sessions(project_id);
 CREATE INDEX IF NOT EXISTS idx_sessions_source ON sessions(source_id);
 CREATE INDEX IF NOT EXISTS idx_sessions_started ON sessions(started_at);
+CREATE INDEX IF NOT EXISTS idx_sessions_parent_session ON sessions(parent_session_id);
+CREATE INDEX IF NOT EXISTS idx_sessions_parent_turn ON sessions(parent_turn_id);
 
 -- A turn = user prompt -> assistant completion within a session. ------------
 CREATE TABLE IF NOT EXISTS turns (
@@ -124,6 +128,7 @@ CREATE TABLE IF NOT EXISTS tool_calls (
   caller              TEXT,
   skill_name          TEXT,              -- when tool_name = Skill
   agent_type          TEXT,              -- subagent type (toolUseResult.agentType)
+  spawned_session_id  TEXT,              -- for Task/Agent: the subagent session id ('agent-'||agentId)
   resolved_model      TEXT,
   status              TEXT,              -- success | error | ...
   total_duration_ms   INTEGER,
@@ -135,6 +140,7 @@ CREATE TABLE IF NOT EXISTS tool_calls (
 CREATE INDEX IF NOT EXISTS idx_tool_calls_session ON tool_calls(session_id);
 CREATE INDEX IF NOT EXISTS idx_tool_calls_tool ON tool_calls(tool_name);
 CREATE INDEX IF NOT EXISTS idx_tool_calls_skill ON tool_calls(skill_name);
+CREATE INDEX IF NOT EXISTS idx_tool_calls_spawned ON tool_calls(spawned_session_id);
 
 -- Token usage at the assistant-event grain. Cost derived later from model. --
 CREATE TABLE IF NOT EXISTS token_usage (
