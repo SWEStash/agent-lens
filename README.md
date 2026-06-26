@@ -15,8 +15,8 @@ Early, built incrementally. See the phased plan and decisions in `.local/` (giti
 - **Phase 0** — workspace scaffold + ADRs ✅
 - **Phase 1** — passive collection (rsync + user systemd timer) ✅
 - **Phase 2** — ingest/normalize into SQLite ✅
-- **Phase 3** — browse webapp (localhost) — _next_
-- **Phase 4** — dashboards + heuristic metrics
+- **Phase 3** — browse webapp (localhost: list, filters, FTS search, transcript viewer, MD export) ✅
+- **Phase 4** — dashboards + heuristic metrics — _next_
 - **Phase 5** — multi-agent extensibility + packaging
 
 ## Architecture (two stages)
@@ -59,10 +59,15 @@ scripts/collect.sh
 
 # Stage 2 — ingest the archive into data/agent-lens.db (incremental; --full rebuilds)
 pnpm ingest            # or: node packages/ingest/dist/index.js [--full]
+
+# Stage 3 — browse: serve the webapp on 127.0.0.1 and open it
+pnpm serve             # -> http://127.0.0.1:4477  (set AGENT_LENS_PORT to change)
+# UI dev with hot reload (proxies /api to the running server): pnpm web:dev
 ```
 
-Both stages are local-only and idempotent. Ingest skips unchanged files; `--full` re-derives
-everything from the archive. See `scripts/collect.sh --help` and the ADRs in `.local/decisions/`.
+Both collection and ingest are local-only and idempotent. Ingest skips unchanged files; `--full`
+re-derives everything from the archive. The server is read-only and binds `127.0.0.1` only. See
+`scripts/collect.sh --help` and the ADRs in `.local/decisions/`.
 
 ## Requirements
 

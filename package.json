@@ -12,7 +12,9 @@
     "build": "pnpm -r build",
     "typecheck": "pnpm -r typecheck",
     "collect": "scripts/collect.sh",
-    "ingest": "pnpm --filter @agent-lens/ingest start"
+    "ingest": "pnpm --filter @agent-lens/ingest start",
+    "serve": "pnpm --filter @agent-lens/server start",
+    "web:dev": "pnpm --filter @agent-lens/web dev"
   },
   "devDependencies": {
     "@types/node": "^22.10.0",
