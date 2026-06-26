@@ -1,97 +1,207 @@
-# Agent Lens
+# 🔎 Agent Lens
 
-Local-only tooling that **passively collects, browses, and analyzes Claude Code CLI session
-traces**. It never sends trace data off your machine.
+> Passively collect, browse, and analyze your Claude Code CLI session traces — **100% local**.
 
-Claude Code records rich per-session telemetry under `~/.claude/` but prunes it on a rolling
+![License: MIT](https://img.shields.io/badge/license-MIT-blue)
+![Node](https://img.shields.io/badge/node-%E2%89%A522-brightgreen)
+![Platform: Linux](https://img.shields.io/badge/platform-Linux-lightgrey)
+![Privacy: local-only](https://img.shields.io/badge/privacy-local--only-success)
+
+Claude Code records rich per-session telemetry under `~/.claude/`, but prunes it on a rolling
 **30-day window**. Agent Lens continuously copies that data out before it's lost, normalizes it into
-a queryable store, and gives a senior SWE a browsable transcript viewer plus performance dashboards
-(tokens/cost, duration, task category/complexity, code impact, skills, model usage).
+a queryable SQLite store, and gives you a browsable transcript viewer plus analytics dashboards —
+without a single byte leaving your machine.
 
-## Status
+## Table of contents
 
-Early, built incrementally. Decisions are recorded as ADRs in
-[`docs/decisions/`](docs/decisions/); the phased plan lives in `.local/` (gitignored).
+- [At a glance](#at-a-glance)
+- [Features](#features)
+- [How it works](#how-it-works)
+- [Requirements](#requirements)
+- [Quick start](#quick-start)
+- [Configuration](#configuration)
+- [Privacy](#privacy)
+- [Documentation](#documentation)
+- [Project layout](#project-layout)
+- [Development](#development)
+- [Contributing](#contributing)
+- [License](#license)
 
-- **Phase 0** — workspace scaffold + ADRs ✅
-- **Phase 1** — passive collection (rsync + user systemd timer) ✅
-- **Phase 2** — ingest/normalize into SQLite ✅
-- **Phase 3** — browse webapp (localhost: list, filters, FTS search, transcript viewer, MD export) ✅
-- **Phase 4** — dashboards + heuristic metrics ✅
-- **Phase 5** — extensibility hardening + packaging — _next_
+## At a glance
 
-## Architecture (two stages)
+Point it at your Claude install(s) and every session becomes queryable. Ingest reports what it found:
 
-```
-sources (per label)                     archive (per label)
-  personal: ~/.claude  ─┐                ┌─ data/archive/personal/ ─┐
-  work:     ~/.claude2 ─┼─ Stage 1 ────▶ ┼─ data/archive/work/ ─────┼─ Stage 2 ─▶ SQLite + FTS5
-  …                     ┘   rsync,timer  └─ …                       ┘   ingester        │
-                                                                browse webapp + dashboards (127.0.0.1)
-```
-
-- **Sources.** Each local agent account is a labeled *source* (`label` + `configDir`), declared in
-  `agent-lens.config.json`. Multiple Claude accounts (or, later, other agents) coexist; sessions are
-  tagged with their source so you can filter/compare. The same resolver feeds both stages.
-- **Stage 1 (collection)** is dumb, safe, and frequent — per source it only copies files, never
-  deletes, and keeps the longest-seen version of each transcript plus divergence backups.
-- **Stage 2 (ingest)** is re-runnable — a parser change never loses data because the raw archive is
-  the source of truth.
-
-## Privacy
-
-- Data is copied only between local paths; nothing is uploaded.
-- The collector **excludes secrets** (e.g. `~/.claude/.credentials.json`).
-- The webapp binds to `127.0.0.1` only.
-- The `data/` store is as sensitive as the originals — its contents are gitignored and stay on your machine.
-
-## Quick start
-
-```bash
-pnpm install && pnpm -r build
-
-# Configure sources (which agent accounts to collect). Defaults to one: personal -> ~/.claude
-cp agent-lens.config.example.json agent-lens.config.json   # then edit: add a label + configDir per account
-
-# Stage 1 — collection. Install the user systemd timer (runs a few times a day, even logged out)
-scripts/setup-systemd.sh install
-# ...or run a collection pass manually:
-scripts/collect.sh
-
-# Stage 2 — ingest the archive into data/agent-lens.db (incremental; --full rebuilds)
-pnpm ingest            # or: node packages/ingest/dist/index.js [--full]
-
-# Stage 3 — browse: serve the webapp on 127.0.0.1 and open it
-pnpm serve             # -> http://127.0.0.1:4477  (set AGENT_LENS_PORT to change)
-# UI dev with hot reload (proxies /api to the running server): pnpm web:dev
+```text
+$ pnpm ingest
+agent-lens-ingest: files=312 skipped=298 new_events=1840 malformed=0
+  sessions=312 turns=901 events=54333 tool_calls=17120 classified=312
+  tokens=128,540,973 est_cost=$842.17 db=data/agent-lens.db
 ```
 
-Both collection and ingest are local-only and idempotent. Ingest skips unchanged files; `--full`
-re-derives everything from the archive. The server is read-only and binds `127.0.0.1` only. See
-`scripts/collect.sh --help` and the ADRs in [`docs/decisions/`](docs/decisions/).
+Then `pnpm serve` opens a local dashboard + transcript browser on `127.0.0.1`:
 
-## Documentation
+```text
+ 🔎 Agent Lens          Sessions · Dashboard            local agent session explorer
+ ┌ tokens ──────┐ ┌ est. cost ───┐ ┌ sessions ────┐ ┌ cache read ──┐
+ │ 128.5 M      │ │ $842.17      │ │ 312          │ │ 92.6 %       │
+ └──────────────┘ └──────────────┘ └──────────────┘ └──────────────┘
+   ▁▂▃▅▇▆▃▂▄▆  tokens · cost · activity over time  (day / week / month)
+   breakdowns:  model · category · complexity · tool · skill · subagent
+```
 
-- **[docs/USAGE.md](docs/USAGE.md)** — full operations guide: configuring sources, the three stages,
-  daily loop, environment variables, HTTP API, troubleshooting.
-- **[docs/decisions/](docs/decisions/)** — Architecture Decision Records (tracked in git).
+…so you can answer, entirely offline:
+
+- Where did my tokens and spend go — by day, model, or project?
+- Which sessions were big features vs. quick fixes? *(heuristic category + complexity)*
+- Which skills and subagents do I actually use, and how often?
+- What exactly happened in that session three weeks ago? *(full transcript + full-text search)*
+
+## Features
+
+- **Passive collection** — a user `systemd` timer `rsync`s each account's transcripts into a local
+  archive before Claude Code's 30-day prune. Never deletes, never copies secrets.
+- **Normalized store** — sessions / turns / events / tool-calls / token-usage in SQLite with **FTS5**
+  full-text search. The archive is the source of truth; the DB is a rebuildable projection.
+- **Transcript viewer** — turn-segmented sessions, collapsible thinking, expandable tool calls, and
+  one-click **Markdown export**.
+- **Analytics dashboards** — tokens / cost / activity over time (adaptive day/week/month bucketing)
+  and breakdowns by model, task category, complexity, tool, skill, and subagent type.
+- **Heuristic classification** — deterministic, **no-AI** task category + complexity per session,
+  with every input signal stored for transparency.
+- **Subagent call tree** — sidechain (subagent) sessions are linked back to the spawning parent turn.
+- **Multi-account** — collect several Claude installs side by side, each tagged by source.
+- **Strictly local** — loopback-only server, gitignored data, zero outbound network calls.
+
+## How it works
+
+A three-stage local pipeline — **collect → ingest → browse**:
+
+```
+ sources (accounts)        Stage 1             Stage 2              Stage 3
+  ~/.claude   ─┐           collect.sh          ingest               serve (127.0.0.1)
+  ~/.claude2  ─┼─ rsync ─▶ data/archive/  ──▶  SQLite + FTS5  ──▶   browse · search · dashboards
+  …           ┘          (systemd timer)      (+ classify)          · Markdown export
+```
+
+- **Stage 1 — collect** is dumb, safe, and frequent: per source it only copies files, never deletes,
+  excludes secrets, and keeps the longest-seen version of each transcript plus divergence backups.
+- **Stage 2 — ingest** is idempotent and re-runnable: it dedupes events by `uuid` and rebuilds the
+  normalized store. Because the raw archive is the source of truth, a parser change never loses data
+  (`pnpm ingest --full` re-derives everything).
+- **Stage 3 — browse** is a read-only API + SPA bound to `127.0.0.1` only.
+
+Design decisions are recorded as ADRs in [`docs/decisions/`](docs/decisions/).
 
 ## Requirements
 
 - Linux (developed against Ubuntu 24.04 LTS+)
-- `rsync` 3.x, `systemd` (user instance), `node` >= 22, `pnpm`
+- [`rsync`](https://rsync.samba.org/) 3.x · `systemd` (user instance) · [Node.js](https://nodejs.org/) ≥ 22 · [pnpm](https://pnpm.io/)
 
-## Layout
+## Quick start
+
+```bash
+git clone <your-fork-url> agent-lens && cd agent-lens
+pnpm install && pnpm -r build
+
+# Configure which accounts to collect (defaults to one: personal -> ~/.claude)
+cp agent-lens.config.example.json agent-lens.config.json   # then edit
+
+# Stage 1 — collect. Install the systemd timer (runs a few times a day, even logged out)…
+scripts/setup-systemd.sh install
+#            …or run a one-off pass:
+scripts/collect.sh
+
+# Stage 2 — ingest the archive into data/agent-lens.db (incremental; --full rebuilds)
+pnpm ingest
+
+# Stage 3 — browse on 127.0.0.1 and open the printed URL
+pnpm serve                 # → http://127.0.0.1:4477
+```
+
+> [!NOTE]
+> Collection and ingest are local-only and idempotent. The server is read-only and refuses to bind a
+> non-loopback host. For day-to-day use just run `pnpm ingest && pnpm serve` (the timer collects in
+> the background).
+
+## Configuration
+
+A **source** is a labeled agent account — a `label` plus its `configDir` — declared in
+`agent-lens.config.json` (gitignored; copy from `agent-lens.config.example.json`):
+
+```jsonc
+{
+  "sources": [
+    { "label": "personal", "agent": "claude-code", "configDir": "~/.claude" },
+    { "label": "work",     "agent": "claude-code", "configDir": "~/.config/claude-work" }
+  ]
+}
+```
+
+The same resolver (`scripts/sources.mjs`) feeds both collection and ingest, so sessions are tagged
+with their source and you can filter/compare across accounts. Runtime knobs (ports, paths, retention
+window) are environment variables — see the [environment table in USAGE.md](docs/USAGE.md#reference).
+
+## Privacy
+
+This is the whole point of the tool, so it's a hard constraint, not a feature flag:
+
+- Data is copied **only between local paths** — nothing is ever uploaded.
+- The collector **excludes secrets** (e.g. `~/.claude/.credentials.json`).
+- The server **binds `127.0.0.1` only** and refuses a routable host without an explicit override.
+- The `data/` store is as sensitive as the originals — it is **gitignored** and stays on your machine.
+  (See [ADR-005](docs/decisions/ADR-005-privacy-posture.md) and the at-rest guidance in
+  [ADR-009](docs/decisions/ADR-009-retention-and-at-rest.md).)
+
+## Documentation
+
+- **[docs/USAGE.md](docs/USAGE.md)** — full operations guide: configuring sources, the three stages,
+  the daily loop, retention/pruning, environment variables, the HTTP API, and troubleshooting.
+- **[docs/decisions/](docs/decisions/)** — Architecture Decision Records (tracked in git).
+
+## Project layout
 
 ```
 packages/core     shared types + SQLite schema (agent-agnostic)
-packages/ingest   Stage-2 parser; ClaudeCodeAdapter (extensible to other agents)
-packages/server   localhost API over the store
+packages/ingest   Stage-2 parser + heuristic classifier; ClaudeCodeAdapter (extensible)
+packages/server   Stage-3 read-only localhost API over the store
 packages/web      Vite + React SPA (browse + dashboards)
-scripts/          collect.sh, setup-systemd.sh, sources.mjs (canonical source resolver)
+scripts/          collect.sh · prune.sh · setup-systemd.sh · sources.mjs
 systemd/          user service + timer units
-agent-lens.config.json          sources to collect (gitignored; copy from .example)
-data/             archive/<label>/ + agent-lens.db — collected data (contents gitignored; .gitkeep tracked)
 docs/decisions/   Architecture Decision Records (ADRs, tracked)
-.local/           phased plans (gitignored)
+data/             archive/<label>/ + agent-lens.db  (contents gitignored)
 ```
+
+Adding a **different agent** (not just another Claude account) is a new `SourceAdapter` + one
+registration line + a config entry — no schema change. See
+[`packages/ingest/src/adapters/example-stub.ts`](packages/ingest/src/adapters/example-stub.ts) and
+[ADR-008](docs/decisions/ADR-008-adapter-extensibility-seam.md).
+
+## Development
+
+The repo is a pnpm/TypeScript monorepo (ESM, `strict`). Each package builds with `tsc`; the web app
+uses Vite.
+
+```bash
+pnpm -r build      # build every package
+pnpm typecheck     # type-check every package (tsc --noEmit)
+pnpm test          # build, then run the vitest suite
+```
+
+Tests cover the ingest engine (golden synthetic JSONL → expected rows, including subagent linkage and
+zero-turn handling) and the server API (`app.inject()` smoke tests). After a **parser** change,
+re-ingest with `--full`; after a **classifier** change, bump `CLASSIFIER_VERSION` and re-run
+`agent-lens-metrics` (no re-ingest needed).
+
+## Contributing
+
+This is a personal, local-first tool, but issues and PRs are welcome. Please:
+
+1. Open an issue describing the change before large PRs.
+2. Run `pnpm test` and `pnpm typecheck` before submitting.
+3. Keep the **local-only** invariant intact — no outbound network calls, no committing `data/` or
+   `agent-lens.config.json`.
+4. Record structural/data decisions as a new ADR in `docs/decisions/`.
+
+## License
+
+[MIT](LICENSE) © SWEStash
