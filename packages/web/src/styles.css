@@ -151,6 +151,20 @@ table.sessions { width: 100%; border-collapse: collapse; }
 .ev-who { font-weight: 600; }
 .ev-time { margin-left: auto; }
 .text { white-space: pre-wrap; word-break: break-word; }
+/* Collapsible long message bodies: clamp to a preview with a fade + show-more toggle. */
+.text-wrap { position: relative; }
+.text-wrap.is-clamped .text { max-height: 22em; overflow: hidden; }
+.text-wrap.is-clamped::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: calc(22em - 48px);
+  height: 48px;
+  background: linear-gradient(transparent, var(--panel));
+  pointer-events: none;
+}
+.show-more { margin-top: 6px; position: relative; }
 .thinking { margin: 4px 0; }
 .thinking-toggle { font-size: 12px; padding: 2px 8px; color: var(--muted); }
 .thinking-body {

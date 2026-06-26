@@ -57,6 +57,30 @@ function ToolChip({ t }: { t: ToolCall }) {
   );
 }
 
+/** Long message bodies are clamped to a preview height with a show-more toggle so a single big
+ * message doesn't force endless scrolling; short messages render in full untouched. */
+function CollapsibleText({ text }: { text: string }) {
+  const long = text.length > 1400 || text.split("\n").length > 18;
+  const [expanded, setExpanded] = useState(false);
+  const bodyId = useId();
+  if (!long) return <div className="text">{text}</div>;
+  return (
+    <div className={"text-wrap" + (expanded ? "" : " is-clamped")}>
+      <div className="text" id={bodyId}>
+        {text}
+      </div>
+      <button
+        className="ghost small show-more"
+        aria-expanded={expanded}
+        aria-controls={bodyId}
+        onClick={() => setExpanded((e) => !e)}
+      >
+        {expanded ? "Show less ▴" : "Show more ▾"}
+      </button>
+    </div>
+  );
+}
+
 function prettyJson(s: string): string {
   try {
     return JSON.stringify(JSON.parse(s), null, 2).slice(0, 4000);
@@ -90,7 +114,7 @@ function EventBlock({ e }: { e: EventNode }) {
           {showThinking && <pre id={thinkId} className="thinking-body">{e.thinking}</pre>}
         </div>
       )}
-      {e.text && <div className="text">{e.text}</div>}
+      {e.text && <CollapsibleText text={e.text} />}
       {e.toolCalls.map((t, i) => (
         <ToolChip key={i} t={t} />
       ))}
