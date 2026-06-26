@@ -10,14 +10,15 @@ a queryable store, and gives a senior SWE a browsable transcript viewer plus per
 
 ## Status
 
-Early, built incrementally. See the phased plan and decisions in `.local/` (gitignored).
+Early, built incrementally. Decisions are recorded as ADRs in
+[`docs/decisions/`](docs/decisions/); the phased plan lives in `.local/` (gitignored).
 
 - **Phase 0** — workspace scaffold + ADRs ✅
 - **Phase 1** — passive collection (rsync + user systemd timer) ✅
 - **Phase 2** — ingest/normalize into SQLite ✅
 - **Phase 3** — browse webapp (localhost: list, filters, FTS search, transcript viewer, MD export) ✅
-- **Phase 4** — dashboards + heuristic metrics — _next_
-- **Phase 5** — multi-agent extensibility + packaging
+- **Phase 4** — dashboards + heuristic metrics ✅
+- **Phase 5** — extensibility hardening + packaging — _next_
 
 ## Architecture (two stages)
 
@@ -67,13 +68,13 @@ pnpm serve             # -> http://127.0.0.1:4477  (set AGENT_LENS_PORT to chang
 
 Both collection and ingest are local-only and idempotent. Ingest skips unchanged files; `--full`
 re-derives everything from the archive. The server is read-only and binds `127.0.0.1` only. See
-`scripts/collect.sh --help` and the ADRs in `.local/decisions/`.
+`scripts/collect.sh --help` and the ADRs in [`docs/decisions/`](docs/decisions/).
 
 ## Documentation
 
 - **[docs/USAGE.md](docs/USAGE.md)** — full operations guide: configuring sources, the three stages,
   daily loop, environment variables, HTTP API, troubleshooting.
-- `.local/decisions/` — Architecture Decision Records (local-only).
+- **[docs/decisions/](docs/decisions/)** — Architecture Decision Records (tracked in git).
 
 ## Requirements
 
@@ -91,5 +92,6 @@ scripts/          collect.sh, setup-systemd.sh, sources.mjs (canonical source re
 systemd/          user service + timer units
 agent-lens.config.json          sources to collect (gitignored; copy from .example)
 data/             archive/<label>/ + agent-lens.db — collected data (contents gitignored; .gitkeep tracked)
-.local/           decisions/ (ADRs), plans  (gitignored)
+docs/decisions/   Architecture Decision Records (ADRs, tracked)
+.local/           phased plans (gitignored)
 ```

@@ -6,7 +6,8 @@ How to run the tool day to day. Agent Lens is a three-stage local pipeline:
 ```
 sources (agent accounts)   Stage 1            Stage 2              Stage 3
   personal: ~/.claude  ──▶  collect.sh   ──▶  ingest        ──▶   serve (127.0.0.1)
-  work:     ~/.claude2      (rsync/timer)     (SQLite)            browse + search + export
+  work:     ~/.claude2      (rsync/timer)     (SQLite +           browse + search + export
+                                               classify)          + analytics dashboard
 ```
 
 ## Requirements
@@ -43,7 +44,7 @@ cp agent-lens.config.example.json agent-lens.config.json   # if not already pres
 
 - `label` must be unique (it names the archive subdir and the UI source filter).
 - `configDir` accepts `~` and `$HOME`.
-- `agent` is `claude-code` (the only adapter today).
+- `agent` is `claude-code` (the only shipped adapter today; see *Adding another agent* below).
 
 Verify what will be collected:
 
@@ -94,19 +95,50 @@ then `tokens / est_cost`.
 pnpm serve             # → http://127.0.0.1:4477   (read-only, loopback only)
 ```
 
-Open the URL. You can:
+Open the URL. The app has two views (nav tabs): **Sessions** (browse) and **Dashboard** (analytics).
 
-- **Filter** sessions by source, model, and kind (main vs subagent).
+**Sessions** — you can:
+
+- **Filter** by source, project, model, and kind (main vs subagent).
 - **Full-text search** across all transcripts.
 - Open a session for the **transcript viewer**: turn-segmented, collapsible thinking, expandable
-  tool calls, model/subagent tags.
+  tool calls, model/subagent tags, and a **classification badge** (category + complexity) with a
+  collapsible signals panel showing how it was derived.
 - **Export** any session to Markdown (⬇ button, or `GET /api/sessions/:id/export.md`).
+
+**Dashboard** (`/dashboard`) — server-side aggregates over the whole store (filter by source and a
+date range):
+
+- **KPI cards** — sessions, tokens (split input/output/cache-creation/cache-read), estimated
+  cost (cache-aware), and a cache-read-ratio explainer.
+- **Timeseries** — tokens, cost, and activity, with **adaptive day/week/month bucketing** that keys
+  off the real data span so charts stay bounded as data grows to years.
+- **Breakdowns** — by model, task category, complexity band, tool, skill, and subagent type.
+  Category/complexity are scoped to *main* sessions (subagent sessions skew read-heavy — see ADR-004).
+- **Unpriced models** (e.g. `claude-fable-5`) are surfaced explicitly, not silently zeroed, so cost
+  reads as a lower bound rather than a wrong number.
 
 UI development with hot reload (proxies `/api` to the running server):
 
 ```bash
 pnpm web:dev           # http://127.0.0.1:5173
 ```
+
+### Metrics & classification
+
+The heuristic classifier (ADR-004 — deterministic, no AI) populates each session's category and
+complexity. It runs **automatically at the end of every ingest**. To re-classify an
+already-ingested DB *without* re-reading the archive (e.g. after tuning classifier rules), run the
+`agent-lens-metrics` bin:
+
+```bash
+node packages/ingest/dist/metrics-cli.js     # or the installed `agent-lens-metrics` bin
+# prints: classified=<n> classifier_version=<v> db=<path>
+```
+
+After changing classifier logic, bump `CLASSIFIER_VERSION` (`packages/ingest/src/classify.ts`) and
+re-run the above — no re-ingest needed. After changing *parser* logic instead, re-ingest with
+`--full`.
 
 ## Typical daily loop
 
@@ -122,6 +154,41 @@ pnpm ingest && pnpm serve
 2. `scripts/collect.sh && pnpm ingest`.
 3. It appears as a new **source** filter in the UI.
 
+## Adding another agent (type)
+
+The store and parser are agent-agnostic (ADR-003/008). Adding a *new agent type* (not just another
+Claude account) takes three steps and **no schema change**:
+
+1. Implement `packages/ingest/src/adapters/<agent>.ts` (the `SourceAdapter` interface:
+   `discover()` finds the agent's transcript files; `parseLine()` maps each line to the normalized
+   rows). See `packages/ingest/src/adapters/example-stub.ts` for a worked, compile-checked template.
+2. Register it in `adapterList` (`packages/ingest/src/index.ts`) — the only wiring point.
+3. Add a source with the matching `agent` value to `agent-lens.config.json`.
+
+**Caveat (ADR-007/008):** this covers *ingest/parse* only. Collection (`scripts/collect.sh`) assumes
+the Claude-Code layout (`projects/**.jsonl`, `history.jsonl`, `settings`). An agent whose traces live
+elsewhere also needs per-agent **collection** logic.
+
+## Retention
+
+The archive's `projects/` mirror (the source of truth) and the DB grow with use and are kept; the
+only unbounded-yet-discardable growth is `.versions/` (divergence/compaction snapshots, deduped into
+the DB at ingest). `scripts/prune.sh` removes `.versions/` snapshots older than a window (default
+90 days). It is **dry-run by default** and only ever touches `*/.versions/<TS>/` dirs:
+
+```bash
+scripts/prune.sh                 # dry run: list what would be removed + reclaimable size
+scripts/prune.sh --apply         # actually delete aged snapshots
+scripts/prune.sh --days 30 --apply   # narrower window
+```
+
+The DB is a derived projection — if a prune ever changes what's available, rebuild it with
+`pnpm ingest --full`. Pruning is manual (run it occasionally); `.versions/` is typically empty.
+
+**At-rest encryption (ADR-009):** Agent Lens does not encrypt the store itself — the `data/` dir is
+as sensitive as the originals. Place it on an encrypted volume (LUKS/dm-crypt on Linux, FileVault on
+macOS) if you need at-rest protection. See `docs/decisions/ADR-009-retention-and-at-rest.md`.
+
 ## Reference
 
 ### Environment variables
@@ -135,6 +202,7 @@ pnpm ingest && pnpm serve
 | `AGENT_LENS_PORT` | `4477` | server | HTTP port |
 | `AGENT_LENS_HOST` | `127.0.0.1` | server | bind host (loopback) |
 | `AGENT_LENS_ALLOW_NONLOCAL` | _(unset)_ | server | required to bind a non-loopback host |
+| `AGENT_LENS_VERSIONS_KEEP_DAYS` | `90` | prune | retention window for `.versions/` snapshots |
 | `CLAUDE_DIR` | _(unset)_ | collect, ingest | legacy single-source override |
 
 ### Paths
@@ -144,7 +212,8 @@ pnpm ingest && pnpm serve
 | `data/archive/<label>/` | raw transcript mirror + `.versions/` backups | no (gitignored) |
 | `data/agent-lens.db` | normalized SQLite store | no |
 | `agent-lens.config.json` | your sources | no (`.example` is tracked) |
-| `.local/decisions/`, `.local/plans/` | ADRs and plans | no |
+| `docs/decisions/` | Architecture Decision Records (ADRs) | **yes** |
+| `.local/plans/` | phased plans | no (gitignored) |
 
 ### HTTP API (read-only, `127.0.0.1`)
 
@@ -155,11 +224,16 @@ pnpm ingest && pnpm serve
 | `GET /api/projects` | projects (cwd) + session counts |
 | `GET /api/models` | distinct model ids |
 | `GET /api/sessions` | filtered, paginated session list (see query params) |
-| `GET /api/sessions/:id` | session meta + turns + events (transcript) |
+| `GET /api/sessions/:id` | session meta + turns + events (transcript) + classification |
 | `GET /api/sessions/:id/export.md` | Markdown export (attachment) |
+| `GET /api/dashboard/overview` | KPI aggregates (sessions, split token totals, cost) |
+| `GET /api/dashboard/timeseries` | tokens/cost/activity over time (adaptive buckets) |
+| `GET /api/dashboard/breakdowns` | by model / category / complexity / tool / skill / subagent |
 
 `/api/sessions` query params: `source`, `project`, `model`, `kind` (`main`\|`subagent`),
 `q` (full-text), `from`, `to` (ISO timestamps), `limit` (≤200), `offset`.
+`/api/dashboard/*` query params: `source`, `from`, `to`; `timeseries` also accepts `bucket`
+(`day`\|`week`\|`month`, otherwise chosen adaptively from the data span).
 
 ## Troubleshooting
 
@@ -178,4 +252,4 @@ pnpm ingest && pnpm serve
   host unless `AGENT_LENS_ALLOW_NONLOCAL=1`. No outbound network calls anywhere.
 - Secrets (e.g. `~/.claude/.credentials.json`) are never copied.
 - `data/` and `agent-lens.config.json` are gitignored — the local store is as sensitive as the
-  original transcripts. See `.local/decisions/ADR-005-privacy-posture.md`.
+  original transcripts. See `docs/decisions/ADR-005-privacy-posture.md`.
