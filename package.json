@@ -1,0 +1,21 @@
+{
+  "name": "agent-lens",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Local-only tool that passively collects, browses, and analyzes Claude Code CLI session traces.",
+  "license": "MIT",
+  "engines": {
+    "node": ">=22"
+  },
+  "packageManager": "pnpm@9.15.4",
+  "scripts": {
+    "build": "pnpm -r build",
+    "typecheck": "pnpm -r typecheck",
+    "collect": "scripts/collect.sh",
+    "ingest": "pnpm --filter @agent-lens/ingest start"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "typescript": "^5.7.0"
+  }
+}

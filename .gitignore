@@ -1,0 +1,30 @@
+# Planning artifacts (ADRs, plans) — local-only, never committed.
+.local/
+
+# Collected runtime data (archive + SQLite store) — keep the folder, ignore contents.
+/data/*
+!/data/.gitkeep
+
+# Node
+node_modules/
+dist/
+*.tsbuildinfo
+.pnpm-store/
+
+# Databases / data artifacts
+*.db
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite3
+
+# Secrets / env
+.env
+.env.*
+*.credentials.json
+
+# OS / editor
+.DS_Store
+*.log
+.idea/
+.vscode/
