@@ -1,0 +1,108 @@
+/**
+ * Agent Lens — Fastify app factory (ADR-005: read-only over the SQLite store).
+ *
+ * `createApp(db, opts)` builds the route tree against an already-open DB handle so the same app can
+ * be driven by the CLI entry (index.ts, with .listen) and by tests (app.inject, no socket).
+ */
+import { existsSync } from "node:fs";
+import Fastify, { type FastifyInstance } from "fastify";
+import fastifyStatic from "@fastify/static";
+import { sessionToMarkdown, type MarkdownEvent } from "@agent-lens/core";
+import { type DB, listSources, listProjects, listModels, listSessions, getSession } from "./db.js";
+import { dashboardOverview, dashboardTimeseries, dashboardBreakdowns, type DashFilters } from "./dashboard.js";
+
+export interface CreateAppOpts {
+  /** Absolute path to the built web SPA; when present it is served with a history fallback. */
+  webDist?: string | null;
+}
+
+export async function createApp(db: DB, opts: CreateAppOpts = {}): Promise<FastifyInstance> {
+  const app = Fastify({ logger: false });
+
+  app.get("/api/health", async () => ({ ok: true }));
+  app.get("/api/sources", async () => listSources(db));
+  app.get("/api/projects", async () => listProjects(db));
+  app.get("/api/models", async () => listModels(db));
+
+  // Dashboard aggregates (Phase 4). All read-only; filters: source, from, to.
+  const dashFilters = (req: any): DashFilters => {
+    const q = req.query as Record<string, string>;
+    return { source: q.source, from: q.from, to: q.to };
+  };
+  app.get("/api/dashboard/overview", async (req) => dashboardOverview(db, dashFilters(req)));
+  app.get("/api/dashboard/timeseries", async (req) => {
+    const q = req.query as Record<string, string>;
+    return dashboardTimeseries(db, dashFilters(req), q.bucket);
+  });
+  app.get("/api/dashboard/breakdowns", async (req) => dashboardBreakdowns(db, dashFilters(req)));
+
+  app.get("/api/sessions", async (req) => {
+    const q = req.query as Record<string, string>;
+    return listSessions(db, {
+      source: q.source,
+      project: q.project,
+      model: q.model,
+      q: q.q,
+      from: q.from,
+      to: q.to,
+      kind: q.kind === "main" || q.kind === "subagent" ? q.kind : undefined,
+      limit: Math.min(Number(q.limit) || 50, 200),
+      offset: Number(q.offset) || 0,
+    });
+  });
+
+  app.get("/api/sessions/:id", async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const result = getSession(db, id);
+    if (!result) return reply.code(404).send({ error: "not found" });
+    return result;
+  });
+
+  app.get("/api/sessions/:id/export.md", async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const result = getSession(db, id);
+    if (!result) return reply.code(404).send({ error: "not found" });
+    const s = result.session;
+    const events: MarkdownEvent[] = result.events.map((e) => ({
+      type: e.type,
+      role: e.role,
+      timestamp: e.timestamp,
+      text: e.text,
+      thinking: e.thinking,
+      toolCalls: e.toolCalls.map((t: any) => ({
+        tool_name: t.tool_name,
+        skill_name: t.skill_name,
+        agent_type: t.agent_type,
+        input_json: t.input_json,
+        status: t.status,
+      })),
+    }));
+    const md = sessionToMarkdown(
+      {
+        id: s.id,
+        title: s.title,
+        source: s.source_id,
+        project: s.project_path,
+        model: null,
+        started_at: s.started_at,
+        ended_at: s.ended_at,
+      },
+      events,
+    );
+    reply
+      .header("content-type", "text/markdown; charset=utf-8")
+      .header("content-disposition", `attachment; filename="session-${id.slice(0, 8)}.md"`)
+      .send(md);
+  });
+
+  // Serve the built SPA (if present) with a history fallback for client routes.
+  if (opts.webDist && existsSync(opts.webDist)) {
+    await app.register(fastifyStatic, { root: opts.webDist });
+    app.setNotFoundHandler((req, reply) => {
+      if (req.url.startsWith("/api/")) return reply.code(404).send({ error: "not found" });
+      return reply.sendFile("index.html");
+    });
+  }
+
+  return app;
+}

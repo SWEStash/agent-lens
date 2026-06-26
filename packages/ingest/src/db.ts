@@ -39,6 +39,10 @@ export function openDb(file: string): DB {
  * take effect on an existing DB without a separate migration mechanism (ADR-001/009).
  */
 export function resetSchema(db: DB): void {
+  // Disable FK enforcement during teardown: the v3 schema has cross/self references
+  // (sessions.parent_turn_id → turns, parent_session_id → sessions) that otherwise make DROP order
+  // matter and trip "FOREIGN KEY constraint failed". applySchema re-enables FKs (PRAGMA in SCHEMA_SQL).
+  db.pragma("foreign_keys = OFF");
   db.exec(`
     DROP TRIGGER IF EXISTS events_au;
     DROP TRIGGER IF EXISTS events_ad;
@@ -57,4 +61,5 @@ export function resetSchema(db: DB): void {
     DROP TABLE IF EXISTS meta;
   `);
   applySchema(db);
+  db.pragma("foreign_keys = ON");
 }
