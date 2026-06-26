@@ -1,10 +1,12 @@
 [Unit]
-Description=Agent Lens — collect Claude Code session traces
+Description=Agent Lens — collect Claude Code session traces, then ingest
 Documentation=file://__REPO_ROOT__/README.md
 
 [Service]
 Type=oneshot
+# oneshot ExecStart lines run sequentially; ingest (Stage 2) only runs if collect (Stage 1) succeeds.
 ExecStart=__COLLECT_SH__
+ExecStart=__INGEST_SH__
 # Be a good background citizen.
 Nice=10
 IOSchedulingClass=idle

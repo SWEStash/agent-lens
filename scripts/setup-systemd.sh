@@ -10,6 +10,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 COLLECT_SH="$SCRIPT_DIR/collect.sh"
+INGEST_SH="$SCRIPT_DIR/ingest.sh"
 UNIT_SRC="$REPO_ROOT/systemd"
 UNIT_DST="${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user"
 UNITS=(agent-lens-collect.service agent-lens-collect.timer)
@@ -33,10 +34,11 @@ require_systemd() {
 
 install_units() {
   require_systemd
-  chmod +x "$COLLECT_SH"
+  chmod +x "$COLLECT_SH" "$INGEST_SH"
   mkdir -p "$UNIT_DST"
   for u in "${UNITS[@]}"; do
     sed -e "s#__COLLECT_SH__#$COLLECT_SH#g" \
+        -e "s#__INGEST_SH__#$INGEST_SH#g" \
         -e "s#__REPO_ROOT__#$REPO_ROOT#g" \
         "$UNIT_SRC/$u" > "$UNIT_DST/$u"
   done
