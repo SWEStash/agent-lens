@@ -3,6 +3,9 @@ import { Link, NavLink, Outlet } from "react-router-dom";
 export default function App() {
   return (
     <div className="app">
+      <a className="skip-link" href="#main">
+        Skip to content
+      </a>
       <header className="topbar">
         <Link to="/" className="brand">
           🔎 Agent Lens
@@ -17,7 +20,7 @@ export default function App() {
         </nav>
         <span className="tagline">local agent session explorer</span>
       </header>
-      <main className="content">
+      <main className="content" id="main" tabIndex={-1}>
         <Outlet />
       </main>
     </div>

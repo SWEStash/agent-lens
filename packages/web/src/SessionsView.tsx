@@ -61,9 +61,12 @@ export default function SessionsView() {
 
   return (
     <div>
+      <h1 className="sr-only">Sessions</h1>
       <div className="filters">
-        <form onSubmit={submitSearch} className="search">
+        <form onSubmit={submitSearch} className="search" role="search">
           <input
+            type="search"
+            aria-label="Search transcripts (full-text)"
             placeholder="Search transcripts (full-text)…"
             value={qInput}
             onChange={(e) => setQInput(e.target.value)}
@@ -75,7 +78,7 @@ export default function SessionsView() {
             </button>
           )}
         </form>
-        <select value={params.get("source") ?? ""} onChange={(e) => setParam("source", e.target.value)}>
+        <select aria-label="Filter by source" value={params.get("source") ?? ""} onChange={(e) => setParam("source", e.target.value)}>
           <option value="">all sources</option>
           {sources.map((s) => (
             <option key={s.id} value={s.id}>
@@ -83,7 +86,7 @@ export default function SessionsView() {
             </option>
           ))}
         </select>
-        <select value={params.get("model") ?? ""} onChange={(e) => setParam("model", e.target.value)}>
+        <select aria-label="Filter by model" value={params.get("model") ?? ""} onChange={(e) => setParam("model", e.target.value)}>
           <option value="">all models</option>
           {models.map((m) => (
             <option key={m} value={m}>
@@ -91,18 +94,18 @@ export default function SessionsView() {
             </option>
           ))}
         </select>
-        <select value={params.get("kind") ?? ""} onChange={(e) => setParam("kind", e.target.value)}>
+        <select aria-label="Filter by kind" value={params.get("kind") ?? ""} onChange={(e) => setParam("kind", e.target.value)}>
           <option value="">main + subagents</option>
           <option value="main">main only</option>
           <option value="subagent">subagents only</option>
         </select>
       </div>
 
-      {error && <div className="error">{error}</div>}
+      {error && <div className="error" role="alert">{error}</div>}
       {loading ? (
-        <div className="muted pad">Loading…</div>
+        <div className="muted pad" role="status" aria-live="polite">Loading…</div>
       ) : data.sessions.length === 0 ? (
-        <div className="muted pad">No sessions match.</div>
+        <div className="muted pad" role="status">No sessions match.</div>
       ) : (
         <table className="sessions">
           <thead>

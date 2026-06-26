@@ -79,8 +79,9 @@ export default function Dashboard() {
 
   return (
     <div>
+      <h1 className="sr-only">Dashboard</h1>
       <div className="filters">
-        <select value={params.get("source") ?? ""} onChange={(e) => setParam("source", e.target.value)}>
+        <select aria-label="Filter by source" value={params.get("source") ?? ""} onChange={(e) => setParam("source", e.target.value)}>
           <option value="">all sources</option>
           {sources.map((s) => (
             <option key={s.id} value={s.id}>
@@ -94,7 +95,7 @@ export default function Dashboard() {
         <label className="ctl">
           to <input type="date" value={params.get("to") ?? ""} onChange={(e) => setParam("to", e.target.value)} />
         </label>
-        <select value={params.get("bucket") ?? ""} onChange={(e) => setParam("bucket", e.target.value)}>
+        <select aria-label="Time bucket" value={params.get("bucket") ?? ""} onChange={(e) => setParam("bucket", e.target.value)}>
           <option value="">bucket: auto{ts ? ` (${ts.bucket})` : ""}</option>
           <option value="day">day</option>
           <option value="week">week</option>
@@ -102,8 +103,8 @@ export default function Dashboard() {
         </select>
       </div>
 
-      {error && <div className="error">{error}</div>}
-      {loading && <div className="muted pad">Loading…</div>}
+      {error && <div className="error" role="alert">{error}</div>}
+      {loading && <div className="muted pad" role="status" aria-live="polite">Loading…</div>}
 
       {overview && !loading && (
         <>

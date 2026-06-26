@@ -1,10 +1,11 @@
-import { useEffect, useState } from "react";
+import { useEffect, useId, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { api, type Classification, type EventNode, type SessionDetail, type ToolCall } from "./api";
 import { fmtCost, fmtDate, fmtDuration, fmtTokens, shortModel } from "./format";
 
 function ClassificationBadge({ c }: { c: Classification }) {
   const [open, setOpen] = useState(false);
+  const panelId = useId();
   const loc = c.signals?.loc;
   return (
     <div className="classification">
@@ -19,20 +20,21 @@ function ClassificationBadge({ c }: { c: Classification }) {
           +{loc.added}/−{loc.removed} LoC · {loc.files} files
         </span>
       )}
-      <button className="ghost small" onClick={() => setOpen((o) => !o)}>
+      <button className="ghost small" aria-expanded={open} aria-controls={panelId} onClick={() => setOpen((o) => !o)}>
         signals {open ? "▾" : "▸"}
       </button>
-      {open && <pre className="code signals">{JSON.stringify(c.signals, null, 2)}</pre>}
+      {open && <pre id={panelId} className="code signals">{JSON.stringify(c.signals, null, 2)}</pre>}
     </div>
   );
 }
 
 function ToolChip({ t }: { t: ToolCall }) {
   const [open, setOpen] = useState(false);
+  const bodyId = useId();
   const label = t.skill_name ? `Skill · ${t.skill_name}` : t.agent_type ? `${t.tool_name} → ${t.agent_type}` : t.tool_name;
   return (
     <div className={"tool " + (t.status === "error" ? "tool-err" : "")}>
-      <button className="tool-head" onClick={() => setOpen((o) => !o)}>
+      <button className="tool-head" aria-expanded={open} aria-controls={bodyId} onClick={() => setOpen((o) => !o)}>
         <span className="tool-name">🔧 {label}</span>
         {t.status && <span className="tool-status">{t.status}</span>}
         {t.total_duration_ms ? <span className="muted">{fmtDuration(t.total_duration_ms)}</span> : null}
@@ -44,7 +46,7 @@ function ToolChip({ t }: { t: ToolCall }) {
         </Link>
       )}
       {open && (
-        <div className="tool-body">
+        <div className="tool-body" id={bodyId}>
           {t.input_json && t.input_json !== "{}" && (
             <pre className="code">{prettyJson(t.input_json)}</pre>
           )}
@@ -65,6 +67,7 @@ function prettyJson(s: string): string {
 
 function EventBlock({ e }: { e: EventNode }) {
   const [showThinking, setShowThinking] = useState(false);
+  const thinkId = useId();
   const who = e.role || e.type;
   const icon = who === "user" ? "👤" : who === "assistant" ? "🤖" : "⚙️";
   const hasBody = e.text || e.thinking || e.toolCalls.length;
@@ -81,10 +84,10 @@ function EventBlock({ e }: { e: EventNode }) {
       </div>
       {e.thinking && (
         <div className="thinking">
-          <button className="thinking-toggle" onClick={() => setShowThinking((s) => !s)}>
+          <button className="thinking-toggle" aria-expanded={showThinking} aria-controls={thinkId} onClick={() => setShowThinking((s) => !s)}>
             🧠 thinking {showThinking ? "▾" : "▸"}
           </button>
-          {showThinking && <pre className="thinking-body">{e.thinking}</pre>}
+          {showThinking && <pre id={thinkId} className="thinking-body">{e.thinking}</pre>}
         </div>
       )}
       {e.text && <div className="text">{e.text}</div>}
@@ -108,8 +111,8 @@ export default function SessionView() {
       .catch((e) => setError(String(e)));
   }, [id]);
 
-  if (error) return <div className="error">{error}</div>;
-  if (!d) return <div className="muted pad">Loading…</div>;
+  if (error) return <div className="error" role="alert">{error}</div>;
+  if (!d) return <div className="muted pad" role="status" aria-live="polite">Loading…</div>;
   const s = d.session;
 
   let lastTurn: string | null | undefined = undefined;

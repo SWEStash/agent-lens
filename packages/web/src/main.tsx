@@ -1,11 +1,20 @@
-import React from "react";
+import React, { Suspense, lazy } from "react";
 import { createRoot } from "react-dom/client";
 import { BrowserRouter, Routes, Route } from "react-router-dom";
 import App from "./App";
 import SessionsView from "./SessionsView";
-import SessionView from "./SessionView";
-import Dashboard from "./Dashboard";
 import "./styles.css";
+
+// Lazy-load the heavier routes so the initial bundle stays small: Dashboard pulls in Recharts
+// (the bulk of the bundle), and SessionView the transcript viewer. Both are off the landing path.
+const Dashboard = lazy(() => import("./Dashboard"));
+const SessionView = lazy(() => import("./SessionView"));
+
+const Loading = () => (
+  <div className="muted pad" role="status" aria-live="polite">
+    Loading…
+  </div>
+);
 
 createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
@@ -13,8 +22,22 @@ createRoot(document.getElementById("root")!).render(
       <Routes>
         <Route path="/" element={<App />}>
           <Route index element={<SessionsView />} />
-          <Route path="dashboard" element={<Dashboard />} />
-          <Route path="session/:id" element={<SessionView />} />
+          <Route
+            path="dashboard"
+            element={
+              <Suspense fallback={<Loading />}>
+                <Dashboard />
+              </Suspense>
+            }
+          />
+          <Route
+            path="session/:id"
+            element={
+              <Suspense fallback={<Loading />}>
+                <SessionView />
+              </Suspense>
+            }
+          />
         </Route>
       </Routes>
     </BrowserRouter>
