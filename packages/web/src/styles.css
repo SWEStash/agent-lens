@@ -151,3 +151,54 @@ table.sessions { width: 100%; border-collapse: collapse; }
   overflow-x: auto;
 }
 .result { color: var(--muted); margin-top: 6px; font-family: inherit; }
+
+/* nav */
+.nav { display: flex; gap: 4px; }
+.nav-link {
+  color: var(--muted);
+  font-size: 13px;
+  padding: 4px 10px;
+  border-radius: 6px;
+}
+.nav-link:hover { text-decoration: none; color: var(--text); background: var(--panel2); }
+.nav-link.active { color: var(--text); background: var(--panel2); }
+
+/* dashboard */
+.ctl { display: flex; align-items: center; gap: 6px; color: var(--muted); font-size: 13px; }
+.kpis {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 12px;
+  margin-bottom: 18px;
+}
+.kpi { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 12px 14px; }
+.kpi-label { font-size: 12px; color: var(--muted); }
+.kpi-value { font-size: 22px; font-weight: 700; margin: 4px 0; font-variant-numeric: tabular-nums; }
+.kpi-sub { font-size: 11px; color: var(--muted); }
+
+.cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(380px, 1fr));
+  gap: 14px;
+}
+.card { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 14px; min-width: 0; }
+.card-head { display: flex; align-items: baseline; gap: 10px; margin-bottom: 10px; flex-wrap: wrap; }
+.card-head h3 { margin: 0; font-size: 14px; }
+.card-hint { font-size: 11px; color: var(--muted); }
+.empty { color: var(--muted); font-size: 13px; padding: 24px 8px; }
+.empty code { background: var(--panel2); padding: 1px 5px; border-radius: 4px; }
+
+/* classification */
+.classification { display: flex; align-items: center; gap: 10px; margin-top: 12px; flex-wrap: wrap; }
+.tag.complexity { background: #2c2440; color: #b98cff; }
+.tag.cat { color: var(--text); background: #243; }
+.tag.cat-feature { background: #173a2a; color: #7ee0a0; }
+.tag.cat-bugfix { background: #3a1d1d; color: #ff9b9b; }
+.tag.cat-refactor { background: #233247; color: #6ea8fe; }
+.tag.cat-docs { background: #2f2a16; color: #e0b85a; }
+.tag.cat-ops { background: #232a33; color: #79c0ff; }
+.tag.cat-review { background: #2c2440; color: #b98cff; }
+.tag.cat-chore { background: var(--tag); color: var(--muted); }
+.small { font-size: 12px; }
+button.small { padding: 2px 8px; font-size: 12px; }
+.signals { margin-top: 8px; max-height: 320px; overflow: auto; width: 100%; }

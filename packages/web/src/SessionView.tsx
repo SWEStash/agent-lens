@@ -1,7 +1,31 @@
 import { useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
-import { api, type EventNode, type SessionDetail, type ToolCall } from "./api";
+import { api, type Classification, type EventNode, type SessionDetail, type ToolCall } from "./api";
 import { fmtCost, fmtDate, fmtDuration, fmtTokens, shortModel } from "./format";
+
+function ClassificationBadge({ c }: { c: Classification }) {
+  const [open, setOpen] = useState(false);
+  const loc = c.signals?.loc;
+  return (
+    <div className="classification">
+      <span className={"tag cat cat-" + (c.category ?? "none")}>{c.category ?? "unclassified"}</span>
+      {c.complexity_band && (
+        <span className="tag complexity">
+          {c.complexity_band} · {c.complexity_score}
+        </span>
+      )}
+      {loc && (
+        <span className="muted small">
+          +{loc.added}/−{loc.removed} LoC · {loc.files} files
+        </span>
+      )}
+      <button className="ghost small" onClick={() => setOpen((o) => !o)}>
+        signals {open ? "▾" : "▸"}
+      </button>
+      {open && <pre className="code signals">{JSON.stringify(c.signals, null, 2)}</pre>}
+    </div>
+  );
+}
 
 function ToolChip({ t }: { t: ToolCall }) {
   const [open, setOpen] = useState(false);
@@ -106,6 +130,7 @@ export default function SessionView() {
             ⬇ Export Markdown
           </a>
         </div>
+        {d.classification && <ClassificationBadge c={d.classification} />}
       </div>
 
       <div className="transcript">

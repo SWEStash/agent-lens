@@ -204,5 +204,30 @@ export function getSession(db: DB, id: string) {
   session.cost = Number(cost.toFixed(4));
   session.title = session.ai_title || session.slug || null;
 
-  return { session, turns, events };
+  // Heuristic classification (Phase 4): category + complexity + the signals that produced them
+  // (tool/skill mix, LoC, files, subagent count) — already captured in signals_json by the classifier.
+  const cls = db
+    .prepare(
+      `SELECT category, complexity_score, complexity_band, signals_json, classifier_version
+       FROM classifications WHERE scope = 'session' AND target_id = ?`,
+    )
+    .get(id) as any;
+  let classification: any = null;
+  if (cls) {
+    let signals: any = null;
+    try {
+      signals = cls.signals_json ? JSON.parse(cls.signals_json) : null;
+    } catch {
+      /* ignore malformed */
+    }
+    classification = {
+      category: cls.category,
+      complexity_score: cls.complexity_score,
+      complexity_band: cls.complexity_band,
+      classifier_version: cls.classifier_version,
+      signals,
+    };
+  }
+
+  return { session, turns, events, classification };
 }

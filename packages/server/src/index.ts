@@ -12,6 +12,7 @@ import Fastify from "fastify";
 import fastifyStatic from "@fastify/static";
 import { sessionToMarkdown, type MarkdownEvent } from "@agent-lens/core";
 import { openReadonly, listSources, listProjects, listModels, listSessions, getSession } from "./db.js";
+import { dashboardOverview, dashboardTimeseries, dashboardBreakdowns, type DashFilters } from "./dashboard.js";
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
 const dbPath = process.env.AGENT_LENS_DB || join(process.env.AGENT_LENS_DATA || join(repoRoot, "data"), "agent-lens.db");
@@ -38,6 +39,18 @@ app.get("/api/health", async () => ({ ok: true }));
 app.get("/api/sources", async () => listSources(db));
 app.get("/api/projects", async () => listProjects(db));
 app.get("/api/models", async () => listModels(db));
+
+// Dashboard aggregates (Phase 4). All read-only; filters: source, from, to.
+const dashFilters = (req: any): DashFilters => {
+  const q = req.query as Record<string, string>;
+  return { source: q.source, from: q.from, to: q.to };
+};
+app.get("/api/dashboard/overview", async (req) => dashboardOverview(db, dashFilters(req)));
+app.get("/api/dashboard/timeseries", async (req) => {
+  const q = req.query as Record<string, string>;
+  return dashboardTimeseries(db, dashFilters(req), q.bucket);
+});
+app.get("/api/dashboard/breakdowns", async (req) => dashboardBreakdowns(db, dashFilters(req)));
 
 app.get("/api/sessions", async (req) => {
   const q = req.query as Record<string, string>;
