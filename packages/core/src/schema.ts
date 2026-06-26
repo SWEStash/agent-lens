@@ -16,7 +16,7 @@
  * (Phase 2). Bump SCHEMA_VERSION on any DDL change.
  */
 
-export const SCHEMA_VERSION = 1;
+export const SCHEMA_VERSION = 2;
 
 export const SCHEMA_SQL = /* sql */ `
 PRAGMA journal_mode = WAL;
@@ -28,11 +28,20 @@ CREATE TABLE IF NOT EXISTS meta (
   value TEXT NOT NULL
 );
 
--- A source agent (e.g. 'claude-code'). Extensible to other agents. ----------
+-- An agent *type* (e.g. 'claude-code'). Extensible to other agents. ---------
 CREATE TABLE IF NOT EXISTS agents (
   id   TEXT PRIMARY KEY,           -- 'claude-code'
   name TEXT NOT NULL,              -- 'Claude Code CLI'
   kind TEXT NOT NULL DEFAULT 'cli'
+);
+
+-- A configured source = a labeled agent *instance* (e.g. account 'personal' --
+-- of agent 'claude-code' rooted at ~/.claude). Sessions belong to a source. --
+CREATE TABLE IF NOT EXISTS sources (
+  id         TEXT PRIMARY KEY,     -- the (unique) label, e.g. 'personal'
+  label      TEXT NOT NULL,
+  agent_id   TEXT NOT NULL REFERENCES agents(id),
+  config_dir TEXT
 );
 
 -- A project = a working directory a session ran in. ------------------------
@@ -50,6 +59,7 @@ CREATE TABLE IF NOT EXISTS projects (
 CREATE TABLE IF NOT EXISTS sessions (
   id                TEXT PRIMARY KEY,   -- sessionId (UUID)
   agent_id          TEXT NOT NULL REFERENCES agents(id),
+  source_id         TEXT REFERENCES sources(id),
   project_id        TEXT REFERENCES projects(id),
   slug              TEXT,
   ai_title          TEXT,
@@ -64,6 +74,7 @@ CREATE TABLE IF NOT EXISTS sessions (
   turn_count        INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS idx_sessions_project ON sessions(project_id);
+CREATE INDEX IF NOT EXISTS idx_sessions_source ON sessions(source_id);
 CREATE INDEX IF NOT EXISTS idx_sessions_started ON sessions(started_at);
 
 -- A turn = user prompt -> assistant completion within a session. ------------

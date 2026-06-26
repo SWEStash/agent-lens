@@ -1,0 +1,15 @@
+{
+  "$schema": "Agent Lens sources config. Copy to agent-lens.config.json and edit.",
+  "sources": [
+    {
+      "label": "personal",
+      "agent": "claude-code",
+      "configDir": "~/.claude"
+    },
+    {
+      "label": "work",
+      "agent": "claude-code",
+      "configDir": "~/.config/claude-work"
+    }
+  ]
+}

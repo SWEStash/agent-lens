@@ -3,6 +3,13 @@
  * These types are the boundary every agent adapter emits into — keep them agent-agnostic.
  */
 
+export interface SourceRow {
+  id: string;
+  label: string;
+  agent_id: string;
+  config_dir: string | null;
+}
+
 export interface ProjectRow {
   id: string;
   agent_id: string;
@@ -15,6 +22,7 @@ export interface ProjectRow {
 export interface SessionRow {
   id: string;
   agent_id: string;
+  source_id: string | null;
   project_id: string | null;
   slug: string | null;
   ai_title: string | null;
@@ -127,6 +135,8 @@ export interface SourceFile {
   encodedDir: string;
   /** true if from .versions/<ts>/ (a divergence/compaction backup) rather than the mirror */
   isVersion: boolean;
+  /** the configured source (label) this file belongs to; set by the ingester */
+  sourceId: string;
 }
 
 /**
@@ -136,8 +146,8 @@ export interface SourceFile {
 export interface SourceAdapter {
   agentId: string;
   agentName: string;
-  /** Find this agent's transcript files under the archive root (mirror + .versions). */
-  discover(archiveRoot: string): SourceFile[];
+  /** Find this agent's transcript files under a source's archive dir (mirror + .versions). */
+  discover(sourceArchiveDir: string, sourceId: string): SourceFile[];
   /** Parse one already-JSON-parsed transcript line. Return {} to skip the line. */
   parseLine(raw: unknown, file: SourceFile, seq: number): ParsedLine;
 }

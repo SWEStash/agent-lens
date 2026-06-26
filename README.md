@@ -22,13 +22,18 @@ Early, built incrementally. See the phased plan and decisions in `.local/` (giti
 ## Architecture (two stages)
 
 ```
-~/.claude/projects/*  ──Stage 1: rsync (timer)──▶  data/archive/  ──Stage 2: ingester──▶  SQLite + FTS5
-                                                                                                   │
-                                                                  browse webapp + dashboards (127.0.0.1)
+sources (per label)                     archive (per label)
+  personal: ~/.claude  ─┐                ┌─ data/archive/personal/ ─┐
+  work:     ~/.claude2 ─┼─ Stage 1 ────▶ ┼─ data/archive/work/ ─────┼─ Stage 2 ─▶ SQLite + FTS5
+  …                     ┘   rsync,timer  └─ …                       ┘   ingester        │
+                                                                browse webapp + dashboards (127.0.0.1)
 ```
 
-- **Stage 1 (collection)** is dumb, safe, and frequent — it only copies files, never deletes, and
-  keeps the longest-seen version of each transcript plus divergence backups.
+- **Sources.** Each local agent account is a labeled *source* (`label` + `configDir`), declared in
+  `agent-lens.config.json`. Multiple Claude accounts (or, later, other agents) coexist; sessions are
+  tagged with their source so you can filter/compare. The same resolver feeds both stages.
+- **Stage 1 (collection)** is dumb, safe, and frequent — per source it only copies files, never
+  deletes, and keeps the longest-seen version of each transcript plus divergence backups.
 - **Stage 2 (ingest)** is re-runnable — a parser change never loses data because the raw archive is
   the source of truth.
 
@@ -43,6 +48,9 @@ Early, built incrementally. See the phased plan and decisions in `.local/` (giti
 
 ```bash
 pnpm install && pnpm -r build
+
+# Configure sources (which agent accounts to collect). Defaults to one: personal -> ~/.claude
+cp agent-lens.config.example.json agent-lens.config.json   # then edit: add a label + configDir per account
 
 # Stage 1 — collection. Install the user systemd timer (runs a few times a day, even logged out)
 scripts/setup-systemd.sh install
@@ -68,8 +76,9 @@ packages/core     shared types + SQLite schema (agent-agnostic)
 packages/ingest   Stage-2 parser; ClaudeCodeAdapter (extensible to other agents)
 packages/server   localhost API over the store
 packages/web      Vite + React SPA (browse + dashboards)
-scripts/          collect.sh, setup-systemd.sh
+scripts/          collect.sh, setup-systemd.sh, sources.mjs (canonical source resolver)
 systemd/          user service + timer units
-data/             archive/ + agent-lens.db — collected data (contents gitignored; .gitkeep tracked)
+agent-lens.config.json          sources to collect (gitignored; copy from .example)
+data/             archive/<label>/ + agent-lens.db — collected data (contents gitignored; .gitkeep tracked)
 .local/           decisions/ (ADRs), plans  (gitignored)
 ```

@@ -69,8 +69,9 @@ export class ClaudeCodeAdapter implements SourceAdapter {
   agentId = "claude-code";
   agentName = "Claude Code CLI";
 
-  discover(archiveRoot: string): SourceFile[] {
+  discover(sourceArchiveDir: string, sourceId: string): SourceFile[] {
     const files: SourceFile[] = [];
+    const archiveRoot = sourceArchiveDir;
 
     const addFrom = (projectsDir: string, isVersion: boolean) => {
       const found: string[] = [];
@@ -80,7 +81,7 @@ export class ClaudeCodeAdapter implements SourceAdapter {
         const parts = path.split("/");
         const sessionId = basename(path, ".jsonl");
         const encodedDir = parts[parts.length - 2] ?? "";
-        files.push({ path, sessionId, encodedDir, isVersion });
+        files.push({ path, sessionId, encodedDir, isVersion, sourceId });
       }
     };
 

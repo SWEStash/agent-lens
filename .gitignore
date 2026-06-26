@@ -5,6 +5,9 @@
 /data/*
 !/data/.gitkeep
 
+# Real sources config (machine-specific); ship only the example.
+/agent-lens.config.json
+
 # Node
 node_modules/
 dist/

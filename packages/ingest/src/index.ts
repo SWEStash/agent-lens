@@ -10,6 +10,7 @@
  *   --full   ignore ingest_state and re-read every file
  */
 import { createHash } from "node:crypto";
+import { execFileSync } from "node:child_process";
 import { readFileSync, statSync, mkdirSync, existsSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -18,6 +19,24 @@ import { openDb, type DB } from "./db.js";
 import { ClaudeCodeAdapter } from "./adapters/claude-code.js";
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
+
+interface Source {
+  label: string;
+  agent: string;
+  configDir: string;
+}
+
+/** Resolve configured sources via the canonical resolver (shared with collect.sh). */
+function loadSources(): Source[] {
+  const tsv = execFileSync("node", [join(repoRoot, "scripts/sources.mjs")], { encoding: "utf8" });
+  const out: Source[] = [];
+  for (const line of tsv.split("\n")) {
+    if (!line.trim()) continue;
+    const [label, agent, configDir] = line.split("\t");
+    out.push({ label: label!, agent: agent!, configDir: configDir! });
+  }
+  return out;
+}
 
 function parseArgs(argv: string[]) {
   const a = { full: false, db: "", archive: "" };
@@ -95,17 +114,13 @@ function clearAll(db: DB) {
     DELETE FROM turns;
     DELETE FROM classifications;
     DELETE FROM sessions;
+    DELETE FROM sources;
     DELETE FROM projects;
     DELETE FROM ingest_state;
   `);
 }
 
-function rebuildDerived(db: DB, agentId: string) {
-  // Safety net: a session row for every session that has events.
-  db.prepare(
-    `INSERT OR IGNORE INTO sessions (id, agent_id) SELECT DISTINCT session_id, ? FROM events`,
-  ).run(agentId);
-
+function rebuildDerived(db: DB) {
   // Recompute turns from the (idempotent) events table.
   // Null referencing turn_ids BEFORE deleting turns (FK: events/token_usage/tool_calls -> turns).
   db.exec("UPDATE events SET turn_id = NULL");
@@ -167,10 +182,18 @@ function main() {
 
   const db = openDb(dbPath);
   if (args.full) clearAll(db);
-  const adapters: SourceAdapter[] = [new ClaudeCodeAdapter()];
+
+  // Adapter registry keyed by agent type; configured sources resolved by the shared resolver.
+  const adapterList: SourceAdapter[] = [new ClaudeCodeAdapter()];
+  const adapterById = new Map(adapterList.map((a) => [a.agentId, a]));
+  const sources = loadSources();
   const now = new Date().toISOString();
 
   const insAgent = db.prepare("INSERT OR IGNORE INTO agents (id, name, kind) VALUES (?, ?, 'cli')");
+  const insSource = db.prepare(
+    `INSERT INTO sources (id, label, agent_id, config_dir) VALUES (@id, @label, @agent_id, @config_dir)
+     ON CONFLICT(id) DO UPDATE SET label=excluded.label, agent_id=excluded.agent_id, config_dir=excluded.config_dir`,
+  );
   const getState = db.prepare("SELECT sha256 FROM ingest_state WHERE file_path = ?") as any;
   const setState = db.prepare(
     `INSERT INTO ingest_state (file_path, size, mtime_ms, sha256, events_ingested, ingested_at)
@@ -210,11 +233,12 @@ function main() {
      VALUES (@id, @agent_id, @path, @encoded_dir, @now, @now)
      ON CONFLICT(id) DO UPDATE SET last_seen = @now, encoded_dir = COALESCE(excluded.encoded_dir, encoded_dir)`,
   );
-  const insSessionStub = db.prepare("INSERT OR IGNORE INTO sessions (id, agent_id) VALUES (?, ?)");
+  const insSessionStub = db.prepare("INSERT OR IGNORE INTO sessions (id, agent_id, source_id) VALUES (?, ?, ?)");
   const upsertSession = db.prepare(
-    `INSERT INTO sessions (id, agent_id, project_id, slug, ai_title, cli_version, entrypoint, git_branch)
-     VALUES (@id, @agent_id, @project_id, @slug, @ai_title, @cli_version, @entrypoint, @git_branch)
+    `INSERT INTO sessions (id, agent_id, source_id, project_id, slug, ai_title, cli_version, entrypoint, git_branch)
+     VALUES (@id, @agent_id, @source_id, @project_id, @slug, @ai_title, @cli_version, @entrypoint, @git_branch)
      ON CONFLICT(id) DO UPDATE SET
+       source_id = COALESCE(excluded.source_id, source_id),
        project_id = COALESCE(excluded.project_id, project_id),
        slug = COALESCE(excluded.slug, slug),
        ai_title = COALESCE(excluded.ai_title, ai_title),
@@ -225,9 +249,16 @@ function main() {
 
   const stats = { files: 0, skipped: 0, malformed: 0, newEvents: 0 };
 
-  for (const adapter of adapters) {
+  for (const source of sources) {
+    const adapter = adapterById.get(source.agent);
+    if (!adapter) {
+      console.warn(`agent-lens-ingest: no adapter for agent '${source.agent}' (source '${source.label}') — skipping`);
+      continue;
+    }
     insAgent.run(adapter.agentId, adapter.agentName);
-    const files = adapter.discover(archiveRoot);
+    insSource.run({ id: source.label, label: source.label, agent_id: adapter.agentId, config_dir: source.configDir });
+
+    const files = adapter.discover(join(archiveRoot, source.label), source.label);
     // Mirror before versions so the mirror copy wins canonical fields (ON CONFLICT DO NOTHING).
     files.sort((a, b) => Number(a.isVersion) - Number(b.isVersion));
 
@@ -250,7 +281,7 @@ function main() {
 
       const tx = db.transaction(() => {
         // Ensure the session row exists before any event references it (FK).
-        insSessionStub.run(file.sessionId, adapter.agentId);
+        insSessionStub.run(file.sessionId, adapter.agentId, file.sourceId);
         let seq = 0;
         for (const line of lines) {
           if (!line.trim()) continue;
@@ -301,6 +332,7 @@ function main() {
         upsertSession.run({
           id: file.sessionId,
           agent_id: adapter.agentId,
+          source_id: file.sourceId,
           project_id: projectId,
           slug: sessionMeta.slug ?? null,
           ai_title: sessionMeta.ai_title ?? null,
@@ -321,8 +353,9 @@ function main() {
       tx();
     }
 
-    rebuildDerived(db, adapter.agentId);
   }
+
+  rebuildDerived(db);
 
   // Report.
   const count = (sql: string) => (db.prepare(sql).get() as any).n as number;
