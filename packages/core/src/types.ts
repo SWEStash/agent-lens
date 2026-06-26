@@ -96,6 +96,21 @@ export interface ToolCallRow {
   result_summary: string | null;
 }
 
+/**
+ * A heuristic classification of a session (or, later, a turn). Re-runnable and deterministic:
+ * `signals_json` records the inputs/sub-scores so a result can be explained and bands retuned,
+ * and `classifier_version` lets a future (e.g. local-LLM) classifier supersede heuristic rows.
+ */
+export interface ClassificationRow {
+  scope: "session" | "turn";
+  target_id: string;
+  category: string | null;
+  complexity_score: number | null;
+  complexity_band: string | null;
+  signals_json: string | null;
+  classifier_version: number;
+}
+
 /** Patch applied to a previously-seen tool_call once its result line arrives. */
 export interface ToolResultPatch {
   tool_use_id: string;

@@ -17,6 +17,7 @@ import { fileURLToPath } from "node:url";
 import { costForUsage, type SourceAdapter, type TurnRow } from "@agent-lens/core";
 import { openDb, type DB } from "./db.js";
 import { ClaudeCodeAdapter } from "./adapters/claude-code.js";
+import { classify } from "./classify.js";
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
 
@@ -357,6 +358,10 @@ function main() {
 
   rebuildDerived(db);
 
+  // Heuristic classification (ADR-004) over the now-stable derived tables. Deterministic +
+  // re-runnable; also exposed standalone as `agent-lens-metrics` (see metrics-cli.ts).
+  const classified = classify(db);
+
   // Report.
   const count = (sql: string) => (db.prepare(sql).get() as any).n as number;
   const sessions = count("SELECT COUNT(*) n FROM sessions");
@@ -376,7 +381,7 @@ function main() {
   db.close();
   console.log(
     `agent-lens-ingest: files=${stats.files} skipped=${stats.skipped} new_events=${stats.newEvents} malformed=${stats.malformed}\n` +
-      `  sessions=${sessions} turns=${turns} events=${events} tool_calls=${tools}\n` +
+      `  sessions=${sessions} turns=${turns} events=${events} tool_calls=${tools} classified=${classified.count}\n` +
       `  tokens=${totalTokens.toLocaleString()} est_cost=$${cost.toFixed(2)} db=${dbPath}`,
   );
 }
