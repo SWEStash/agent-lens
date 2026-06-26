@@ -47,7 +47,8 @@ export default function SessionsView() {
     const next = new URLSearchParams(params);
     if (value) next.set(key, value);
     else next.delete(key);
-    next.delete("offset");
+    // Changing a filter resets to page 1, but paging through offset must keep the value just set.
+    if (key !== "offset") next.delete("offset");
     setParams(next);
   }
 
