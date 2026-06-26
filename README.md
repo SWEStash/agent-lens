@@ -14,8 +14,8 @@ Early, built incrementally. See the phased plan and decisions in `.local/` (giti
 
 - **Phase 0** — workspace scaffold + ADRs ✅
 - **Phase 1** — passive collection (rsync + user systemd timer) ✅
-- **Phase 2** — ingest/normalize into SQLite — _next_
-- **Phase 3** — browse webapp (localhost)
+- **Phase 2** — ingest/normalize into SQLite ✅
+- **Phase 3** — browse webapp (localhost) — _next_
 - **Phase 4** — dashboards + heuristic metrics
 - **Phase 5** — multi-agent extensibility + packaging
 
@@ -39,17 +39,22 @@ Early, built incrementally. See the phased plan and decisions in `.local/` (giti
 - The webapp binds to `127.0.0.1` only.
 - The `data/` store is as sensitive as the originals — its contents are gitignored and stay on your machine.
 
-## Quick start (collection)
+## Quick start
 
 ```bash
-# one-time: install the user systemd timer (runs a few times a day, even when logged out)
-scripts/setup-systemd.sh install
+pnpm install && pnpm -r build
 
-# or run a collection pass manually
+# Stage 1 — collection. Install the user systemd timer (runs a few times a day, even logged out)
+scripts/setup-systemd.sh install
+# ...or run a collection pass manually:
 scripts/collect.sh
+
+# Stage 2 — ingest the archive into data/agent-lens.db (incremental; --full rebuilds)
+pnpm ingest            # or: node packages/ingest/dist/index.js [--full]
 ```
 
-See `scripts/collect.sh --help` and the ADRs in `.local/decisions/` for details.
+Both stages are local-only and idempotent. Ingest skips unchanged files; `--full` re-derives
+everything from the archive. See `scripts/collect.sh --help` and the ADRs in `.local/decisions/`.
 
 ## Requirements
 

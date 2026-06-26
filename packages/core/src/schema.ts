@@ -176,7 +176,8 @@ END;
 CREATE TRIGGER IF NOT EXISTS events_ad AFTER DELETE ON events BEGIN
   INSERT INTO events_fts(events_fts, rowid, text) VALUES ('delete', old.rowid, old.text);
 END;
-CREATE TRIGGER IF NOT EXISTS events_au AFTER UPDATE ON events BEGIN
+CREATE TRIGGER IF NOT EXISTS events_au AFTER UPDATE ON events
+WHEN old.text IS NOT new.text BEGIN
   INSERT INTO events_fts(events_fts, rowid, text) VALUES ('delete', old.rowid, old.text);
   INSERT INTO events_fts(rowid, text) VALUES (new.rowid, new.text);
 END;
