@@ -69,6 +69,12 @@ Both collection and ingest are local-only and idempotent. Ingest skips unchanged
 re-derives everything from the archive. The server is read-only and binds `127.0.0.1` only. See
 `scripts/collect.sh --help` and the ADRs in `.local/decisions/`.
 
+## Documentation
+
+- **[docs/USAGE.md](docs/USAGE.md)** — full operations guide: configuring sources, the three stages,
+  daily loop, environment variables, HTTP API, troubleshooting.
+- `.local/decisions/` — Architecture Decision Records (local-only).
+
 ## Requirements
 
 - Linux (developed against Ubuntu 24.04 LTS+)
