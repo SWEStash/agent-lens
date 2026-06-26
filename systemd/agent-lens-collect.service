@@ -1,0 +1,11 @@
+[Unit]
+Description=Agent Lens — collect Claude Code session traces
+Documentation=file://__REPO_ROOT__/README.md
+
+[Service]
+Type=oneshot
+ExecStart=__COLLECT_SH__
+# Be a good background citizen.
+Nice=10
+IOSchedulingClass=idle
+# Local-only: no network needed for collection.
