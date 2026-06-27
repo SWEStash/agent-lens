@@ -1,0 +1,6 @@
+# Toolchain for Agent Lens — this host uses mise to activate Node.
+# `mise install` (or auto-activation on cd) provisions the version below; it satisfies the
+# package.json "engines.node" (>=24). pnpm is pinned separately via package.json "packageManager"
+# (pnpm@9.15.4) and provided by corepack, which ships with Node — run `corepack enable` once.
+[tools]
+node = "24"

@@ -5,7 +5,7 @@
   "description": "Local-only tool that passively collects, browses, and analyzes Claude Code CLI session traces.",
   "license": "MIT",
   "engines": {
-    "node": ">=22"
+    "node": ">=24"
   },
   "packageManager": "pnpm@9.15.4",
   "scripts": {
@@ -18,7 +18,7 @@
     "web:dev": "pnpm --filter @agent-lens/web dev"
   },
   "devDependencies": {
-    "@types/node": "^22.10.0",
+    "@types/node": "^24.0.0",
     "typescript": "^5.7.0",
     "vitest": "^4.1.9"
   }
