@@ -15,9 +15,36 @@ import {
   Legend,
   Cell,
 } from "recharts";
-import { api, type DashOverview, type DashTimeseries, type DashBreakdowns } from "./api";
+import { api, type DashOverview, type DashTimeseries, type DashBreakdowns, type TokenSplit } from "./api";
 import { fmtCost, fmtTokens, fmtDuration, shortModel } from "./format";
 import { ChartCard, Kpi, TOKEN_COLORS, PALETTE, C, axisProps, gridProps, tooltipStyle } from "./charts/theme";
+
+/** The four token components as a compact, color-keyed breakdown that complements the "Total tokens"
+ * KPI and the "Tokens over time" chart — same colors, exact totals + share at a glance. */
+function TokenBreakdownKpi({ t }: { t: TokenSplit }) {
+  const total = t.input + t.output + t.cache_creation + t.cache_read;
+  const rows: Array<{ name: string; v: number; c: string }> = [
+    { name: "Input", v: t.input, c: TOKEN_COLORS.input },
+    { name: "Output", v: t.output, c: TOKEN_COLORS.output },
+    { name: "Cache write", v: t.cache_creation, c: TOKEN_COLORS.cache_creation },
+    { name: "Cache read", v: t.cache_read, c: TOKEN_COLORS.cache_read },
+  ];
+  return (
+    <div className="kpi" title="Token totals by type: input · output · cache-write · cache-read">
+      <div className="kpi-label">Token breakdown</div>
+      <ul className="kpi-bd">
+        {rows.map((r) => (
+          <li key={r.name}>
+            <span className="kpi-bd-dot" style={{ background: r.c }} aria-hidden="true" />
+            <span className="kpi-bd-name">{r.name}</span>
+            <span className="kpi-bd-val">{fmtTokens(r.v)}</span>
+            <span className="kpi-bd-pct">{total ? Math.round((r.v / total) * 100) : 0}%</span>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
 
 interface Source {
   id: string;
@@ -110,12 +137,19 @@ export default function Dashboard() {
         <>
           <div className="kpis">
             <Kpi label="Sessions" value={overview.sessions_main} sub={`+${overview.sessions_subagent.toLocaleString()} subagent runs`} />
+            <Kpi label="Projects" value={overview.projects} sub="distinct project paths" />
             <Kpi label="Turns" value={overview.turns} sub={`${overview.tool_calls.toLocaleString()} tool calls`} />
             <Kpi
               label="Est. cost (API-equiv.)"
               value={fmtCost(overview.cost)}
-              title="Pay-as-you-go API list price for this usage — i.e. what a Pro/Max subscription saves you, NOT money actually spent. Cache reads/writes are included at their (discounted) cache rates."
-              sub={overview.unpriced_models.length ? `⚠ unpriced: ${overview.unpriced_models.map(shortModel).join(", ")}` : "API list price, not subscription spend"}
+              title="Estimated at API list prices for this usage (cache reads/writes included at their discounted cache rates)."
+              sub={overview.unpriced_models.length ? `⚠ unpriced: ${overview.unpriced_models.map(shortModel).join(", ")}` : "API list price estimate"}
+            />
+            <Kpi
+              label="Cost / session"
+              value={overview.sessions_main ? fmtCost(overview.cost / overview.sessions_main) : "—"}
+              title="Estimated API-equivalent cost divided by main sessions in range."
+              sub="API-equiv. per main session"
             />
             <Kpi
               label="Cache-read ratio"
@@ -124,6 +158,7 @@ export default function Dashboard() {
             />
             <Kpi label="Turn duration p50 / p95" value={`${fmtDuration(overview.turn_duration_ms.p50)} / ${fmtDuration(overview.turn_duration_ms.p95)}`} sub={`${overview.turn_duration_ms.count} turns`} />
             <Kpi label="Total tokens" value={fmtTokens(overview.total_tokens)} sub={`${fmtTokens(overview.tokens.input + overview.tokens.output)} non-cache`} />
+            <TokenBreakdownKpi t={overview.tokens} />
           </div>
 
           <div className="cards">
@@ -146,7 +181,7 @@ export default function Dashboard() {
               </ResponsiveContainer>
             </ChartCard>
 
-            <ChartCard title="Cost over time" hint="API list price, model × tokens (cache-aware) — not subscription spend">
+            <ChartCard title="Cost over time" hint="API list price estimate, model × tokens (cache-aware)">
               <ResponsiveContainer width="100%" height={220}>
                 <LineChart data={ts?.series ?? []} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
                   <CartesianGrid {...gridProps} />

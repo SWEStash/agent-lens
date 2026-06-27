@@ -145,7 +145,7 @@ export default function SessionsView() {
                 <td className="path">{s.project_path?.replace(/^.*\//, "") ?? "—"}</td>
                 <td className="num">{s.turn_count}</td>
                 <td className="num" title={tokenSplitTitle(s.token_split)}>{fmtTokens(s.tokens)}</td>
-                <td className="num" title="API list-price equivalent (cache-aware) — not subscription spend">{fmtCost(s.cost)}</td>
+                <td className="num" title="Estimated at API list prices (cache-aware)">{fmtCost(s.cost)}</td>
                 <td className="num">{fmtDuration(s.duration_ms)}</td>
                 <td>{fmtDate(s.started_at)}</td>
               </tr>

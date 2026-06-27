@@ -45,12 +45,34 @@ export interface EventNode {
   toolCalls: ToolCall[];
 }
 
+/** The evidence blob behind a classification, written verbatim by the heuristic classifier
+ * (packages/ingest/src/classify.ts). Every input and sub-score is recorded so a verdict can be
+ * explained and the bands retuned. Optional fields guard against older classifier_version rows. */
+export interface ClassificationSignals {
+  tool_counts?: Record<string, number>;
+  skills?: Record<string, number>;
+  loc?: { added: number; removed: number; net: number; churn: number; files: number };
+  files?: string[];
+  turn_count?: number;
+  event_count?: number;
+  work_tokens?: number;
+  cache_read_tokens?: number;
+  duration_ms?: number;
+  subagent_count?: number;
+  is_sidechain?: number;
+  subagent_role?: string | null;
+  category_scores?: Record<string, number>;
+  complexity_subscores?: Record<string, number>;
+  complexity_weights?: Record<string, number>;
+  classifier_version?: number;
+}
+
 export interface Classification {
   category: string | null;
   complexity_score: number | null;
   complexity_band: string | null;
   classifier_version: number;
-  signals: any;
+  signals: ClassificationSignals | null;
 }
 
 export interface SessionParent {
