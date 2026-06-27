@@ -1,0 +1,17 @@
+[Unit]
+Description=Agent Lens — local web UI + read-only API server
+Documentation=file://__REPO_ROOT__/README.md
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=__SERVE_SH__
+# Long-running: restart if it crashes.
+Restart=on-failure
+RestartSec=5
+# Be a good background citizen.
+Nice=10
+# Local-only: binds 127.0.0.1 by default (ADR-005). Override via AGENT_LENS_PORT / AGENT_LENS_HOST.
+
+[Install]
+WantedBy=default.target
