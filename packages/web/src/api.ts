@@ -17,6 +17,7 @@ export interface SessionSummary {
   project_path: string | null;
   models: string | null;
   tokens: number;
+  token_split: TokenSplit;
   cost: number;
 }
 
@@ -58,12 +59,23 @@ export interface SessionParent {
   turn_seq: number | null;
 }
 
+export interface SessionChild {
+  id: string;
+  title: string | null;
+  turn_count: number;
+  started_at: string | null;
+  models: string | null;
+  tokens: number;
+  cost: number;
+}
+
 export interface SessionDetail {
   session: any;
   turns: any[];
   events: EventNode[];
   classification: Classification | null;
   parent: SessionParent | null;
+  children: SessionChild[];
 }
 
 export interface TokenSplit {

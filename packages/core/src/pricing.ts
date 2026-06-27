@@ -20,9 +20,20 @@ export interface UsageTokens {
   cache_read_input_tokens: number;
 }
 
-/** Prefix → rate. Longest matching prefix wins. */
+/**
+ * Prefix → rate. Longest matching prefix wins, so dated/variant ids resolve to the most specific
+ * entry (e.g. 'claude-opus-4-8' beats the legacy 'claude-opus-4' fallback).
+ * USD per 1M tokens. Convention: cacheWrite (5-minute) = 1.25× input, cacheRead = 0.1× input.
+ */
 export const PRICE_TABLE: Record<string, Rate> = {
+  // Opus 4.0 / 4.1 launched at $15/$75; Opus 4.5 cut the Opus tier to $5/$25 and 4.6/4.7/4.8 kept it.
+  // The bare 'claude-opus-4' fallback stays at the legacy rate for 4.0/4.1; 4.5+ override below.
   "claude-opus-4": { input: 15, output: 75, cacheWrite: 18.75, cacheRead: 1.5 },
+  "claude-opus-4-5": { input: 5, output: 25, cacheWrite: 6.25, cacheRead: 0.5 },
+  "claude-opus-4-6": { input: 5, output: 25, cacheWrite: 6.25, cacheRead: 0.5 },
+  "claude-opus-4-7": { input: 5, output: 25, cacheWrite: 6.25, cacheRead: 0.5 },
+  "claude-opus-4-8": { input: 5, output: 25, cacheWrite: 6.25, cacheRead: 0.5 },
+  "claude-fable-5": { input: 10, output: 50, cacheWrite: 12.5, cacheRead: 1.0 },
   "claude-sonnet-4": { input: 3, output: 15, cacheWrite: 3.75, cacheRead: 0.3 },
   "claude-haiku-4": { input: 1, output: 5, cacheWrite: 1.25, cacheRead: 0.1 },
   "claude-3-5-haiku": { input: 0.8, output: 4, cacheWrite: 1, cacheRead: 0.08 },

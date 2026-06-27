@@ -19,6 +19,12 @@ export function fmtCost(n: number): string {
   return n >= 0.01 ? "$" + n.toFixed(2) : n > 0 ? "<$0.01" : "$0";
 }
 
+/** Hover breakdown of a token total into its four categories (cache kept, not hidden). */
+export function tokenSplitTitle(s?: { input: number; output: number; cache_creation: number; cache_read: number } | null): string {
+  if (!s) return "";
+  return `input ${fmtTokens(s.input)} · output ${fmtTokens(s.output)} · cache-write ${fmtTokens(s.cache_creation)} · cache-read ${fmtTokens(s.cache_read)}`;
+}
+
 export function fmtDate(iso: string | null): string {
   if (!iso) return "—";
   const d = new Date(iso);

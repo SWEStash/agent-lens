@@ -72,6 +72,7 @@ export interface TokenUsageRow {
   event_uuid: string;
   session_id: string;
   turn_id: string | null;
+  message_id: string | null;
   model: string | null;
   input_tokens: number;
   output_tokens: number;

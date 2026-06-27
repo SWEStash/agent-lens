@@ -16,7 +16,7 @@
  * (Phase 2). Bump SCHEMA_VERSION on any DDL change.
  */
 
-export const SCHEMA_VERSION = 3;
+export const SCHEMA_VERSION = 4;
 
 export const SCHEMA_SQL = /* sql */ `
 PRAGMA journal_mode = WAL;
@@ -142,11 +142,17 @@ CREATE INDEX IF NOT EXISTS idx_tool_calls_tool ON tool_calls(tool_name);
 CREATE INDEX IF NOT EXISTS idx_tool_calls_skill ON tool_calls(skill_name);
 CREATE INDEX IF NOT EXISTS idx_tool_calls_spawned ON tool_calls(spawned_session_id);
 
--- Token usage at the assistant-event grain. Cost derived later from model. --
+-- Token usage at the assistant-response grain. Cost derived later from model. --
+-- One API response is logged across multiple JSONL lines (one per content block: text + each
+-- tool_use), and Claude Code stamps the SAME usage object on every line. We dedup at the response
+-- grain via the unique (session_id, message_id) index so a response's tokens are counted ONCE, not
+-- once per content block (which over-counted tokens ~2.3x and cost ~3x). event_uuid stays the PK
+-- (the row is attached to whichever content-block event won the insert). --
 CREATE TABLE IF NOT EXISTS token_usage (
   event_uuid                  TEXT PRIMARY KEY REFERENCES events(uuid),
   session_id                  TEXT NOT NULL REFERENCES sessions(id),
   turn_id                     TEXT REFERENCES turns(id),
+  message_id                  TEXT,              -- Anthropic response id (msg_…); dedup key
   model                       TEXT,
   input_tokens                INTEGER NOT NULL DEFAULT 0,
   output_tokens               INTEGER NOT NULL DEFAULT 0,
@@ -155,6 +161,9 @@ CREATE TABLE IF NOT EXISTS token_usage (
   service_tier                TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_token_usage_session ON token_usage(session_id);
+-- Partial so rare usage rows lacking a message_id (e.g. <synthetic>) don't collide on NULL. --
+CREATE UNIQUE INDEX IF NOT EXISTS idx_token_usage_msg
+  ON token_usage(session_id, message_id) WHERE message_id IS NOT NULL;
 
 -- Heuristic classification (category + complexity), re-runnable. -----------
 -- scope: 'session' | 'turn'; target_id references that entity. -------------

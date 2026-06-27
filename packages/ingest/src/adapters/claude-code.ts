@@ -146,6 +146,7 @@ export class ClaudeCodeAdapter implements SourceAdapter {
         event_uuid: r.uuid,
         session_id: file.sessionId,
         turn_id: null,
+        message_id: asString(message.id),
         model: asString(message.model),
         input_tokens: asInt(usage.input_tokens),
         output_tokens: asInt(usage.output_tokens),

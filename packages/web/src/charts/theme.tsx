@@ -53,9 +53,9 @@ export function ChartCard({ title, hint, children }: { title: string; hint?: Rea
   );
 }
 
-export function Kpi({ label, value, sub }: { label: string; value: ReactNode; sub?: ReactNode }) {
+export function Kpi({ label, value, sub, title }: { label: string; value: ReactNode; sub?: ReactNode; title?: string }) {
   return (
-    <div className="kpi">
+    <div className="kpi" title={title}>
       <div className="kpi-label">{label}</div>
       <div className="kpi-value">{value}</div>
       {sub != null && <div className="kpi-sub">{sub}</div>}

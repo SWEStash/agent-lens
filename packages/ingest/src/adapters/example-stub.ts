@@ -94,6 +94,7 @@ export class ExampleStubAdapter implements SourceAdapter {
         event_uuid: r.id,
         session_id: file.sessionId,
         turn_id: null,
+        message_id: null, // this agent has no response-id grain — dedup falls back to event_uuid
         model: typeof r.model === "string" ? r.model : null,
         input_tokens: Number(u.prompt) || 0,
         output_tokens: Number(u.completion) || 0,

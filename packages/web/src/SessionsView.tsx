@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { api, type SessionSummary } from "./api";
-import { fmtCost, fmtDate, fmtDuration, fmtTokens, shortModel } from "./format";
+import { fmtCost, fmtDate, fmtDuration, fmtTokens, shortModel, tokenSplitTitle } from "./format";
 
 interface Source {
   id: string;
@@ -31,10 +31,14 @@ export default function SessionsView() {
     setLoading(true);
     setError(null);
     const qs = new URLSearchParams();
-    for (const k of ["source", "model", "kind", "q"]) {
+    for (const k of ["source", "model", "q"]) {
       const v = params.get(k);
       if (v) qs.set(k, v);
     }
+    // Default to main sessions only: subagents share their parent's slug, so listing them flat made
+    // one task look like several "replicated" rows. They stay reachable via the filter and are nested
+    // under their parent in the session detail view.
+    qs.set("kind", params.get("kind") || "main");
     qs.set("limit", String(PAGE));
     qs.set("offset", String(offset));
     api<{ total: number; sessions: SessionSummary[] }>("/sessions?" + qs.toString())
@@ -95,9 +99,9 @@ export default function SessionsView() {
             </option>
           ))}
         </select>
-        <select aria-label="Filter by kind" value={params.get("kind") ?? ""} onChange={(e) => setParam("kind", e.target.value)}>
-          <option value="">main + subagents</option>
+        <select aria-label="Filter by kind" value={params.get("kind") || "main"} onChange={(e) => setParam("kind", e.target.value)}>
           <option value="main">main only</option>
+          <option value="all">main + subagents</option>
           <option value="subagent">subagents only</option>
         </select>
       </div>
@@ -140,8 +144,8 @@ export default function SessionsView() {
                 <td>{s.source_id}</td>
                 <td className="path">{s.project_path?.replace(/^.*\//, "") ?? "—"}</td>
                 <td className="num">{s.turn_count}</td>
-                <td className="num">{fmtTokens(s.tokens)}</td>
-                <td className="num">{fmtCost(s.cost)}</td>
+                <td className="num" title={tokenSplitTitle(s.token_split)}>{fmtTokens(s.tokens)}</td>
+                <td className="num" title="API list-price equivalent (cache-aware) — not subscription spend">{fmtCost(s.cost)}</td>
                 <td className="num">{fmtDuration(s.duration_ms)}</td>
                 <td>{fmtDate(s.started_at)}</td>
               </tr>
