@@ -134,16 +134,43 @@ table.sessions { width: 100%; border-collapse: collapse; }
 .export { margin-left: auto; border: 1px solid var(--border); border-radius: 6px; padding: 6px 12px; }
 .subagent-link { display: inline-block; font-size: 12px; margin: 0 0 4px 10px; }
 
+.subagents { margin: 0 0 18px; padding: 12px 14px; border: 1px solid var(--border); border-radius: 8px; }
+.subagents h2 { font-size: 13px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); margin: 0 0 8px; }
+.subagents ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+.subagents li { font-size: 13px; }
+
 .transcript { display: flex; flex-direction: column; gap: 10px; }
-.turn-sep {
-  margin: 14px 0 4px;
+.transcript-tools { display: flex; align-items: center; gap: 12px; margin-bottom: 2px; }
+.unturned { display: flex; flex-direction: column; gap: 10px; }
+
+/* Collapsible turn: header bar (always visible) + body that renders only while expanded. */
+.turn { display: flex; flex-direction: column; gap: 10px; }
+.turn-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  text-align: left;
+  background: transparent;
+  border: none;
+  border-top: 1px dashed var(--border);
+  border-radius: 0;
+  padding: 8px 4px 4px;
   font-size: 12px;
   color: var(--accent);
-  border-top: 1px dashed var(--border);
-  padding-top: 8px;
-  font-weight: 600;
+  /* Stick the header under the top app bar so the current turn stays labeled while scrolling. */
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  backdrop-filter: blur(6px);
 }
-.turn-preview { color: var(--muted); font-weight: 400; }
+.turn-head:hover:not(:disabled) { border-color: var(--accent); }
+.turn-head .turn-chev { margin-left: 0; color: var(--muted); }
+.turn-no { font-weight: 600; }
+.turn-preview { color: var(--muted); font-weight: 400; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.turn-stats { margin-left: auto; flex: none; }
+.turn-body { display: flex; flex-direction: column; gap: 10px; }
+.turn-body:empty { display: none; }
 .event { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 12px; }
 .event.ev-user { border-left: 3px solid var(--user); }
 .event.ev-assistant { border-left: 3px solid var(--assistant); }

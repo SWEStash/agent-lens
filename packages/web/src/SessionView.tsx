@@ -1,7 +1,7 @@
 import { useEffect, useId, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { api, type Classification, type EventNode, type SessionDetail, type ToolCall } from "./api";
-import { fmtCost, fmtDate, fmtDuration, fmtTokens, shortModel } from "./format";
+import { fmtCost, fmtDate, fmtDuration, fmtTokens, shortModel, tokenSplitTitle } from "./format";
 
 function ClassificationBadge({ c }: { c: Classification }) {
   const [open, setOpen] = useState(false);
@@ -89,6 +89,48 @@ function prettyJson(s: string): string {
   }
 }
 
+interface TurnGroup {
+  turnId: string | null;
+  turn: any | null;
+  events: EventNode[];
+}
+
+/** Group consecutive renderable events into their turns, preserving transcript order. Events with no
+ * turn (e.g. leading meta lines) fall into header-less groups so they still render. */
+function groupByTurn(events: EventNode[], turns: any[]): TurnGroup[] {
+  const byId = new Map(turns.map((t) => [t.id, t]));
+  const groups: TurnGroup[] = [];
+  for (const e of events) {
+    const turnId = e.turn_id ?? null;
+    const last = groups[groups.length - 1];
+    if (last && last.turnId === turnId) last.events.push(e);
+    else groups.push({ turnId, turn: turnId ? byId.get(turnId) ?? null : null, events: [e] });
+  }
+  return groups;
+}
+
+/** A collapsible turn: the header stays visible (turn no., prompt preview, message count, duration)
+ * so a long transcript can be scanned and navigated; the messages render only while expanded. */
+function TurnSection({ turn, events, open, onToggle }: { turn: any; events: EventNode[]; open: boolean; onToggle: () => void }) {
+  const regionId = useId();
+  return (
+    <section className={"turn" + (open ? " is-open" : "")}>
+      <button className="turn-head" aria-expanded={open} aria-controls={regionId} onClick={onToggle}>
+        <span className="chev turn-chev" aria-hidden="true">{open ? "▾" : "▸"}</span>
+        <span className="turn-no">turn {turn.seq + 1}</span>
+        {turn.prompt_preview ? <span className="turn-preview">{turn.prompt_preview}</span> : null}
+        <span className="turn-stats muted">
+          {events.length} msg{events.length === 1 ? "" : "s"}
+          {turn.duration_ms ? " · " + fmtDuration(turn.duration_ms) : ""}
+        </span>
+      </button>
+      <div id={regionId} className="turn-body" role="region" aria-label={`turn ${turn.seq + 1} messages`}>
+        {open && events.map((e) => <EventBlock key={e.uuid} e={e} />)}
+      </div>
+    </section>
+  );
+}
+
 function EventBlock({ e }: { e: EventNode }) {
   const [showThinking, setShowThinking] = useState(false);
   const thinkId = useId();
@@ -126,10 +168,13 @@ export default function SessionView() {
   const { id } = useParams();
   const [d, setD] = useState<SessionDetail | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // Turn ids that are collapsed. Empty = all expanded (preserves the prior always-open behavior).
+  const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
 
   useEffect(() => {
     setD(null);
     setError(null);
+    setCollapsed(new Set());
     api<SessionDetail>("/sessions/" + id)
       .then(setD)
       .catch((e) => setError(String(e)));
@@ -139,11 +184,21 @@ export default function SessionView() {
   if (!d) return <div className="muted pad" role="status" aria-live="polite">Loading…</div>;
   const s = d.session;
 
-  let lastTurn: string | null | undefined = undefined;
   // Events that actually render something (mirrors EventBlock's body check). A session with none
   // (e.g. a zero-turn session whose only line was a meta/command with no text) gets an empty-state
   // instead of a blank transcript area.
   const renderable = d.events.filter((e) => e.text || e.thinking || e.toolCalls.length);
+  const groups = groupByTurn(renderable, d.turns);
+  const collapsibleIds = groups.filter((g) => g.turn).map((g) => g.turnId as string);
+  const anyOpen = collapsibleIds.some((tid) => !collapsed.has(tid));
+
+  const toggleTurn = (tid: string) =>
+    setCollapsed((prev) => {
+      const next = new Set(prev);
+      if (next.has(tid)) next.delete(tid);
+      else next.add(tid);
+      return next;
+    });
 
   return (
     <div className="detail">
@@ -165,8 +220,8 @@ export default function SessionView() {
           )}
           <span>{d.turns.length} turns</span>
           <span>{s.event_count} events</span>
-          <span>{fmtTokens(s.tokens)} tok</span>
-          <span>{fmtCost(s.cost)}</span>
+          <span title={tokenSplitTitle(s.token_split)}>{fmtTokens(s.tokens)} tok</span>
+          <span title="API list-price equivalent (cache-aware) — what a subscription saves you, not money spent">{fmtCost(s.cost)}</span>
           <span>{fmtDuration(s.duration_ms)}</span>
           <span className="muted">{fmtDate(s.started_at)}</span>
           <a className="export" href={`/api/sessions/${s.id}/export.md`}>
@@ -176,28 +231,58 @@ export default function SessionView() {
         {d.classification && <ClassificationBadge c={d.classification} />}
       </div>
 
+      {d.children && d.children.length > 0 && (
+        <div className="subagents">
+          <h2>Spawned subagents ({d.children.length})</h2>
+          <ul>
+            {d.children.map((c) => (
+              <li key={c.id}>
+                <Link to={`/session/${c.id}`}>{c.title || c.id.slice(0, 12)}</Link>
+                <span className="muted">
+                  {" "}· {(c.models ?? "").split(",").filter(Boolean).map(shortModel).join(", ")} ·{" "}
+                  {fmtTokens(c.tokens)} tok · {fmtCost(c.cost)}
+                </span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      {collapsibleIds.length > 1 && (
+        <div className="transcript-tools">
+          <span className="muted small">{collapsibleIds.length} turns</span>
+          <button
+            className="ghost small"
+            onClick={() => setCollapsed(anyOpen ? new Set(collapsibleIds) : new Set())}
+          >
+            {anyOpen ? "Collapse all" : "Expand all"}
+          </button>
+        </div>
+      )}
+
       <div className="transcript">
         {renderable.length === 0 && (
           <div className="muted pad" role="status">
             This session has no rendered messages.
           </div>
         )}
-        {renderable.map((e) => {
-          const turnBreak = e.turn_id !== lastTurn && e.turn_id != null;
-          lastTurn = e.turn_id;
-          const turn = turnBreak ? d.turns.find((t) => t.id === e.turn_id) : null;
-          return (
-            <div key={e.uuid}>
-              {turn && (
-                <div className="turn-sep">
-                  turn {turn.seq + 1}
-                  {turn.prompt_preview ? <span className="turn-preview"> · {turn.prompt_preview}</span> : null}
-                </div>
-              )}
-              <EventBlock e={e} />
+        {groups.map((g, i) =>
+          g.turn ? (
+            <TurnSection
+              key={g.turnId}
+              turn={g.turn}
+              events={g.events}
+              open={!collapsed.has(g.turnId as string)}
+              onToggle={() => toggleTurn(g.turnId as string)}
+            />
+          ) : (
+            <div key={"unturned-" + i} className="unturned">
+              {g.events.map((e) => (
+                <EventBlock key={e.uuid} e={e} />
+              ))}
             </div>
-          );
-        })}
+          ),
+        )}
       </div>
     </div>
   );
