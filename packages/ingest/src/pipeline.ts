@@ -130,6 +130,15 @@ export function rebuildDerived(db: DB) {
       CAST((julianday(ended_at) - julianday(started_at)) * 86400000 AS INTEGER)
     WHERE started_at IS NOT NULL AND ended_at IS NOT NULL
   `);
+
+  // Prune phantom sessions: any with zero events is not a real transcript. discover() walks every
+  // *.jsonl under projects/, which sweeps up non-transcript files that happen to live there — e.g.
+  // a Workflow tool's `journal.jsonl` (lines carry no `uuid`, so they yield no events). insSessionStub
+  // still created a row (and they all share the basename → one phantom "journal" session). A zero-event
+  // session has no events/turns/token_usage/tool_calls referencing it, so the delete is FK-safe; the
+  // orphaned-classification sweep keeps the (no-FK) classifications table from accumulating dead rows.
+  db.exec("DELETE FROM sessions WHERE event_count = 0");
+  db.exec("DELETE FROM classifications WHERE scope = 'session' AND target_id NOT IN (SELECT id FROM sessions)");
 }
 
 export interface IngestStatements {
@@ -167,9 +176,12 @@ export function prepareStatements(db: DB): IngestStatements {
        ON CONFLICT(uuid) DO NOTHING`,
     ),
     insTokens: db.prepare(
-      `INSERT INTO token_usage (event_uuid, session_id, turn_id, model, input_tokens, output_tokens, cache_creation_input_tokens, cache_read_input_tokens, service_tier)
-       VALUES (@event_uuid, @session_id, @turn_id, @model, @input_tokens, @output_tokens, @cache_creation_input_tokens, @cache_read_input_tokens, @service_tier)
-       ON CONFLICT(event_uuid) DO NOTHING`,
+      // Bare ON CONFLICT (no target) so the insert is skipped on EITHER the event_uuid PK or the
+      // unique (session_id, message_id) index — the latter collapses a response's repeated
+      // per-content-block usage lines into a single row.
+      `INSERT INTO token_usage (event_uuid, session_id, turn_id, message_id, model, input_tokens, output_tokens, cache_creation_input_tokens, cache_read_input_tokens, service_tier)
+       VALUES (@event_uuid, @session_id, @turn_id, @message_id, @model, @input_tokens, @output_tokens, @cache_creation_input_tokens, @cache_read_input_tokens, @service_tier)
+       ON CONFLICT DO NOTHING`,
     ),
     insTool: db.prepare(
       `INSERT INTO tool_calls (id, event_uuid, session_id, turn_id, tool_name, caller, skill_name, agent_type, spawned_session_id, resolved_model, status, total_duration_ms, total_tokens, total_tool_use_count, input_json, result_summary)

@@ -59,6 +59,20 @@ const ZERO = file(
   jsonl({ uuid: "z1", type: "user", timestamp: T(1), isMeta: true, cwd: "/tmp/proj", message: { role: "user", content: "" } }),
 );
 
+// Multi-content-block response: Claude Code logs ONE API response as several JSONL lines (one per
+// content block) and stamps the IDENTICAL usage (and message.id) on each. The ingest must count
+// that response's tokens ONCE — not once per block — via the (session_id, message_id) dedup.
+const DUP_USAGE = { input_tokens: 500, output_tokens: 60, cache_creation_input_tokens: 100, cache_read_input_tokens: 9000 };
+const MULTIBLOCK = file(
+  "sess-multiblock",
+  jsonl(
+    { uuid: "mb0", type: "user", timestamp: T(1), message: { role: "user", content: "Do a multi-tool task" } },
+    { uuid: "mb1", type: "assistant", timestamp: T(2), message: { role: "assistant", id: "msg_dup1", model: "claude-opus-4-8", content: [{ type: "text", text: "Working." }], usage: DUP_USAGE } },
+    { uuid: "mb2", type: "assistant", timestamp: T(2), message: { role: "assistant", id: "msg_dup1", model: "claude-opus-4-8", content: [{ type: "tool_use", id: "toolu_x", name: "Read", input: {} }], usage: DUP_USAGE } },
+    { uuid: "mb3", type: "assistant", timestamp: T(2), message: { role: "assistant", id: "msg_dup1", model: "claude-opus-4-8", content: [{ type: "tool_use", id: "toolu_y", name: "Read", input: {} }], usage: DUP_USAGE } },
+  ),
+);
+
 let db: ReturnType<typeof openDb>;
 
 beforeAll(() => {
@@ -70,7 +84,7 @@ beforeAll(() => {
   // Agent + source must exist before sessions reference them (FK).
   stmts.insAgent.run(AGENT, "Claude Code CLI");
   stmts.insSource.run({ id: SOURCE, label: SOURCE, agent_id: AGENT, config_dir: null });
-  for (const f of [PARENT, SUBAGENT, ZERO]) {
+  for (const f of [PARENT, SUBAGENT, ZERO, MULTIBLOCK]) {
     ingestFile(db, stmts, adapter, f.file, f.content, { size: f.content.length, mtimeMs: 0, hash: f.file.sessionId }, now, stats);
   }
   rebuildDerived(db);
@@ -80,7 +94,7 @@ beforeAll(() => {
 describe("ingest pipeline (golden fixtures)", () => {
   it("creates one session per transcript file", () => {
     const n = (db.prepare("SELECT COUNT(*) n FROM sessions").get() as any).n;
-    expect(n).toBe(3);
+    expect(n).toBe(4);
   });
 
   it("extracts skill_name from a Skill tool_use", () => {
@@ -112,10 +126,25 @@ describe("ingest pipeline (golden fixtures)", () => {
 
   it("records token usage per assistant event", () => {
     const n = (db.prepare("SELECT COUNT(*) n FROM token_usage").get() as any).n;
-    expect(n).toBe(4); // u2, u4, u6, s2
+    expect(n).toBe(5); // u2, u4, u6, s2 (no message.id → kept per-event), + 1 deduped multiblock
     const u2 = db.prepare("SELECT input_tokens, output_tokens FROM token_usage WHERE event_uuid = ?").get("u2") as any;
     expect(u2.input_tokens).toBe(100);
     expect(u2.output_tokens).toBe(20);
+  });
+
+  it("counts a multi-content-block response's usage exactly once (not per block)", () => {
+    const rows = db
+      .prepare("SELECT event_uuid, input_tokens, output_tokens, cache_read_input_tokens FROM token_usage WHERE session_id = ?")
+      .all("sess-multiblock") as any[];
+    expect(rows.length).toBe(1); // mb1/mb2/mb3 share message.id msg_dup1 → deduped
+    expect(rows[0].input_tokens).toBe(500); // counted once, not 1500
+    expect(rows[0].cache_read_input_tokens).toBe(9000); // not 27000
+    // Aggregating the whole session must not triple-count the cached prefix.
+    const sum = db
+      .prepare("SELECT SUM(input_tokens) i, SUM(cache_read_input_tokens) cr FROM token_usage WHERE session_id = ?")
+      .get("sess-multiblock") as any;
+    expect(sum.i).toBe(500);
+    expect(sum.cr).toBe(9000);
   });
 
   it("handles a zero-turn session without crashing", () => {
@@ -126,6 +155,54 @@ describe("ingest pipeline (golden fixtures)", () => {
 
   it("classifies every session (incl. the zero-turn one)", () => {
     const n = (db.prepare("SELECT COUNT(*) n FROM classifications WHERE scope = 'session'").get() as any).n;
-    expect(n).toBe(3);
+    expect(n).toBe(4);
+  });
+});
+
+// A non-transcript .jsonl that lives under projects/ (e.g. a Workflow tool's journal.jsonl, whose
+// lines carry no `uuid`) gets swept up by discover() and creates a session stub with zero events.
+// rebuildDerived must prune it so it never surfaces as a phantom empty session in the UI/counts.
+describe("prunes phantom zero-event sessions (e.g. workflow journals)", () => {
+  let pdb: ReturnType<typeof openDb>;
+  beforeAll(() => {
+    pdb = openDb(":memory:");
+    const stmts = prepareStatements(pdb);
+    const stats = newStats();
+    const now = "2026-01-01T00:00:00.000Z";
+    const adapter = new ClaudeCodeAdapter();
+    stmts.insAgent.run(AGENT, "Claude Code CLI");
+    stmts.insSource.run({ id: SOURCE, label: SOURCE, agent_id: AGENT, config_dir: null });
+    // A real transcript + a journal-like file whose lines have no uuid → no events.
+    const real = file("sess-real", jsonl({ uuid: "r1", type: "user", timestamp: T(1), cwd: "/tmp/p", message: { role: "user", content: "do it" } }));
+    const journal = file(
+      "journal",
+      jsonl(
+        { type: "started", key: "v2:abc", agentId: "a1" },
+        { type: "result", key: "v2:abc", agentId: "a1", result: { cases: [] } },
+      ),
+    );
+    for (const f of [real, journal]) {
+      ingestFile(pdb, stmts, adapter, f.file, f.content, { size: f.content.length, mtimeMs: 0, hash: f.file.sessionId }, now, stats);
+    }
+    // Pre-condition: the stub exists before rebuild (proves the bug's source).
+    expect((pdb.prepare("SELECT COUNT(*) n FROM sessions WHERE id = 'journal'").get() as any).n).toBe(1);
+    rebuildDerived(pdb);
+    classify(pdb);
+  });
+
+  it("drops the zero-event 'journal' session", () => {
+    const n = (pdb.prepare("SELECT COUNT(*) n FROM sessions WHERE id = 'journal'").get() as any).n;
+    expect(n).toBe(0);
+  });
+
+  it("keeps the real transcript session", () => {
+    const real = pdb.prepare("SELECT event_count FROM sessions WHERE id = 'sess-real'").get() as any;
+    expect(real.event_count).toBe(1);
+    expect((pdb.prepare("SELECT COUNT(*) n FROM sessions").get() as any).n).toBe(1);
+  });
+
+  it("leaves no orphaned classification for the pruned session", () => {
+    const n = (pdb.prepare("SELECT COUNT(*) n FROM classifications WHERE target_id = 'journal'").get() as any).n;
+    expect(n).toBe(0);
   });
 });

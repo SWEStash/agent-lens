@@ -109,9 +109,14 @@ export default function Dashboard() {
       {overview && !loading && (
         <>
           <div className="kpis">
-            <Kpi label="Sessions" value={overview.sessions} sub={`${overview.sessions_main} main · ${overview.sessions_subagent} subagent`} />
+            <Kpi label="Sessions" value={overview.sessions_main} sub={`+${overview.sessions_subagent.toLocaleString()} subagent runs`} />
             <Kpi label="Turns" value={overview.turns} sub={`${overview.tool_calls.toLocaleString()} tool calls`} />
-            <Kpi label="Est. cost" value={fmtCost(overview.cost)} sub={overview.unpriced_models.length ? `⚠ unpriced: ${overview.unpriced_models.map(shortModel).join(", ")}` : "all models priced"} />
+            <Kpi
+              label="Est. cost (API-equiv.)"
+              value={fmtCost(overview.cost)}
+              title="Pay-as-you-go API list price for this usage — i.e. what a Pro/Max subscription saves you, NOT money actually spent. Cache reads/writes are included at their (discounted) cache rates."
+              sub={overview.unpriced_models.length ? `⚠ unpriced: ${overview.unpriced_models.map(shortModel).join(", ")}` : "API list price, not subscription spend"}
+            />
             <Kpi
               label="Cache-read ratio"
               value={(overview.cache_read_ratio * 100).toFixed(1) + "%"}
@@ -141,7 +146,7 @@ export default function Dashboard() {
               </ResponsiveContainer>
             </ChartCard>
 
-            <ChartCard title="Cost over time" hint="derived from model × tokens (cache-aware)">
+            <ChartCard title="Cost over time" hint="API list price, model × tokens (cache-aware) — not subscription spend">
               <ResponsiveContainer width="100%" height={220}>
                 <LineChart data={ts?.series ?? []} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
                   <CartesianGrid {...gridProps} />

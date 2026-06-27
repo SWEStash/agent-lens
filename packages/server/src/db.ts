@@ -44,8 +44,11 @@ export interface SessionFilters {
 export function listSources(db: DB) {
   return db
     .prepare(
+      // Count MAIN sessions only (is_sidechain = 0): the dropdown filters the session list, which
+      // defaults to main-only, so a source's count must match what you'd see — not be inflated by the
+      // many subagent sidechains each task spawns.
       `SELECT s.id, s.label, s.agent_id, s.config_dir,
-              (SELECT COUNT(*) FROM sessions x WHERE x.source_id = s.id) AS session_count
+              (SELECT COUNT(*) FROM sessions x WHERE x.source_id = s.id AND x.is_sidechain = 0) AS session_count
        FROM sources s ORDER BY s.label`,
     )
     .all();
@@ -55,7 +58,7 @@ export function listProjects(db: DB) {
   return db
     .prepare(
       `SELECT p.id, p.path,
-              (SELECT COUNT(*) FROM sessions x WHERE x.project_id = p.id) AS session_count
+              (SELECT COUNT(*) FROM sessions x WHERE x.project_id = p.id AND x.is_sidechain = 0) AS session_count
        FROM projects p ORDER BY session_count DESC, p.path`,
     )
     .all();
@@ -105,7 +108,8 @@ export function listSessions(db: DB, f: SessionFilters) {
 
   // Cost + tokens per session for this page (grouped by model so rates apply correctly).
   const ids = rows.map((r) => r.id);
-  const costBySession = new Map<string, { tokens: number; cost: number }>();
+  type Acc = { tokens: number; cost: number; split: { input: number; output: number; cache_creation: number; cache_read: number } };
+  const costBySession = new Map<string, Acc>();
   if (ids.length) {
     const ph = ids.map(() => "?").join(",");
     const usage = db
@@ -117,8 +121,12 @@ export function listSessions(db: DB, f: SessionFilters) {
       )
       .all(...ids) as any[];
     for (const u of usage) {
-      const acc = costBySession.get(u.session_id) ?? { tokens: 0, cost: 0 };
+      const acc = costBySession.get(u.session_id) ?? { tokens: 0, cost: 0, split: { input: 0, output: 0, cache_creation: 0, cache_read: 0 } };
       acc.tokens += u.i + u.o + u.cw + u.cr;
+      acc.split.input += u.i;
+      acc.split.output += u.o;
+      acc.split.cache_creation += u.cw;
+      acc.split.cache_read += u.cr;
       acc.cost += costForUsage(u.model, {
         input_tokens: u.i,
         output_tokens: u.o,
@@ -131,6 +139,7 @@ export function listSessions(db: DB, f: SessionFilters) {
   for (const r of rows) {
     const c = costBySession.get(r.id);
     r.tokens = c?.tokens ?? 0;
+    r.token_split = c?.split ?? { input: 0, output: 0, cache_creation: 0, cache_read: 0 };
     r.cost = c ? Number(c.cost.toFixed(4)) : 0;
     r.title = r.ai_title || r.slug || null;
   }
@@ -190,10 +199,16 @@ export function getSession(db: DB, id: string) {
        FROM token_usage WHERE session_id = ? GROUP BY model`,
     )
     .all(id) as any[];
-  let tokens = 0;
+  // Keep the token categories split so the UI can show input/output/cache-write/cache-read
+  // separately. Cache stays IN the total and IS cost-attributed (at its discounted rate) — it is
+  // differentiated, never dropped.
+  const split = { input: 0, output: 0, cache_creation: 0, cache_read: 0 };
   let cost = 0;
   for (const u of usage) {
-    tokens += u.i + u.o + u.cw + u.cr;
+    split.input += u.i;
+    split.output += u.o;
+    split.cache_creation += u.cw;
+    split.cache_read += u.cr;
     cost += costForUsage(u.model, {
       input_tokens: u.i,
       output_tokens: u.o,
@@ -201,7 +216,8 @@ export function getSession(db: DB, id: string) {
       cache_read_input_tokens: u.cr,
     });
   }
-  session.tokens = tokens;
+  session.tokens = split.input + split.output + split.cache_creation + split.cache_read;
+  session.token_split = split;
   session.cost = Number(cost.toFixed(4));
   session.title = session.ai_title || session.slug || null;
 
@@ -244,5 +260,30 @@ export function getSession(db: DB, id: string) {
     if (p) parent = { id: p.id, title: p.ai_title || p.slug || null, turn_seq: p.turn_seq ?? null };
   }
 
-  return { session, turns, events, classification, parent };
+  // Spawned subagents (schema v3): sessions whose parent_session_id points back here. Nesting them
+  // under the parent is why the flat session list defaults to main-only — a task with N subagents is
+  // one row with N children, not N+1 sibling rows sharing the same slug.
+  const children = db
+    .prepare(
+      `SELECT s.id, s.ai_title, s.slug, s.turn_count, s.started_at,
+              (SELECT GROUP_CONCAT(DISTINCT model) FROM token_usage t WHERE t.session_id = s.id) AS models
+       FROM sessions s WHERE s.parent_session_id = ? ORDER BY s.started_at`,
+    )
+    .all(id) as any[];
+  for (const ch of children) {
+    ch.title = ch.ai_title || ch.slug || null;
+    const u = db
+      .prepare(
+        `SELECT model, SUM(input_tokens) i, SUM(output_tokens) o,
+                SUM(cache_creation_input_tokens) cw, SUM(cache_read_input_tokens) cr
+         FROM token_usage WHERE session_id = ? GROUP BY model`,
+      )
+      .all(ch.id) as any[];
+    ch.tokens = u.reduce((a, r) => a + r.i + r.o + r.cw + r.cr, 0);
+    ch.cost = Number(
+      u.reduce((a, r) => a + costForUsage(r.model, { input_tokens: r.i, output_tokens: r.o, cache_creation_input_tokens: r.cw, cache_read_input_tokens: r.cr }), 0).toFixed(4),
+    );
+  }
+
+  return { session, turns, events, classification, parent, children };
 }

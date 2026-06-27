@@ -87,3 +87,30 @@ describe("server API smoke", () => {
     expect(body.skills.some((s: any) => s.name === "test-suite-design")).toBe(true);
   });
 });
+
+// The source-filter dropdown shows "(N)" next to each source. N must be MAIN sessions only — the list
+// it filters defaults to main-only, and each task spawns many subagent sidechains, so counting all
+// sessions wildly inflates it (the reported 327-vs-27 bug).
+describe("source session_count counts main sessions only", () => {
+  it("GET /api/sources → excludes subagent sidechains", async () => {
+    const db = new Database(":memory:");
+    db.pragma("foreign_keys = ON");
+    db.exec(SCHEMA_SQL);
+    db.exec(`
+      INSERT INTO agents (id, name, kind) VALUES ('claude-code', 'Claude Code CLI', 'cli');
+      INSERT INTO sources (id, label, agent_id, config_dir) VALUES ('isf', 'isf', 'claude-code', NULL);
+      INSERT INTO sessions (id, agent_id, source_id, is_sidechain, event_count, turn_count) VALUES
+        ('m1', 'claude-code', 'isf', 0, 3, 1),
+        ('a1', 'claude-code', 'isf', 1, 2, 1),
+        ('a2', 'claude-code', 'isf', 1, 2, 1),
+        ('a3', 'claude-code', 'isf', 1, 2, 1);
+    `);
+    const app2 = await createApp(db);
+    await app2.ready();
+    const r = await app2.inject({ method: "GET", url: "/api/sources" });
+    expect(r.statusCode).toBe(200);
+    const src = r.json().find((s: any) => s.id === "isf");
+    expect(src.session_count).toBe(1); // 1 main, not 4 (3 subagents excluded)
+    await app2.close();
+  });
+});
