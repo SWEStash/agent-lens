@@ -5,6 +5,11 @@ After=network.target
 
 [Service]
 Type=simple
+# This host activates Node via mise (a shell hook); systemd user services don't get that hook,
+# so node would be off PATH. setup-systemd.sh bakes the resolved node bin dir in here, and runs
+# from the repo so any directory-pinned toolchain (mise.toml) resolves correctly.
+WorkingDirectory=__REPO_ROOT__
+Environment=PATH=__NODE_BIN__:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 ExecStart=__SERVE_SH__
 # Long-running: restart if it crashes.
 Restart=on-failure

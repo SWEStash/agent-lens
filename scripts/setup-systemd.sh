@@ -36,11 +36,31 @@ Install targets (default: all):
   all          Data collection+ingest timer AND the web UI server.
   data-load    Only the collection+ingest timer (Stage 1 + Stage 2).
   web-ui       Only the web UI + API server (Stage 3).
+
+After install:
+  data load (collect + ingest) runs on agent-lens-collect.timer
+    run now: systemctl --user start agent-lens-collect.service
+    logs:    journalctl --user -u agent-lens-collect.service -f
+
+  Web UI -> http://127.0.0.1:4477  (override: AGENT_LENS_HOST / AGENT_LENS_PORT)
+    logs:    journalctl --user -u agent-lens-server.service -f
 EOF
 }
 
 require_systemd() {
   command -v systemctl >/dev/null 2>&1 || { echo "agent-lens: systemctl not found" >&2; exit 1; }
+}
+
+# Resolve the directory holding `node`, to bake into the units' PATH. systemd user services don't
+# inherit the interactive shell's mise activation, so an un-baked node would be off PATH at runtime
+# (see mise.toml). Resolving here pins the same node this install shell sees.
+resolve_node_bin() {
+  local node_path
+  node_path="$(command -v node 2>/dev/null)" || {
+    echo "agent-lens: node not found on PATH — activate your toolchain first (e.g. 'mise install')" >&2
+    exit 1
+  }
+  NODE_BIN="$(cd "$(dirname "$node_path")" && pwd)"
 }
 
 # Render the given unit files into the user unit dir, substituting absolute paths.
@@ -51,6 +71,7 @@ render_units() {
     sed -e "s#__COLLECT_SH__#$COLLECT_SH#g" \
         -e "s#__INGEST_SH__#$INGEST_SH#g" \
         -e "s#__SERVE_SH__#$SERVE_SH#g" \
+        -e "s#__NODE_BIN__#$NODE_BIN#g" \
         -e "s#__REPO_ROOT__#$REPO_ROOT#g" \
         "$UNIT_SRC/$u" > "$UNIT_DST/$u"
   done
@@ -75,6 +96,8 @@ install_units() {
     *) echo "agent-lens: unknown install target '$target' (use: all | data-load | web-ui)" >&2; exit 1 ;;
   esac
 
+  resolve_node_bin
+
   local units=()
   [[ $want_data -eq 1 ]] && { chmod +x "$COLLECT_SH" "$INGEST_SH"; units+=("${DATA_UNITS[@]}"); }
   [[ $want_web  -eq 1 ]] && { chmod +x "$SERVE_SH";               units+=("${WEB_UNITS[@]}"); }
@@ -86,7 +109,10 @@ install_units() {
     systemctl --user enable --now agent-lens-collect.timer
   fi
   if [[ $want_web -eq 1 ]]; then
-    systemctl --user enable --now agent-lens-server.service
+    # `restart` (not `--now`) so re-running install actually applies re-rendered unit changes to an
+    # already-running server; restart still starts it if it was stopped.
+    systemctl --user enable agent-lens-server.service
+    systemctl --user restart agent-lens-server.service
   fi
 
   enable_linger
@@ -94,6 +120,21 @@ install_units() {
   echo "agent-lens: installed ($target)."
   [[ $want_data -eq 1 ]] && systemctl --user list-timers agent-lens-collect.timer --no-pager || true
   [[ $want_web  -eq 1 ]] && systemctl --user --no-pager status agent-lens-server.service 2>/dev/null | head -3 || true
+
+  if [[ $want_data -eq 1 ]]; then
+    # collect (Stage 1) + ingest (Stage 2) both run under agent-lens-collect.service.
+    echo
+    echo "agent-lens: data load (collect + ingest) runs on agent-lens-collect.timer"
+    echo "  run now: systemctl --user start agent-lens-collect.service"
+    echo "  logs:    journalctl --user -u agent-lens-collect.service -f"
+  fi
+  if [[ $want_web -eq 1 ]]; then
+    # Match serve.sh defaults (ADR-005): binds 127.0.0.1:4477 unless overridden.
+    local host="${AGENT_LENS_HOST:-127.0.0.1}" port="${AGENT_LENS_PORT:-4477}"
+    echo
+    echo "agent-lens: Web UI → http://${host}:${port}"
+    echo "  logs:    journalctl --user -u agent-lens-server.service -f"
+  fi
 }
 
 uninstall_units() {
@@ -103,6 +144,9 @@ uninstall_units() {
   local u
   for u in "${ALL_UNITS[@]}"; do rm -f "$UNIT_DST/$u"; done
   systemctl --user daemon-reload
+  # Clear any lingering failed state so teardown leaves a clean slate (no phantom entries in
+  # `systemctl --user --failed`, e.g. after a crash-loop).
+  systemctl --user reset-failed "${ALL_UNITS[@]}" 2>/dev/null || true
   echo "agent-lens: uninstalled (linger left unchanged; archive untouched)."
 }
 
