@@ -83,6 +83,30 @@ Each `install` enables linger and starts the chosen units. The units are
 `agent-lens-collect.{service,timer}` (data-load) and `agent-lens-server.service` (web-ui); the
 collect schedule (09:00/13:00/17:00/21:00, with catch-up) lives in `systemd/agent-lens-collect.timer`.
 
+### Changing the collection schedule
+
+The default cadence is four runs a day (`OnCalendar=*-*-* 09,13,17,21:00`), with `Persistent=true`
+(runs a missed job once the machine is back on) and `RandomizedDelaySec=300` (≤5 min jitter). Two
+ways to change it:
+
+```bash
+# A) Drop-in override (survives re-installs — recommended). Opens an editor; add only what changes:
+systemctl --user edit agent-lens-collect.timer
+#   [Timer]
+#   OnCalendar=                 # blank line first clears the inherited value…
+#   OnCalendar=hourly           # …then set your own (e.g. hourly, or *-*-* 08,20:00)
+systemctl --user restart agent-lens-collect.timer
+
+# B) Edit the source unit, then re-render + restart via install:
+$EDITOR systemd/agent-lens-collect.timer    # change OnCalendar / RandomizedDelaySec / Persistent
+scripts/setup-systemd.sh install data-load  # re-renders the unit and reloads systemd
+```
+
+`OnCalendar` uses systemd calendar syntax — verify any expression with
+`systemd-analyze calendar 'your-expression'`. Re-running `install` (option B) overwrites the rendered
+unit, so a source edit is the durable choice if you don't want a separate drop-in; check the next run
+with `scripts/setup-systemd.sh status` (or `systemctl --user list-timers`).
+
 ## Stage 2 — Ingest
 
 Parses the archive (mirror **and** `.versions/` backups, deduped by event `uuid`) into

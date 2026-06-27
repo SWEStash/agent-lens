@@ -3,6 +3,8 @@ Description=Agent Lens — periodic Claude Code trace collection
 
 [Timer]
 # A few times a day. Persistent catches runs missed while the machine was off.
+# To change the cadence: `systemctl --user edit agent-lens-collect.timer` (drop-in, survives
+# re-installs) or edit here + `setup-systemd.sh install data-load`. See docs/USAGE.md.
 OnCalendar=*-*-* 09,13,17,21:00
 Persistent=true
 RandomizedDelaySec=300
