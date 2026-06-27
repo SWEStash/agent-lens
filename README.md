@@ -29,16 +29,26 @@ without a single byte leaving your machine.
 
 ## At a glance
 
-Point it at your Claude install(s) and every session becomes queryable. Ingest reports what it found:
+Point it at your Claude install(s) and every session becomes queryable — in three local stages:
+
+**1 · Collect** — a background timer mirrors each account's transcripts into a local archive before
+Claude Code's 30-day prune (never deletes, never copies secrets):
 
 ```text
-$ pnpm ingest
+data/archive/
+  personal/   ← ~/.claude                312 sessions
+  work/       ← ~/.config/claude-work      88 sessions
+```
+
+**2 · Ingest** — the archive is normalized into SQLite + FTS5; every run reports what it found:
+
+```text
 agent-lens-ingest: files=312 skipped=298 new_events=1840 malformed=0
   sessions=312 turns=901 events=54333 tool_calls=17120 classified=312
   tokens=128,540,973 est_cost=$842.17 db=data/agent-lens.db
 ```
 
-Then `pnpm serve` opens a local dashboard + transcript browser on `127.0.0.1`:
+**3 · Browse** — a local dashboard + transcript browser on `127.0.0.1`:
 
 ```text
  🔎 Agent Lens          Sessions · Dashboard            local agent session explorer
@@ -76,11 +86,17 @@ Then `pnpm serve` opens a local dashboard + transcript browser on `127.0.0.1`:
 
 A three-stage local pipeline — **collect → ingest → browse**:
 
-```
- sources (accounts)        Stage 1             Stage 2              Stage 3
-  ~/.claude   ─┐           collect.sh          ingest               serve (127.0.0.1)
-  ~/.claude2  ─┼─ rsync ─▶ data/archive/  ──▶  SQLite + FTS5  ──▶   browse · search · dashboards
-  …           ┘          (systemd timer)      (+ classify)          · Markdown export
+```mermaid
+flowchart LR
+  subgraph SRC["Sources (accounts)"]
+    direction TB
+    A1["~/.claude"]
+    A2["~/.config/claude-work"]
+    A3["…"]
+  end
+  SRC -->|"Stage 1 · collect<br/>rsync · systemd timer"| ARCH["data/archive/"]
+  ARCH -->|"Stage 2 · ingest<br/>+ classify"| DB[("SQLite + FTS5")]
+  DB -->|"Stage 3 · serve · 127.0.0.1"| WEB["Browse · search · dashboards<br/>Markdown export"]
 ```
 
 - **Stage 1 — collect** is dumb, safe, and frequent: per source it only copies files, never deletes,
@@ -106,22 +122,21 @@ pnpm install && pnpm -r build
 # Configure which accounts to collect (defaults to one: personal -> ~/.claude)
 cp agent-lens.config.example.json agent-lens.config.json   # then edit
 
-# Stage 1 — collect. Install the systemd timer (runs a few times a day, even logged out)…
-scripts/setup-systemd.sh install
-#            …or run a one-off pass:
-scripts/collect.sh
+# One-off run of the whole pipeline:
+scripts/collect.sh         # Stage 1 — copy transcripts into data/archive/
+pnpm ingest                # Stage 2 — build data/agent-lens.db (incremental; --full rebuilds)
+pnpm serve                 # Stage 3 — browse → http://127.0.0.1:4477
 
-# Stage 2 — ingest the archive into data/agent-lens.db (incremental; --full rebuilds)
-pnpm ingest
-
-# Stage 3 — browse on 127.0.0.1 and open the printed URL
-pnpm serve                 # → http://127.0.0.1:4477
+# …or automate it with user systemd units (run even while logged out):
+scripts/setup-systemd.sh install            # all (default): collect+ingest timer AND the web server
+scripts/setup-systemd.sh install data-load  # only the collect+ingest timer (Stages 1–2)
+scripts/setup-systemd.sh install web-ui     # only the web UI + API server (Stage 3)
 ```
 
 > [!NOTE]
-> Collection and ingest are local-only and idempotent. The server is read-only and refuses to bind a
-> non-loopback host. For day-to-day use just run `pnpm ingest && pnpm serve` (the timer collects in
-> the background).
+> Collection and ingest are local-only and idempotent; the server is read-only and refuses to bind a
+> non-loopback host. The `data-load` timer runs collection **and** ingest in the background, so day
+> to day you only need the server — `pnpm serve`, or install it once with `setup-systemd.sh install web-ui`.
 
 ## Configuration
 

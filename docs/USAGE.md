@@ -3,11 +3,16 @@
 How to run the tool day to day. Agent Lens is a three-stage local pipeline:
 **collect → ingest → browse**. Nothing leaves your machine.
 
-```
-sources (agent accounts)   Stage 1            Stage 2              Stage 3
-  personal: ~/.claude  ──▶  collect.sh   ──▶  ingest        ──▶   serve (127.0.0.1)
-  work:     ~/.claude2      (rsync/timer)     (SQLite +           browse + search + export
-                                               classify)          + analytics dashboard
+```mermaid
+flowchart LR
+  subgraph SRC["Sources (agent accounts)"]
+    direction TB
+    A1["personal · ~/.claude"]
+    A2["work · ~/.config/claude-work"]
+  end
+  SRC -->|"Stage 1 · collect.sh<br/>rsync · systemd timer"| ARCH["data/archive/"]
+  ARCH -->|"Stage 2 · ingest<br/>+ classify"| DB[("SQLite + FTS5")]
+  DB -->|"Stage 3 · serve · 127.0.0.1"| WEB["Browse · search · export<br/>analytics dashboard"]
 ```
 
 ## Requirements
@@ -62,16 +67,21 @@ in `.versions/`.
 scripts/collect.sh              # run one pass now
 ```
 
-Run it automatically with a **user systemd timer** (a few times a day, even when logged out):
+Run it automatically with **user systemd units** (a few times a day, even when logged out). The
+timer fires a oneshot that runs collection (Stage 1) **and then ingest (Stage 2)**, so the DB stays
+current with no manual runs. `install` takes a target:
 
 ```bash
-scripts/setup-systemd.sh install     # install + enable + start + enable-linger
-scripts/setup-systemd.sh status      # show next scheduled run
-scripts/setup-systemd.sh uninstall   # stop & remove the timer (archive untouched)
+scripts/setup-systemd.sh install            # all (default): the collect+ingest timer AND the web server
+scripts/setup-systemd.sh install data-load  # only the collect+ingest timer (Stages 1–2)
+scripts/setup-systemd.sh install web-ui     # only the web UI + API server (Stage 3)
+scripts/setup-systemd.sh status             # timer schedule + service status
+scripts/setup-systemd.sh uninstall          # stop & remove ALL units (linger/archive untouched)
 ```
 
-The schedule (09:00/13:00/17:00/21:00, with catch-up) lives in
-`systemd/agent-lens-collect.timer`.
+Each `install` enables linger and starts the chosen units. The units are
+`agent-lens-collect.{service,timer}` (data-load) and `agent-lens-server.service` (web-ui); the
+collect schedule (09:00/13:00/17:00/21:00, with catch-up) lives in `systemd/agent-lens-collect.timer`.
 
 ## Stage 2 — Ingest
 
@@ -96,6 +106,10 @@ then `tokens / est_cost`.
 ```bash
 pnpm serve             # → http://127.0.0.1:4477   (read-only, loopback only)
 ```
+
+To keep it running in the background (restart on failure, start at boot), install it as a service
+instead: `scripts/setup-systemd.sh install web-ui` (binds `127.0.0.1`; override via
+`AGENT_LENS_PORT` / `AGENT_LENS_HOST`).
 
 Open the URL. The app has two views (nav tabs): **Sessions** (browse) and **Dashboard** (analytics).
 
@@ -144,11 +158,14 @@ re-run the above — no re-ingest needed. After changing *parser* logic instead,
 
 ## Typical daily loop
 
-The timer collects in the background. To look at the latest:
+With the `data-load` timer installed, collection **and** ingest run in the background, so the DB is
+already current — just open the UI (or leave the `web-ui` service running):
 
 ```bash
-pnpm ingest && pnpm serve
+pnpm serve                                  # or: scripts/setup-systemd.sh install web-ui  (once)
 ```
+
+Collecting manually instead? Run the full refresh: `scripts/collect.sh && pnpm ingest && pnpm serve`.
 
 ## Adding another account
 
