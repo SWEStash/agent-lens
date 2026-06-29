@@ -5,7 +5,7 @@
  */
 import { createHash } from "node:crypto";
 import type Database from "better-sqlite3";
-import { type SourceAdapter, type SourceFile, type TurnRow } from "@agent-lens/core";
+import { packRaw, type SourceAdapter, type SourceFile, type TurnRow } from "@agent-lens/core";
 import { type DB } from "./db.js";
 
 type Stmt = Database.Statement<any[]>;
@@ -74,16 +74,63 @@ export function buildTurns(
   return { turns, eventTurn };
 }
 
-export function rebuildDerived(db: DB) {
+/**
+ * Rebuild derived tables (turns, turn_id linkage, subagent parent linkage, session aggregates) from
+ * the idempotent events/tool_calls tables.
+ *
+ * `dirty` is the set of session ids touched by this ingest run (incremental). When provided, only the
+ * affected sessions are rebuilt — but the set is first expanded to its **linkage neighborhood** (the
+ * subagent children spawned by a dirty session, and the parent session that spawned a dirty sidechain)
+ * via a fixpoint, so cross-session parent/child links stay correct even when parent and child
+ * transcripts arrive in different runs (ADR-010). When `dirty` is null/undefined (`--full`), every
+ * session is rebuilt — the migration/reset path. Returns the expanded id set (or null for the full
+ * path) so `classify()` can reuse it without re-expanding.
+ */
+export function rebuildDerived(db: DB, dirty?: Set<string> | null): Set<string> | null {
+  const incremental = dirty != null;
+  // Scope fragments: empty for the full rebuild, else restrict to the materialized _dirty temp table.
+  const bySession = incremental ? " WHERE session_id IN (SELECT id FROM _dirty)" : "";
+  const byId = incremental ? " WHERE id IN (SELECT id FROM _dirty)" : "";
+  const andId = incremental ? " AND id IN (SELECT id FROM _dirty)" : "";
+  const andSelfId = incremental ? " AND sessions.id IN (SELECT id FROM _dirty)" : "";
+
+  if (incremental) {
+    db.exec("DROP TABLE IF EXISTS _dirty");
+    db.exec("CREATE TEMP TABLE _dirty (id TEXT PRIMARY KEY)");
+    const ins = db.prepare("INSERT OR IGNORE INTO _dirty (id) VALUES (?)");
+    db.transaction((ids: Iterable<string>) => {
+      for (const id of ids) ins.run(id);
+    })(dirty);
+    // Fixpoint expansion to the linkage neighborhood: a dirty parent pulls in the children it spawned,
+    // and a dirty child pulls in its spawner parent. Loop until the set stops growing (covers nested
+    // subagents). Bounded by the session count.
+    const expand = db.prepare(`
+      INSERT OR IGNORE INTO _dirty (id)
+        SELECT spawned_session_id FROM tool_calls
+          WHERE session_id IN (SELECT id FROM _dirty) AND spawned_session_id IS NOT NULL
+        UNION
+        SELECT session_id FROM tool_calls
+          WHERE spawned_session_id IN (SELECT id FROM _dirty)
+    `);
+    const count = db.prepare("SELECT COUNT(*) n FROM _dirty");
+    let prev = -1;
+    for (;;) {
+      const n = (count.get() as { n: number }).n;
+      if (n === prev) break;
+      prev = n;
+      expand.run();
+    }
+  }
+
   // Recompute turns from the (idempotent) events table.
   // Null referencing turn_ids BEFORE deleting turns (FK: events/token_usage/tool_calls/sessions -> turns).
-  db.exec("UPDATE events SET turn_id = NULL");
-  db.exec("UPDATE token_usage SET turn_id = NULL");
-  db.exec("UPDATE tool_calls SET turn_id = NULL");
-  db.exec("UPDATE sessions SET parent_turn_id = NULL");
-  db.exec("DELETE FROM turns");
+  db.exec(`UPDATE events SET turn_id = NULL${bySession}`);
+  db.exec(`UPDATE token_usage SET turn_id = NULL${bySession}`);
+  db.exec(`UPDATE tool_calls SET turn_id = NULL${bySession}`);
+  db.exec(`UPDATE sessions SET parent_turn_id = NULL${byId}`);
+  db.exec(`DELETE FROM turns${bySession}`);
 
-  const sessionIds = db.prepare("SELECT id FROM sessions").all() as Array<{ id: string }>;
+  const sessionIds = db.prepare(`SELECT id FROM sessions${byId}`).all() as Array<{ id: string }>;
   const selEvents = db.prepare(
     "SELECT uuid, type, is_sidechain, is_meta, timestamp, model, text FROM events WHERE session_id = ?",
   );
@@ -104,8 +151,8 @@ export function rebuildDerived(db: DB) {
   tx();
 
   // Propagate turn_id to dependent tables.
-  db.exec("UPDATE token_usage SET turn_id = (SELECT turn_id FROM events WHERE events.uuid = token_usage.event_uuid)");
-  db.exec("UPDATE tool_calls SET turn_id = (SELECT turn_id FROM events WHERE events.uuid = tool_calls.event_uuid)");
+  db.exec(`UPDATE token_usage SET turn_id = (SELECT turn_id FROM events WHERE events.uuid = token_usage.event_uuid)${bySession}`);
+  db.exec(`UPDATE tool_calls SET turn_id = (SELECT turn_id FROM events WHERE events.uuid = tool_calls.event_uuid)${bySession}`);
 
   // Link subagent (sidechain) sessions back to the parent turn/session that spawned them. The
   // deterministic key is the spawning Task/Agent tool_call's spawned_session_id (== this session id).
@@ -113,7 +160,7 @@ export function rebuildDerived(db: DB) {
     UPDATE sessions SET
       parent_session_id = (SELECT tc.session_id FROM tool_calls tc WHERE tc.spawned_session_id = sessions.id),
       parent_turn_id    = (SELECT tc.turn_id    FROM tool_calls tc WHERE tc.spawned_session_id = sessions.id)
-    WHERE EXISTS (SELECT 1 FROM tool_calls tc WHERE tc.spawned_session_id = sessions.id)
+    WHERE EXISTS (SELECT 1 FROM tool_calls tc WHERE tc.spawned_session_id = sessions.id)${andSelfId}
   `);
 
   // Recompute session aggregates from events/turns.
@@ -123,12 +170,12 @@ export function rebuildDerived(db: DB) {
       started_at  = (SELECT MIN(timestamp) FROM events e WHERE e.session_id = sessions.id),
       ended_at    = (SELECT MAX(timestamp) FROM events e WHERE e.session_id = sessions.id),
       turn_count  = (SELECT COUNT(*) FROM turns t WHERE t.session_id = sessions.id),
-      is_sidechain = (SELECT CASE WHEN MIN(is_sidechain) = 1 THEN 1 ELSE 0 END FROM events e WHERE e.session_id = sessions.id)
+      is_sidechain = (SELECT CASE WHEN MIN(is_sidechain) = 1 THEN 1 ELSE 0 END FROM events e WHERE e.session_id = sessions.id)${byId}
   `);
   db.exec(`
     UPDATE sessions SET duration_ms =
       CAST((julianday(ended_at) - julianday(started_at)) * 86400000 AS INTEGER)
-    WHERE started_at IS NOT NULL AND ended_at IS NOT NULL
+    WHERE started_at IS NOT NULL AND ended_at IS NOT NULL${andId}
   `);
 
   // Prune phantom sessions: any with zero events is not a real transcript. discover() walks every
@@ -136,9 +183,19 @@ export function rebuildDerived(db: DB) {
   // a Workflow tool's `journal.jsonl` (lines carry no `uuid`, so they yield no events). insSessionStub
   // still created a row (and they all share the basename → one phantom "journal" session). A zero-event
   // session has no events/turns/token_usage/tool_calls referencing it, so the delete is FK-safe; the
-  // orphaned-classification sweep keeps the (no-FK) classifications table from accumulating dead rows.
-  db.exec("DELETE FROM sessions WHERE event_count = 0");
+  // orphaned-classification sweep keeps the (no-FK) classifications table from accumulating dead rows
+  // (kept global — it is one row per session and must catch any now-missing target).
+  db.exec(`DELETE FROM sessions WHERE event_count = 0${andId}`);
   db.exec("DELETE FROM classifications WHERE scope = 'session' AND target_id NOT IN (SELECT id FROM sessions)");
+
+  if (incremental) {
+    const expanded = new Set(
+      (db.prepare("SELECT id FROM _dirty").all() as Array<{ id: string }>).map((r) => r.id),
+    );
+    db.exec("DROP TABLE IF EXISTS _dirty");
+    return expanded;
+  }
+  return null;
 }
 
 export interface IngestStatements {
@@ -162,7 +219,7 @@ export function prepareStatements(db: DB): IngestStatements {
       `INSERT INTO sources (id, label, agent_id, config_dir) VALUES (@id, @label, @agent_id, @config_dir)
        ON CONFLICT(id) DO UPDATE SET label=excluded.label, agent_id=excluded.agent_id, config_dir=excluded.config_dir`,
     ),
-    getState: db.prepare("SELECT sha256 FROM ingest_state WHERE file_path = ?"),
+    getState: db.prepare("SELECT size, mtime_ms, sha256, events_ingested FROM ingest_state WHERE file_path = ?"),
     setState: db.prepare(
       `INSERT INTO ingest_state (file_path, size, mtime_ms, sha256, events_ingested, ingested_at)
        VALUES (@file_path, @size, @mtime_ms, @sha256, @events_ingested, @ingested_at)
@@ -222,9 +279,11 @@ export function prepareStatements(db: DB): IngestStatements {
 }
 
 /**
- * Ingest one transcript file's content in a single transaction: parse each line via the adapter,
+ * Ingest one transcript file's lines in a single transaction: parse each line via the adapter,
  * insert events/token_usage/tool_calls (deduped by their keys), patch tool results, and upsert the
- * session + project metadata. `meta` carries the disk stats recorded into ingest_state (tests pass
+ * session + project metadata. `lines` is an iterable of newline-stripped lines — the caller chooses
+ * whole-file read (small files) or a streaming reader (large files), so this engine never holds the
+ * full file as one string. `meta` carries the disk stats recorded into ingest_state (tests pass
  * synthetic values). Derived tables (turns, linkage, aggregates) are rebuilt separately afterwards.
  */
 export function ingestFile(
@@ -232,14 +291,13 @@ export function ingestFile(
   stmts: IngestStatements,
   adapter: SourceAdapter,
   file: SourceFile,
-  content: string,
+  lines: Iterable<string>,
   meta: { size: number; mtimeMs: number; hash: string },
   now: string,
   stats: IngestStats,
 ): void {
   const sessionMeta: Record<string, any> = {};
   let eventsInFile = 0;
-  const lines = content.split("\n");
 
   const tx = db.transaction(() => {
     // Ensure the session row exists before any event references it (FK).
@@ -257,7 +315,9 @@ export function ingestFile(
       const parsed = adapter.parseLine(raw, file, seq++);
       if (parsed.meta) Object.assign(sessionMeta, parsed.meta);
       if (parsed.event) {
-        const info = stmts.insEvent.run(parsed.event);
+        // raw_json is stored gzip-compressed (ADR-011); compress at this single write chokepoint so
+        // adapters stay agent-agnostic and emit a plain string.
+        const info = stmts.insEvent.run({ ...parsed.event, raw_json: packRaw(parsed.event.raw_json) });
         if (info.changes > 0) {
           stats.newEvents++;
           eventsInFile++;

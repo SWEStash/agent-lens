@@ -169,8 +169,13 @@ This is the whole point of the tool, so it's a hard constraint, not a feature fl
 
 ## Documentation
 
+- **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)** — system design: containers, data flow, the ingest
+  pipeline, the session→turn→event model, and an index of all ADRs. Start here to understand *how it
+  works*.
 - **[docs/USAGE.md](docs/USAGE.md)** — full operations guide: configuring sources, the three stages,
   the daily loop, retention/pruning, environment variables, the HTTP API, and troubleshooting.
+- **[docs/INGEST-RUNBOOK.md](docs/INGEST-RUNBOOK.md)** — running, migrating, and troubleshooting Stage 2
+  ingest (incremental vs `--full`, the compression migration, recovery).
 - **[docs/decisions/](docs/decisions/)** — Architecture Decision Records (tracked in git).
 
 ## Project layout
@@ -182,7 +187,7 @@ packages/server   Stage-3 read-only localhost API over the store
 packages/web      Vite + React SPA (browse + dashboards)
 scripts/          collect.sh · prune.sh · setup-systemd.sh · sources.mjs
 systemd/          user service + timer units
-docs/decisions/   Architecture Decision Records (ADRs, tracked)
+docs/             ARCHITECTURE.md · USAGE.md · INGEST-RUNBOOK.md · decisions/ (ADRs)
 data/             archive/<label>/ + agent-lens.db  (contents gitignored)
 ```
 

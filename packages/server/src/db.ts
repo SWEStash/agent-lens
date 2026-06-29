@@ -1,5 +1,5 @@
 import Database from "better-sqlite3";
-import { costForUsage } from "@agent-lens/core";
+import { costForUsage, unpackRaw } from "@agent-lens/core";
 
 export type DB = Database.Database;
 
@@ -9,12 +9,16 @@ export function openReadonly(file: string): DB {
   return db;
 }
 
-/** Split a raw transcript line's message content into natural text vs thinking. */
-export function extractParts(rawJson: string): { text: string | null; thinking: string | null } {
+/**
+ * Split a raw transcript line's message content into natural text vs thinking. Accepts the stored
+ * `events.raw_json` value, which is a gzip BLOB (Buffer) post-ADR-011 but may be a legacy plain string;
+ * `unpackRaw` normalizes both.
+ */
+export function extractParts(rawJson: string | Buffer): { text: string | null; thinking: string | null } {
   let text = "";
   let thinking = "";
   try {
-    const content = JSON.parse(rawJson)?.message?.content;
+    const content = JSON.parse(unpackRaw(rawJson))?.message?.content;
     if (typeof content === "string") text = content;
     else if (Array.isArray(content)) {
       for (const b of content) {

@@ -10,13 +10,14 @@
  *   compaction-dropped events (see ADR-001 / ADR-002).
  * - Hierarchy: session › turn › event. A "turn" = one user prompt → assistant completion.
  * - `raw_json` keeps the original line verbatim for lossless re-derivation; structured columns are
- *   projections for querying/dashboards.
+ *   projections for querying/dashboards. It is stored gzip-compressed as a BLOB (ADR-011) — write via
+ *   `packRaw`, read via `unpackRaw` (both in `rawjson.ts`).
  *
  * This module only declares the schema. Connection handling and migrations live in `db.ts`
  * (Phase 2). Bump SCHEMA_VERSION on any DDL change.
  */
 
-export const SCHEMA_VERSION = 4;
+export const SCHEMA_VERSION = 5;
 
 export const SCHEMA_SQL = /* sql */ `
 PRAGMA journal_mode = WAL;
@@ -110,7 +111,7 @@ CREATE TABLE IF NOT EXISTS events (
   is_sidechain INTEGER NOT NULL DEFAULT 0,
   is_meta      INTEGER NOT NULL DEFAULT 0,
   text         TEXT,                     -- flattened text/thinking for search + preview
-  raw_json     TEXT NOT NULL,            -- original line, verbatim
+  raw_json     BLOB NOT NULL,            -- original line, verbatim, gzip-compressed (ADR-011); read via unpackRaw()
   source_file  TEXT                      -- archive path the canonical copy came from
 );
 CREATE INDEX IF NOT EXISTS idx_events_session ON events(session_id);

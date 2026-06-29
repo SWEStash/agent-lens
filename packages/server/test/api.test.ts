@@ -4,8 +4,9 @@
  */
 import { describe, it, expect, beforeAll } from "vitest";
 import Database from "better-sqlite3";
-import { SCHEMA_SQL } from "@agent-lens/core";
+import { SCHEMA_SQL, packRaw } from "@agent-lens/core";
 import { createApp } from "../dist/app.js";
+import { extractParts } from "../dist/db.js";
 
 function seed(): Database.Database {
   const db = new Database(":memory:");
@@ -85,6 +86,24 @@ describe("server API smoke", () => {
     expect(r.statusCode).toBe(200);
     const body = r.json();
     expect(body.skills.some((s: any) => s.name === "test-suite-design")).toBe(true);
+  });
+});
+
+// raw_json is stored gzip-compressed (ADR-011); the transcript read path must transparently decode it,
+// while still tolerating legacy plain rows written before the migration.
+describe("extractParts decodes stored raw_json (ADR-011)", () => {
+  it("decompresses a gzip BLOB into text + thinking", () => {
+    const line = JSON.stringify({
+      message: { content: [{ type: "text", text: "hi" }, { type: "thinking", thinking: "hmm" }] },
+    });
+    const { text, thinking } = extractParts(packRaw(line));
+    expect(text).toBe("hi");
+    expect(thinking).toBe("hmm");
+  });
+
+  it("still reads a legacy plain-string raw_json", () => {
+    const { text } = extractParts('{"message":{"content":"plain"}}');
+    expect(text).toBe("plain");
   });
 });
 

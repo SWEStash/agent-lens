@@ -12,7 +12,6 @@
  * Usage: agent-lens-ingest [--full] [--db <path>] [--archive <path>]
  *   --full   ignore ingest_state and re-read every file
  */
-import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
 import { readFileSync, statSync, mkdirSync, existsSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
@@ -22,6 +21,7 @@ import { openDb, openRaw, resetSchema } from "./db.js";
 import { ClaudeCodeAdapter } from "./adapters/claude-code.js";
 import { classify } from "./classify.js";
 import { ingestFile, newStats, prepareStatements, rebuildDerived } from "./pipeline.js";
+import { sha256, sha256File, streamLines, STREAM_THRESHOLD } from "./fileread.js";
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
 
@@ -53,10 +53,6 @@ function parseArgs(argv: string[]) {
   return a;
 }
 
-function sha256(buf: Buffer): string {
-  return createHash("sha256").update(buf).digest("hex");
-}
-
 function main() {
   const args = parseArgs(process.argv.slice(2));
   const dataDir = process.env.AGENT_LENS_DATA || join(repoRoot, "data");
@@ -83,6 +79,8 @@ function main() {
 
   const stmts = prepareStatements(db);
   const stats = newStats();
+  // Sessions touched this run; drives the incremental derived rebuild (ADR-010, impacts 2/3).
+  const dirty = new Set<string>();
 
   for (const source of sources) {
     const adapter = adapterById.get(source.agent);
@@ -100,24 +98,54 @@ function main() {
     for (const file of files) {
       stats.files++;
       const st = statSync(file.path);
-      const buf = readFileSync(file.path);
-      const hash = sha256(buf);
-      if (!args.full) {
-        const prev = stmts.getState.get(file.path) as { sha256: string } | undefined;
-        if (prev && prev.sha256 === hash) {
-          stats.skipped++;
-          continue;
-        }
+      const mtimeMs = Math.trunc(st.mtimeMs);
+      const prev = args.full
+        ? undefined
+        : (stmts.getState.get(file.path) as
+            | { size: number; mtime_ms: number; sha256: string; events_ingested: number }
+            | undefined);
+
+      // (a) Stat short-circuit: an unchanged size+mtime means unchanged content — skip without ever
+      // reading or hashing the file. Restores true incrementality across the mirror + every
+      // .versions snapshot (ADR-010, impact 1).
+      if (prev && prev.size === st.size && prev.mtime_ms === mtimeMs) {
+        stats.skipped++;
+        continue;
       }
-      ingestFile(db, stmts, adapter, file, buf.toString("utf8"), { size: st.size, mtimeMs: st.mtimeMs, hash }, now, stats);
+
+      // Size/mtime moved: read + hash to decide. Whole-file for the common case; stream large files.
+      const small = st.size <= STREAM_THRESHOLD;
+      const buf = small ? readFileSync(file.path) : null;
+      const hash = small ? sha256(buf!) : sha256File(file.path);
+
+      // Content unchanged though mtime moved (e.g. rsync --append-verify re-stat). Skip ingest, but
+      // refresh size/mtime so the next run short-circuits on stat alone.
+      if (prev && prev.sha256 === hash) {
+        stmts.setState.run({
+          file_path: file.path,
+          size: st.size,
+          mtime_ms: mtimeMs,
+          sha256: hash,
+          events_ingested: prev.events_ingested,
+          ingested_at: now,
+        });
+        stats.skipped++;
+        continue;
+      }
+
+      const lines = small ? buf!.toString("utf8").split("\n") : streamLines(file.path);
+      ingestFile(db, stmts, adapter, file, lines, { size: st.size, mtimeMs, hash }, now, stats);
+      dirty.add(file.sessionId);
     }
   }
 
-  rebuildDerived(db);
+  // Incremental derived rebuild over only the touched sessions (+ their linkage neighborhood); --full
+  // rebuilds everything. classify reuses the expanded set rebuildDerived returns.
+  const expanded = rebuildDerived(db, args.full ? null : dirty);
 
   // Heuristic classification (ADR-004) over the now-stable derived tables. Deterministic +
   // re-runnable; also exposed standalone as `agent-lens-metrics` (see metrics-cli.ts).
-  const classified = classify(db);
+  const classified = classify(db, args.full ? null : expanded);
 
   // Report.
   const count = (sql: string) => (db.prepare(sql).get() as any).n as number;

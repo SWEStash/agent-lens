@@ -113,17 +113,22 @@ Parses the archive (mirror **and** `.versions/` backups, deduped by event `uuid`
 `data/agent-lens.db`.
 
 ```bash
-pnpm ingest            # incremental — skips files unchanged since last run
+pnpm ingest            # incremental — only changed files; rebuilds only touched sessions
 pnpm ingest --full     # drop, recreate, and re-derive everything from the archive
 ```
 
-Use `--full` after changing parser/classifier logic (an incremental run won't rewrite existing
-rows). It **drops and recreates** the tables before rebuilding, so it is also the migration path:
-a `SCHEMA_VERSION` bump takes effect on the next `--full` run with no separate migration step. The
-archive is the source of truth, so rebuilding the DB is always safe.
+Incremental runs skip unchanged files by `size`+`mtime` (no re-read) and rebuild derived tables only for
+the sessions touched that run, so a no-op run finishes in well under a second regardless of history size.
+Use `--full` after changing parser/classifier logic, after a `SCHEMA_VERSION` bump, or to recover — it
+**drops and recreates** the tables, so it doubles as the migration path. The archive is the source of
+truth, so rebuilding the DB is always safe.
 
-It prints a summary: `files / skipped / new_events`, then `sessions / turns / events / tool_calls`,
-then `tokens / est_cost`.
+It prints a summary: `files / skipped / new_events / malformed`, then
+`sessions / turns / events / tool_calls / classified`, then `tokens / est_cost`.
+
+> **How it works:** see [ARCHITECTURE.md → Ingest runtime](ARCHITECTURE.md#3-ingest-runtime-stage-2).
+> **Running / migrating / troubleshooting:** see the [Ingest Runbook](INGEST-RUNBOOK.md) — including the
+> one-time [`raw_json` compression migration](INGEST-RUNBOOK.md#adr-011-compression-migration-one-time).
 
 ## Stage 3 — Browse
 

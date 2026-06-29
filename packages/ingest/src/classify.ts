@@ -184,20 +184,35 @@ interface SessionAgg {
  * (Re)classify every session into the `classifications` table. Returns the row count written.
  * One transaction; deterministic; safe to run repeatedly (ON CONFLICT upsert).
  */
-export function classify(db: DB): { count: number; version: number } {
+export function classify(db: DB, dirty?: Set<string> | null): { count: number; version: number } {
+  // Incremental: classify only the sessions touched this run (the expanded set rebuildDerived returns).
+  // Every signal bulk-load is scoped to the same set so memory and work track the delta, not the whole
+  // DB (ADR-010). `null`/undefined → classify all sessions (the `--full` / standalone metrics path).
+  const incremental = dirty != null;
+  if (incremental) {
+    db.exec("DROP TABLE IF EXISTS _dirty");
+    db.exec("CREATE TEMP TABLE _dirty (id TEXT PRIMARY KEY)");
+    const ins = db.prepare("INSERT OR IGNORE INTO _dirty (id) VALUES (?)");
+    db.transaction((ids: Iterable<string>) => {
+      for (const id of ids) ins.run(id);
+    })(dirty);
+  }
+  const wSess = incremental ? " WHERE session_id IN (SELECT id FROM _dirty)" : "";
+  const aSess = incremental ? " AND session_id IN (SELECT id FROM _dirty)" : "";
+
   const sessions = db
-    .prepare("SELECT id, is_sidechain, turn_count, event_count, duration_ms FROM sessions")
+    .prepare(`SELECT id, is_sidechain, turn_count, event_count, duration_ms FROM sessions${incremental ? " WHERE id IN (SELECT id FROM _dirty)" : ""}`)
     .all() as SessionAgg[];
 
   // Bulk-load per-session signals once, then assemble in JS (scales to many sessions).
   const toolMix = new Map<string, Record<string, number>>();
-  for (const r of db.prepare("SELECT session_id, tool_name, COUNT(*) c FROM tool_calls GROUP BY session_id, tool_name").all() as any[]) {
+  for (const r of db.prepare(`SELECT session_id, tool_name, COUNT(*) c FROM tool_calls${wSess} GROUP BY session_id, tool_name`).all() as any[]) {
     const m = toolMix.get(r.session_id) ?? {};
     m[r.tool_name] = r.c;
     toolMix.set(r.session_id, m);
   }
   const skillMix = new Map<string, Record<string, number>>();
-  for (const r of db.prepare("SELECT session_id, skill_name, COUNT(*) c FROM tool_calls WHERE skill_name IS NOT NULL GROUP BY session_id, skill_name").all() as any[]) {
+  for (const r of db.prepare(`SELECT session_id, skill_name, COUNT(*) c FROM tool_calls WHERE skill_name IS NOT NULL${aSess} GROUP BY session_id, skill_name`).all() as any[]) {
     const m = skillMix.get(r.session_id) ?? {};
     m[r.skill_name] = r.c;
     skillMix.set(r.session_id, m);
@@ -207,14 +222,14 @@ export function classify(db: DB): { count: number; version: number } {
     .prepare(
       `SELECT session_id, SUM(input_tokens) i, SUM(output_tokens) o,
               SUM(cache_creation_input_tokens) cw, SUM(cache_read_input_tokens) cr
-       FROM token_usage GROUP BY session_id`,
+       FROM token_usage${wSess} GROUP BY session_id`,
     )
     .all() as any[]) {
     tokens.set(r.session_id, { work: (r.i ?? 0) + (r.o ?? 0) + (r.cw ?? 0), cacheRead: r.cr ?? 0 });
   }
   // LoC + files from Edit/Write inputs.
   const loc = new Map<string, { added: number; removed: number; files: Set<string> }>();
-  for (const r of db.prepare("SELECT session_id, tool_name, input_json FROM tool_calls WHERE tool_name IN ('Edit','Write')").all() as any[]) {
+  for (const r of db.prepare(`SELECT session_id, tool_name, input_json FROM tool_calls WHERE tool_name IN ('Edit','Write')${aSess}`).all() as any[]) {
     const d = locDelta(r.tool_name, r.input_json);
     const acc = loc.get(r.session_id) ?? { added: 0, removed: 0, files: new Set<string>() };
     acc.added += d.added;
@@ -224,7 +239,7 @@ export function classify(db: DB): { count: number; version: number } {
   }
   // Prompt text for keyword signals.
   const promptText = new Map<string, string>();
-  for (const r of db.prepare("SELECT session_id, prompt_preview FROM turns WHERE prompt_preview IS NOT NULL").all() as any[]) {
+  for (const r of db.prepare(`SELECT session_id, prompt_preview FROM turns WHERE prompt_preview IS NOT NULL${aSess}`).all() as any[]) {
     promptText.set(r.session_id, (promptText.get(r.session_id) ?? "") + " " + r.prompt_preview);
   }
   // Subagent role from the spawning Task/Agent tool_call (schema-v3 linkage). Lets us categorize a
@@ -232,7 +247,7 @@ export function classify(db: DB): { count: number; version: number } {
   const subagentRole = new Map<string, string>();
   for (const r of db
     .prepare(
-      "SELECT s.id id, tc.agent_type role FROM sessions s JOIN tool_calls tc ON tc.spawned_session_id = s.id WHERE s.is_sidechain = 1 AND tc.agent_type IS NOT NULL",
+      `SELECT s.id id, tc.agent_type role FROM sessions s JOIN tool_calls tc ON tc.spawned_session_id = s.id WHERE s.is_sidechain = 1 AND tc.agent_type IS NOT NULL${incremental ? " AND s.id IN (SELECT id FROM _dirty)" : ""}`,
     )
     .all() as any[]) {
     if (!subagentRole.has(r.id)) subagentRole.set(r.id, r.role);
@@ -319,5 +334,6 @@ export function classify(db: DB): { count: number; version: number } {
   });
   tx();
 
+  if (incremental) db.exec("DROP TABLE IF EXISTS _dirty");
   return { count: sessions.length, version: CLASSIFIER_VERSION };
 }
