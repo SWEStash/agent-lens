@@ -351,3 +351,91 @@ describe("incremental re-derivation of a mutated existing session", () => {
     expect(turns.map((t) => t.id)).toEqual(["sess-mut:0", "sess-mut:1"]);
   });
 });
+
+// Additional real-world scenarios surfaced during validation (see docs/VALIDATION.md):
+//   - malformed JSONL lines are counted, not silently dropped, and don't abort the file
+//   - meta/compaction lines are events but never start a turn
+//   - the same uuid appearing in two files (mirror + .versions/) is stored once
+//   - a workflow/orphan subagent transcript (no spawning Agent/Task tool_use) ingests as a
+//     sidechain with NO parent linkage — documents the current behavior (the orphan-subagent
+//     finding: ~half of real subagent sessions are workflow agents linked via a journal, not a
+//     tool_use, so they have parent_session_id = NULL).
+describe("validation scenarios: malformed / meta / cross-file dedup / orphan subagent", () => {
+  function freshIngestDb() {
+    const d = openDb(":memory:");
+    const stmts = prepareStatements(d);
+    stmts.insAgent.run(AGENT, "Claude Code CLI");
+    stmts.insSource.run({ id: SOURCE, label: SOURCE, agent_id: AGENT, config_dir: null });
+    return { d, stmts, adapter: new ClaudeCodeAdapter() };
+  }
+  const now = "2026-01-01T00:00:00.000Z";
+
+  it("counts a malformed line and still ingests the valid ones", () => {
+    const { d, stmts, adapter } = freshIngestDb();
+    const stats = newStats();
+    const content =
+      JSON.stringify({ uuid: "ok1", type: "user", timestamp: T(1), cwd: "/tmp/x", message: { role: "user", content: "hi" } }) +
+      "\n" +
+      "{ this is not valid json" +
+      "\n" +
+      JSON.stringify({ uuid: "ok2", type: "assistant", timestamp: T(2), message: { role: "assistant", model: "claude-opus-4-8", content: [{ type: "text", text: "yo" }] } }) +
+      "\n";
+    const f = file("sess-malformed", content);
+    ingestFile(d, stmts, adapter, f.file, content.split("\n"), { size: content.length, mtimeMs: 0, hash: "hm" }, now, stats);
+    expect(stats.malformed).toBe(1);
+    expect((d.prepare("SELECT COUNT(*) n FROM events WHERE session_id = 'sess-malformed'").get() as any).n).toBe(2);
+  });
+
+  it("treats a meta/compaction line as an event but never starts a turn", () => {
+    const { d, stmts, adapter } = freshIngestDb();
+    const f = file(
+      "sess-meta",
+      jsonl(
+        { uuid: "p1", type: "user", timestamp: T(1), cwd: "/tmp/x", message: { role: "user", content: "real prompt" } },
+        { uuid: "p2", type: "assistant", timestamp: T(2), message: { role: "assistant", model: "claude-opus-4-8", content: [{ type: "text", text: "answer" }] } },
+        // A context-compaction summary line: an event, but isMeta → not a user turn.
+        { uuid: "p3", type: "user", timestamp: T(3), isMeta: true, message: { role: "user", content: "[summary of prior context]" } },
+      ),
+    );
+    ingestFile(d, stmts, adapter, f.file, f.content.split("\n"), { size: f.content.length, mtimeMs: 0, hash: "hmeta" }, now, stats0());
+    rebuildDerived(d);
+    const s = d.prepare("SELECT event_count, turn_count FROM sessions WHERE id = 'sess-meta'").get() as any;
+    expect(s.event_count).toBe(3);
+    expect(s.turn_count).toBe(1); // only the non-meta prompt starts a turn
+  });
+
+  it("stores a uuid that appears in two files exactly once (mirror + .versions/ dedup)", () => {
+    const { d, stmts, adapter } = freshIngestDb();
+    const line = { uuid: "dup1", type: "user", timestamp: T(1), cwd: "/tmp/x", message: { role: "user", content: "same event" } };
+    const a = file("sess-dup", jsonl(line));
+    ingestFile(d, stmts, adapter, a.file, a.content.split("\n"), { size: a.content.length, mtimeMs: 0, hash: "ha" }, now, stats0());
+    // Second file (a .versions/ snapshot) carrying the identical uuid.
+    const b = { file: { path: "/fixtures/v/sess-dup.jsonl", sessionId: "sess-dup", encodedDir: "-fixtures", isVersion: true, sourceId: SOURCE }, content: jsonl(line) };
+    ingestFile(d, stmts, adapter, b.file, b.content.split("\n"), { size: b.content.length, mtimeMs: 0, hash: "hb" }, now, stats0());
+    expect((d.prepare("SELECT COUNT(*) n FROM events WHERE uuid = 'dup1'").get() as any).n).toBe(1);
+  });
+
+  it("ingests an orphan (workflow) subagent as a sidechain with no parent linkage", () => {
+    const { d, stmts, adapter } = freshIngestDb();
+    // A subagent transcript whose agentId is never referenced by any parent Agent/Task tool_use.
+    const orphan = file(
+      "agent-orphan99",
+      jsonl(
+        { uuid: "o1", type: "user", timestamp: T(1), isSidechain: true, agentId: "orphan99", message: { role: "user", content: "do sub-work" } },
+        { uuid: "o2", type: "assistant", timestamp: T(2), isSidechain: true, agentId: "orphan99", message: { role: "assistant", model: "claude-opus-4-8", content: [{ type: "text", text: "did it" }], usage: { input_tokens: 10, output_tokens: 5, cache_creation_input_tokens: 0, cache_read_input_tokens: 0 } } },
+      ),
+    );
+    ingestFile(d, stmts, adapter, orphan.file, orphan.content.split("\n"), { size: orphan.content.length, mtimeMs: 0, hash: "ho" }, now, stats0());
+    rebuildDerived(d);
+    const s = d.prepare("SELECT is_sidechain, parent_session_id, parent_turn_id FROM sessions WHERE id = 'agent-orphan99'").get() as any;
+    expect(s.is_sidechain).toBe(1);
+    expect(s.parent_session_id).toBeNull(); // no spawning tool_use → orphan (current behavior)
+    expect(s.parent_turn_id).toBeNull();
+    // Its tokens are still recorded and attributable to the subagent session.
+    expect((d.prepare("SELECT SUM(input_tokens) i FROM token_usage WHERE session_id = 'agent-orphan99'").get() as any).i).toBe(10);
+  });
+});
+
+function stats0() {
+  return newStats();
+}

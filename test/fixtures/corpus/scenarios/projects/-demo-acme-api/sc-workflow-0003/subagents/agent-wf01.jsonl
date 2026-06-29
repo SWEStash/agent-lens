@@ -1,0 +1,2 @@
+{"uuid":"wf01a","type":"user","timestamp":"2026-03-10T12:03:00.000Z","isSidechain":true,"agentId":"wf01","cwd":"/demo/acme-api","message":{"role":"user","content":"migrate table users"}}
+{"uuid":"wf01b","type":"assistant","timestamp":"2026-03-10T12:04:00.000Z","isSidechain":true,"agentId":"wf01","message":{"role":"assistant","id":"msg_wf01","model":"claude-haiku-4-5-20251001","content":[{"type":"text","text":"migrated users"}],"usage":{"input_tokens":1000,"output_tokens":120,"cache_creation_input_tokens":0,"cache_read_input_tokens":0}}}

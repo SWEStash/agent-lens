@@ -15,7 +15,10 @@
     "collect": "scripts/collect.sh",
     "ingest": "pnpm --filter @agent-lens/ingest start",
     "serve": "pnpm --filter @agent-lens/server start",
-    "web:dev": "pnpm --filter @agent-lens/web dev"
+    "web:dev": "pnpm --filter @agent-lens/web dev",
+    "validate": "node scripts/validate.mjs",
+    "build-corpus": "scripts/build-corpus.sh",
+    "sandbox": "scripts/sandbox.sh"
   },
   "devDependencies": {
     "@types/node": "^24.0.0",

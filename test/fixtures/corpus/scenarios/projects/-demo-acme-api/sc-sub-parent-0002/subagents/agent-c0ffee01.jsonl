@@ -1,0 +1,2 @@
+{"uuid":"c1","type":"user","timestamp":"2026-03-10T12:03:00.000Z","isSidechain":true,"agentId":"c0ffee01","cwd":"/demo/acme-api","message":{"role":"user","content":"find the bug"}}
+{"uuid":"c2","type":"assistant","timestamp":"2026-03-10T12:04:00.000Z","isSidechain":true,"agentId":"c0ffee01","message":{"role":"assistant","id":"msg_c2","model":"claude-haiku-4-5-20251001","content":[{"type":"text","text":"The bug is a missing null check."}],"usage":{"input_tokens":1500,"output_tokens":250,"cache_creation_input_tokens":0,"cache_read_input_tokens":0}}}

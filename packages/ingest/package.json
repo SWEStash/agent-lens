@@ -6,7 +6,8 @@
   "main": "./dist/index.js",
   "bin": {
     "agent-lens-ingest": "./dist/index.js",
-    "agent-lens-metrics": "./dist/metrics-cli.js"
+    "agent-lens-metrics": "./dist/metrics-cli.js",
+    "agent-lens-redact": "./dist/redact-cli.js"
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",
