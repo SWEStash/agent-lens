@@ -14,6 +14,11 @@
  *
  * Prints one TSV line per source: `label<TAB>agent<TAB>configDir` (configDir fully expanded).
  * Importers can also call loadSources().
+ *
+ * Excluded projects (playgrounds, personal, dummy tests, …) are resolved here too, from the config's
+ * top-level `exclude: [<realProjectPath>, …]` plus the `AGENT_LENS_EXCLUDE` env (comma-separated).
+ * They are honored at every stage — collect (not mirrored), ingest (not stored / pruned), and the
+ * redacted corpus. Run `sources.mjs --excludes` to print the resolved real paths, one per line.
  */
 import { readFileSync, existsSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
@@ -70,7 +75,38 @@ export function loadSources() {
   return out;
 }
 
-// When run directly, emit TSV for the shell side.
+/**
+ * Resolve the list of projects to EXCLUDE everywhere (collect, ingest, corpus). Union of the config's
+ * `exclude` array and the `AGENT_LENS_EXCLUDE` env (comma-separated). Returns expanded real paths
+ * (no trailing slash). The legacy CLAUDE_DIR mode still honors the env var.
+ */
+export function loadExcludes() {
+  const fromEnv = (process.env.AGENT_LENS_EXCLUDE || "").split(",");
+  let fromCfg = [];
+  if (!process.env.CLAUDE_DIR) {
+    const candidates = [process.env.AGENT_LENS_CONFIG, join(repoRoot, "agent-lens.config.json"), join(repoRoot, "agent-lens.config.example.json")].filter(Boolean);
+    for (const file of candidates) {
+      if (file && existsSync(file)) {
+        const cfg = JSON.parse(readFileSync(file, "utf8"));
+        fromCfg = Array.isArray(cfg.exclude) ? cfg.exclude : [];
+        break;
+      }
+    }
+  }
+  const seen = new Set();
+  const out = [];
+  for (const p of [...fromCfg, ...fromEnv]) {
+    const e = expand((p || "").trim());
+    if (e && !seen.has(e)) (seen.add(e), out.push(e));
+  }
+  return out;
+}
+
+// When run directly, emit TSV for the shell side (or the exclude list with --excludes).
 if (resolve(process.argv[1] || "") === resolve(fileURLToPath(import.meta.url))) {
-  for (const s of loadSources()) process.stdout.write(`${s.label}\t${s.agent}\t${s.configDir}\n`);
+  if (process.argv.includes("--excludes")) {
+    for (const p of loadExcludes()) process.stdout.write(p + "\n");
+  } else {
+    for (const s of loadSources()) process.stdout.write(`${s.label}\t${s.agent}\t${s.configDir}\n`);
+  }
 }

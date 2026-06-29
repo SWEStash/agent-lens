@@ -25,6 +25,57 @@ export function preview(text: string): string {
   return text.replace(/\s+/g, " ").trim().slice(0, 140);
 }
 
+/**
+ * Remove every session whose project path is in `excludedPaths` — plus its subagent descendants —
+ * along with all dependent rows (events → FTS via trigger, token_usage, tool_calls, turns,
+ * classifications) and the ingest_state for its files. This is what makes the global exclude list
+ * take effect on the NEXT ingest, incremental or full: add a project and its data leaves the DB.
+ * Matches projects.path exactly or by path-prefix. Returns the number of sessions pruned.
+ */
+export function pruneExcluded(db: DB, excludedPaths: string[]): number {
+  if (!excludedPaths.length) return 0;
+  const projects = db.prepare("SELECT id, path FROM projects").all() as Array<{ id: string; path: string }>;
+  const projIds = projects.filter((p) => excludedPaths.some((e) => p.path === e || p.path.startsWith(e + "/"))).map((p) => p.id);
+  if (!projIds.length) return 0;
+
+  db.exec("DROP TABLE IF EXISTS _prune");
+  db.exec("CREATE TEMP TABLE _prune (id TEXT PRIMARY KEY)");
+  const insP = db.prepare("INSERT OR IGNORE INTO _prune (id) VALUES (?)");
+  const seed = db.prepare(`SELECT id FROM sessions WHERE project_id IN (${projIds.map(() => "?").join(",")})`).all(...projIds) as Array<{ id: string }>;
+  db.transaction(() => {
+    for (const s of seed) insP.run(s.id);
+  })();
+  // Transitive: subagents whose parent is being pruned (covers cross-project linkage). Fixpoint.
+  const expand = db.prepare("INSERT OR IGNORE INTO _prune (id) SELECT id FROM sessions WHERE parent_session_id IN (SELECT id FROM _prune)");
+  const cnt = db.prepare("SELECT COUNT(*) n FROM _prune");
+  for (let prev = -1; ; ) {
+    const n = (cnt.get() as { n: number }).n;
+    if (n === prev) break;
+    prev = n;
+    expand.run();
+  }
+  const total = (cnt.get() as { n: number }).n;
+  if (!total) {
+    db.exec("DROP TABLE IF EXISTS _prune");
+    return 0;
+  }
+  const files = (db.prepare("SELECT DISTINCT source_file f FROM events WHERE session_id IN (SELECT id FROM _prune) AND source_file IS NOT NULL").all() as Array<{ f: string }>).map((r) => r.f);
+
+  db.pragma("foreign_keys = OFF");
+  db.transaction(() => {
+    for (const t of ["token_usage", "tool_calls", "turns", "events"]) db.exec(`DELETE FROM ${t} WHERE session_id IN (SELECT id FROM _prune)`);
+    db.exec("DELETE FROM classifications WHERE scope = 'session' AND target_id IN (SELECT id FROM _prune)");
+    db.exec("DELETE FROM sessions WHERE id IN (SELECT id FROM _prune)");
+    const delState = db.prepare("DELETE FROM ingest_state WHERE file_path = ?");
+    for (const f of files) delState.run(f);
+    // Drop now-empty projects (an excluded project leaves no sessions behind).
+    db.exec("DELETE FROM projects WHERE id NOT IN (SELECT DISTINCT project_id FROM sessions WHERE project_id IS NOT NULL)");
+  })();
+  db.pragma("foreign_keys = ON");
+  db.exec("DROP TABLE IF EXISTS _prune");
+  return total;
+}
+
 function durationMs(start: string | null, end: string | null): number | null {
   if (!start || !end) return null;
   const a = Date.parse(start);

@@ -57,6 +57,36 @@ Verify what will be collected:
 node scripts/sources.mjs        # prints: label <TAB> agent <TAB> configDir
 ```
 
+## Exclude projects (playgrounds, throwaway, private)
+
+Keep specific projects out of Agent Lens entirely. Add their real cwd paths to an optional
+top-level `exclude` array (or set `AGENT_LENS_EXCLUDE` to a comma-separated list to extend at
+runtime). The list is honored at **every** stage:
+
+- **collect** never mirrors them into the archive (so private work never leaves the source);
+- **ingest** never stores them, and **prunes** any that were ingested before you added them — on the
+  next ingest, incremental or `--full`;
+- the redacted validation **corpus** never includes them.
+
+```jsonc
+// agent-lens.config.json
+{
+  "sources": [ /* … */ ],
+  "exclude": [
+    "~/git-projects/playground",
+    "~/scratch"
+  ]
+}
+```
+
+Matching is by real path (exact or prefix), so excluding `~/git-projects/playground` also drops
+anything under it, including its subagent transcripts. Paths accept `~` and `$HOME`.
+
+```bash
+node scripts/sources.mjs --excludes     # prints the resolved exclude paths, one per line
+AGENT_LENS_EXCLUDE="$HOME/scratch" pnpm ingest    # one-off, additive to the config list
+```
+
 ## Stage 1 — Collect
 
 Copies each source's transcripts into `data/archive/<label>/` before Claude Code prunes them

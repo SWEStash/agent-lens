@@ -20,7 +20,8 @@ import { costForUsage, type SourceAdapter } from "@agent-lens/core";
 import { openDb, openRaw, resetSchema } from "./db.js";
 import { ClaudeCodeAdapter } from "./adapters/claude-code.js";
 import { classify } from "./classify.js";
-import { ingestFile, newStats, prepareStatements, rebuildDerived } from "./pipeline.js";
+import { ingestFile, newStats, prepareStatements, pruneExcluded, rebuildDerived } from "./pipeline.js";
+import { parseExcludes, isExcludedArchivePath } from "./redact.js";
 import { sha256, sha256File, streamLines, STREAM_THRESHOLD } from "./fileread.js";
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
@@ -41,6 +42,12 @@ function loadSources(): Source[] {
     out.push({ label: label!, agent: agent!, configDir: configDir! });
   }
   return out;
+}
+
+/** Real project paths to exclude everywhere (config `exclude` + AGENT_LENS_EXCLUDE), via the resolver. */
+function loadExcludePaths(): string[] {
+  const out = execFileSync("node", [join(repoRoot, "scripts/sources.mjs"), "--excludes"], { encoding: "utf8" });
+  return out.split("\n").map((l) => l.trim()).filter(Boolean);
 }
 
 function parseArgs(argv: string[]) {
@@ -77,6 +84,12 @@ function main() {
   const sources = loadSources();
   const now = new Date().toISOString();
 
+  // Excluded projects (config `exclude` + AGENT_LENS_EXCLUDE): drop any already-ingested ones now
+  // (incremental; --full already reset the DB), then filter them out of discovery below.
+  const excludePaths = loadExcludePaths();
+  const excludedDirs = parseExcludes(excludePaths.join(","));
+  const pruned = pruneExcluded(db, excludePaths);
+
   const stmts = prepareStatements(db);
   const stats = newStats();
   // Sessions touched this run; drives the incremental derived rebuild (ADR-010, impacts 2/3).
@@ -91,7 +104,9 @@ function main() {
     stmts.insAgent.run(adapter.agentId, adapter.agentName);
     stmts.insSource.run({ id: source.label, label: source.label, agent_id: adapter.agentId, config_dir: source.configDir });
 
-    const files = adapter.discover(join(archiveRoot, source.label), source.label);
+    let files = adapter.discover(join(archiveRoot, source.label), source.label);
+    // Drop excluded projects (matches /projects/<encodedDir>/ so nested subagent files go too).
+    if (excludedDirs.length) files = files.filter((f) => !isExcludedArchivePath(f.path, excludedDirs));
     // Mirror before versions so the mirror copy wins canonical fields (ON CONFLICT DO NOTHING).
     files.sort((a, b) => Number(a.isVersion) - Number(b.isVersion));
 
@@ -165,7 +180,7 @@ function main() {
 
   db.close();
   console.log(
-    `agent-lens-ingest: files=${stats.files} skipped=${stats.skipped} new_events=${stats.newEvents} malformed=${stats.malformed}\n` +
+    `agent-lens-ingest: files=${stats.files} skipped=${stats.skipped} new_events=${stats.newEvents} malformed=${stats.malformed}${pruned ? ` excluded_pruned=${pruned}` : ""}\n` +
       `  sessions=${sessions} turns=${turns} events=${events} tool_calls=${tools} classified=${classified.count}\n` +
       `  tokens=${totalTokens.toLocaleString()} est_cost=$${cost.toFixed(2)} db=${dbPath}`,
   );

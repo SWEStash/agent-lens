@@ -53,6 +53,24 @@ command -v node  >/dev/null 2>&1 || { echo "agent-lens: node is required to reso
 
 mkdir -p "$ARCHIVE_BASE"
 
+# Excluded projects (config `exclude` + AGENT_LENS_EXCLUDE): never mirror them into the archive.
+# Encode each real path to its `projects/<encodedDir>` name (Claude Code maps '/' and '.' to '-').
+EXCLUDE_DIRS=()
+while IFS= read -r p; do
+  [[ -z "$p" ]] && continue
+  enc="${p//\//-}"; enc="${enc//./-}"; enc="${enc%-}"
+  EXCLUDE_DIRS+=("$enc")
+done < <(node "$SCRIPT_DIR/sources.mjs" --excludes)
+
+is_excluded_rel() {  # $1 = path relative to the source dir, e.g. projects/<enc>/...
+  local rel="$1" enc
+  [[ ${#EXCLUDE_DIRS[@]} -eq 0 ]] && return 1
+  for enc in "${EXCLUDE_DIRS[@]}"; do
+    [[ "$rel" == "projects/$enc/"* ]] && return 0
+  done
+  return 1
+}
+
 # Collect one source: $1 = label, $2 = source config dir.
 collect_one() {
   local label="$1" claude_dir="$2"
@@ -81,6 +99,7 @@ collect_one() {
   while IFS= read -r -d '' src; do
     scanned=$((scanned + 1))
     rel="${src#"$claude_dir"/}"
+    is_excluded_rel "$rel" && continue   # excluded project: don't snapshot or mirror
     arc="$archive/$rel"
     [[ -f "$arc" ]] || continue
     cmp -s "$src" "$arc" && continue
@@ -97,8 +116,15 @@ collect_one() {
   done < <(find "${src_args[@]}" -type f -name '*.jsonl' -print0 2>/dev/null)
 
   # --- Mirror update via rsync (append-verify, no --delete, no --backup) ---
+  # Excluded projects pruned first (first-match-wins, so they're skipped before the generic includes).
+  local rsync_excludes=()
+  local enc
+  if [[ ${#EXCLUDE_DIRS[@]} -gt 0 ]]; then
+    for enc in "${EXCLUDE_DIRS[@]}"; do rsync_excludes+=("--exclude=/$enc/***"); done
+  fi
   local rsync_common=(-a --append-verify --exclude='.credentials.json' --exclude='*.lock')
   rsync "${rsync_common[@]}" \
+    "${rsync_excludes[@]}" \
     --include='*/' --include='*.jsonl' --exclude='*' \
     "$claude_dir/projects/" "$archive/projects/"
   if [[ -f "$claude_dir/history.jsonl" ]]; then

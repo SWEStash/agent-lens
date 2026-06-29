@@ -11,5 +11,10 @@
       "agent": "claude-code",
       "configDir": "~/.config/claude-work"
     }
+  ],
+  "exclude__doc": "Optional. Real project paths to keep out of Agent Lens entirely — never mirrored by collect, never ingested, pruned from the DB on the next ingest, and excluded from the redacted corpus. Use for playgrounds, throwaway tests, or private work. Extend at runtime with AGENT_LENS_EXCLUDE (comma-separated).",
+  "exclude": [
+    "~/git-projects/playground",
+    "~/scratch"
   ]
 }
