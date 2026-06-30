@@ -40,7 +40,14 @@ export interface SessionSummary {
   cost: number;
 }
 
+export interface Project {
+  id: string;
+  path: string;
+  session_count: number;
+}
+
 export interface ToolCall {
+  id: string | null;
   tool_name: string;
   skill_name: string | null;
   agent_type: string | null;
@@ -131,6 +138,49 @@ export interface SessionDetail {
   parent: SessionParent | null;
   children: SessionChild[];
   workflow_runs: WorkflowRun[];
+}
+
+/** One subagent fanned out by a Workflow run, with its roll-up tokens/cost for the run's agent list. */
+export interface WorkflowAgent {
+  id: string;
+  title: string | null;
+  turn_count: number;
+  started_at: string | null;
+  ended_at: string | null;
+  duration_ms: number | null;
+  models: string | null;
+  tokens: number;
+  cost: number;
+}
+
+/** A Workflow-tool run's detail page payload: the launching tool_call + parent crumb, every spawned
+ * agent, and roll-up stats. Served by GET /api/workflows/:run_id (getWorkflow in db.ts). */
+/** The workflow's completion message, parsed from the `<task-notification>` posted back to the
+ * launching session. `result` is the workflow's returned payload (often JSON); `failures` lists any
+ * per-item errors. Null when no completion notification has been ingested yet. */
+export interface WorkflowCompletion {
+  status: string | null;
+  summary: string | null;
+  result: string | null;
+  failures: string | null;
+}
+
+export interface WorkflowDetail {
+  run_id: string;
+  name: string | null;
+  status: string | null;
+  result_summary: string | null;
+  completion: WorkflowCompletion | null;
+  parent: { id: string; title: string | null; turn_seq: number | null };
+  agents: WorkflowAgent[];
+  stats: {
+    agent_count: number;
+    total_tokens: number;
+    total_cost: number;
+    started_at: string | null;
+    ended_at: string | null;
+    duration_ms: number | null;
+  };
 }
 
 export interface TokenSplit {

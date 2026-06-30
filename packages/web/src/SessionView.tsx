@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useId, useState } from "react";
+import { createContext, useContext, useEffect, useId, useMemo, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -9,6 +9,12 @@ import { fmtCost, fmtDate, fmtDuration, fmtTokens, shortModel, tokenSplitTitle }
  * Provided once per SessionView and consumed deep in the tree by message bodies. */
 export type MsgFormat = "markdown" | "raw";
 const FormatContext = createContext<MsgFormat>("markdown");
+
+/** Maps a Workflow tool_use id → its run id (wf_…), built once per SessionView from the transcript's
+ * tool calls. Lets a `<task-notification>` (which carries the originating tool-use-id) link straight
+ * to the workflow detail page. Tasks with no matching Workflow tool_call (e.g. a plain Agent spawn)
+ * just won't resolve a link. */
+const WorkflowMapContext = createContext<Map<string, string>>(new Map());
 
 const FORMAT_KEY = "agentlens.msgFormat";
 function loadFormat(): MsgFormat {
@@ -212,9 +218,9 @@ function ToolChip({ t }: { t: ToolCall }) {
         </Link>
       )}
       {t.workflow_run_id && (
-        <div className="subagent-link small muted">
-          🔀 launched {t.workflow_agent_count ?? 0} agent{t.workflow_agent_count === 1 ? "" : "s"} · <code>{t.workflow_run_id}</code>
-        </div>
+        <Link className="subagent-link small" to={`/workflow/${t.workflow_run_id}`}>
+          🔀 launched {t.workflow_agent_count ?? 0} agent{t.workflow_agent_count === 1 ? "" : "s"} · <code>{t.workflow_run_id}</code> →
+        </Link>
       )}
       {open && (
         <div className="tool-body" id={bodyId}>
@@ -265,6 +271,50 @@ function CommandBlock({ cmd }: { cmd: ParsedCommand }) {
       </div>
     );
   return <div className="cmd-note muted small">⌘ local command context</div>;
+}
+
+/** Claude Code posts a `<task-notification>` user message when an async task (Workflow run, or a
+ * backgrounded Agent) finishes. Rendered verbatim it's a wall of XML; we parse the inner tags so it
+ * can show as a compact status card that links back to the workflow it reports on. */
+interface ParsedTaskNotification {
+  taskId: string | null;
+  toolUseId: string | null;
+  status: string | null;
+  summary: string | null;
+}
+
+function parseTaskNotification(text: string): ParsedTaskNotification | null {
+  if (!/<task-notification>/.test(text)) return null;
+  const pick = (tag: string) => text.match(new RegExp(`<${tag}>([\\s\\S]*?)</${tag}>`))?.[1]?.trim() ?? null;
+  return {
+    taskId: pick("task-id"),
+    toolUseId: pick("tool-use-id"),
+    status: pick("status"),
+    summary: pick("summary"),
+  };
+}
+
+/** Render a parsed task-notification as a status card: a status badge, the summary, and the task id —
+ * plus a "view workflow →" link when the originating tool-use-id resolves to a Workflow run. */
+function TaskNotificationBlock({ n }: { n: ParsedTaskNotification }) {
+  const wfMap = useContext(WorkflowMapContext);
+  const runId = n.toolUseId ? wfMap.get(n.toolUseId) : undefined;
+  const status = (n.status ?? "").toLowerCase();
+  return (
+    <div className="task-notif">
+      <div className="task-notif-head">
+        <span className="task-notif-icon" aria-hidden="true">🔔</span>
+        {n.status && <span className={"tag task-status task-status-" + status}>{n.status}</span>}
+        {n.taskId && <code className="task-notif-id">task {n.taskId}</code>}
+        {runId && (
+          <Link className="subagent-link small" to={`/workflow/${runId}`}>
+            view workflow →
+          </Link>
+        )}
+      </div>
+      {n.summary && <div className="task-notif-summary">{n.summary}</div>}
+    </div>
+  );
 }
 
 /** A message body rendered per the active format: GitHub-flavored markdown (default) or the raw
@@ -346,6 +396,8 @@ function previewLabel(text: string): string {
   if (cmd?.kind === "invocation") return `⌘ ${cmd.name}${cmd.args ? " " + cmd.args : ""}`;
   if (cmd?.kind === "output") return "⌘ command output";
   if (cmd?.kind === "caveat") return "⌘ local command";
+  const notif = parseTaskNotification(text);
+  if (notif) return `🔔 task ${notif.status ?? "notification"}`;
   return text;
 }
 
@@ -379,6 +431,7 @@ function EventBlock({ e }: { e: EventNode }) {
   const hasBody = e.text || e.thinking || e.toolCalls.length;
   if (!hasBody) return null;
   const cmd = e.text ? parseCommand(e.text) : null;
+  const notif = e.text && !cmd ? parseTaskNotification(e.text) : null;
   return (
     <div className={"event ev-" + who}>
       <div className="ev-meta">
@@ -397,7 +450,7 @@ function EventBlock({ e }: { e: EventNode }) {
           {showThinking && <pre id={thinkId} className="thinking-body">{e.thinking}</pre>}
         </div>
       )}
-      {e.text && (cmd ? <CommandBlock cmd={cmd} /> : <CollapsibleText text={e.text} />)}
+      {e.text && (cmd ? <CommandBlock cmd={cmd} /> : notif ? <TaskNotificationBlock n={notif} /> : <CollapsibleText text={e.text} />)}
       {e.toolCalls.map((t, i) => (
         <ToolChip key={i} t={t} />
       ))}
@@ -433,7 +486,9 @@ function SubagentPanel({ d }: { d: SessionDetail }) {
         return (
           <details key={run.run_id} className="wf-run">
             <summary>
-              <span className="wf-run-name">🔀 {run.name || "workflow"}</span>
+              <Link className="wf-run-name" to={`/workflow/${run.run_id}`} onClick={(e) => e.stopPropagation()}>
+                🔀 {run.name || "workflow"} →
+              </Link>
               <span className="muted small">
                 {kids.length} agent{kids.length === 1 ? "" : "s"}
                 {run.turn_seq != null ? ` · turn ${run.turn_seq + 1}` : ""} · <code>{run.run_id}</code>
@@ -485,6 +540,15 @@ export default function SessionView() {
       .then(setD)
       .catch((e) => setError(String(e)));
   }, [id]);
+
+  // tool-use-id → workflow run id, so a `<task-notification>` can link to its workflow detail page.
+  const wfMap = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const e of d?.events ?? [])
+      for (const t of e.toolCalls)
+        if (t.tool_name === "Workflow" && t.id && t.workflow_run_id) m.set(t.id, t.workflow_run_id);
+    return m;
+  }, [d]);
 
   if (error) return <div className="error" role="alert">{error}</div>;
   if (!d) return <div className="muted pad" role="status" aria-live="polite">Loading…</div>;
@@ -569,6 +633,7 @@ export default function SessionView() {
         </div>
       </div>
 
+      <WorkflowMapContext.Provider value={wfMap}>
       <FormatContext.Provider value={format}>
       <div className="transcript">
         {renderable.length === 0 && (
@@ -595,6 +660,7 @@ export default function SessionView() {
         )}
       </div>
       </FormatContext.Provider>
+      </WorkflowMapContext.Provider>
     </div>
   );
 }

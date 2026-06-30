@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
-import { api, type SessionSummary } from "./api";
+import { api, type Project, type SessionSummary } from "./api";
 import { fmtCost, fmtDate, fmtDuration, fmtTokens, shortModel, tokenSplitTitle } from "./format";
 
 interface Source {
@@ -14,6 +14,7 @@ const PAGE = 50;
 export default function SessionsView() {
   const [params, setParams] = useSearchParams();
   const [sources, setSources] = useState<Source[]>([]);
+  const [projects, setProjects] = useState<Project[]>([]);
   const [models, setModels] = useState<string[]>([]);
   const [data, setData] = useState<{ total: number; sessions: SessionSummary[] }>({ total: 0, sessions: [] });
   const [loading, setLoading] = useState(true);
@@ -24,6 +25,7 @@ export default function SessionsView() {
 
   useEffect(() => {
     api<Source[]>("/sources").then(setSources).catch(() => {});
+    api<Project[]>("/projects").then(setProjects).catch(() => {});
     api<string[]>("/models").then(setModels).catch(() => {});
   }, []);
 
@@ -31,7 +33,7 @@ export default function SessionsView() {
     setLoading(true);
     setError(null);
     const qs = new URLSearchParams();
-    for (const k of ["source", "model", "q"]) {
+    for (const k of ["source", "project", "model", "q"]) {
       const v = params.get(k);
       if (v) qs.set(k, v);
     }
@@ -71,8 +73,8 @@ export default function SessionsView() {
         <form onSubmit={submitSearch} className="search" role="search">
           <input
             type="search"
-            aria-label="Search transcripts (full-text)"
-            placeholder="Search transcripts (full-text)…"
+            aria-label="Search session names, projects and transcripts"
+            placeholder="Search names, projects & transcripts…"
             value={qInput}
             onChange={(e) => setQInput(e.target.value)}
           />
@@ -88,6 +90,14 @@ export default function SessionsView() {
           {sources.map((s) => (
             <option key={s.id} value={s.id}>
               {s.label} ({s.session_count})
+            </option>
+          ))}
+        </select>
+        <select aria-label="Filter by project" value={params.get("project") ?? ""} onChange={(e) => setParam("project", e.target.value)}>
+          <option value="">all projects</option>
+          {projects.map((p) => (
+            <option key={p.id} value={p.id}>
+              {p.path.replace(/^.*\//, "")} ({p.session_count})
             </option>
           ))}
         </select>

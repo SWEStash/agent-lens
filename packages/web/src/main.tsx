@@ -9,6 +9,7 @@ import "./styles.css";
 // (the bulk of the bundle), and SessionView the transcript viewer. Both are off the landing path.
 const Dashboard = lazy(() => import("./Dashboard"));
 const SessionView = lazy(() => import("./SessionView"));
+const WorkflowView = lazy(() => import("./WorkflowView"));
 
 const Loading = () => (
   <div className="muted pad" role="status" aria-live="polite">
@@ -39,6 +40,14 @@ createRoot(document.getElementById("root")!).render(
             element={
               <Suspense fallback={<Loading />}>
                 <SessionView />
+              </Suspense>
+            }
+          />
+          <Route
+            path="workflow/:run_id"
+            element={
+              <Suspense fallback={<Loading />}>
+                <WorkflowView />
               </Suspense>
             }
           />

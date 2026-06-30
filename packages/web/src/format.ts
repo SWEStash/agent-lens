@@ -34,5 +34,9 @@ export function fmtDate(iso: string | null): string {
 
 export function shortModel(m: string | null): string {
   if (!m) return "";
+  // Claude Code stamps "<synthetic>" on locally-generated messages (no API call, $0 cost). The raw
+  // angle-bracket literal reads as a glitch in dropdowns/tags, so show a friendly label. The stored
+  // value and its (unpriced) cost handling are untouched.
+  if (m === "<synthetic>") return "local";
   return m.replace(/^claude-/, "").replace(/-\d{8}$/, "");
 }

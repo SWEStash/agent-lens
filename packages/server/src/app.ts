@@ -8,7 +8,7 @@ import { existsSync } from "node:fs";
 import Fastify, { type FastifyInstance } from "fastify";
 import fastifyStatic from "@fastify/static";
 import { sessionToMarkdown, type MarkdownEvent } from "@agent-lens/core";
-import { type DB, listSources, listProjects, listModels, listSessions, getSession } from "./db.js";
+import { type DB, listSources, listProjects, listModels, listSessions, getSession, getWorkflow } from "./db.js";
 import { dashboardOverview, dashboardTimeseries, dashboardBreakdowns, type DashFilters } from "./dashboard.js";
 
 export interface CreateAppOpts {
@@ -54,6 +54,13 @@ export async function createApp(db: DB, opts: CreateAppOpts = {}): Promise<Fasti
   app.get("/api/sessions/:id", async (req, reply) => {
     const { id } = req.params as { id: string };
     const result = getSession(db, id);
+    if (!result) return reply.code(404).send({ error: "not found" });
+    return result;
+  });
+
+  app.get("/api/workflows/:run_id", async (req, reply) => {
+    const { run_id } = req.params as { run_id: string };
+    const result = getWorkflow(db, run_id);
     if (!result) return reply.code(404).send({ error: "not found" });
     return result;
   });

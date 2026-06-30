@@ -106,10 +106,17 @@ export function listSessions(db: DB, f: SessionFilters) {
     params.push(f.model);
   }
   if (f.q && f.q.trim()) {
+    // Match transcript text (FTS) OR the session's own name (slug/ai_title) OR its project path, so a
+    // query like "fix-youtube-embed-csp-policy" finds the session by slug even when that string never
+    // appears verbatim in an event. A project-path *subquery* (not a join on p.path) keeps the
+    // un-joined COUNT(*) query above valid. SQLite LIKE is case-insensitive for ASCII.
+    const like = `%${f.q.trim()}%`;
     where.push(
-      "s.id IN (SELECT DISTINCT e.session_id FROM events e JOIN events_fts f ON f.rowid = e.rowid WHERE events_fts MATCH ?)",
+      `(s.id IN (SELECT DISTINCT e.session_id FROM events e JOIN events_fts f ON f.rowid = e.rowid WHERE events_fts MATCH ?)
+        OR s.slug LIKE ? OR s.ai_title LIKE ?
+        OR s.project_id IN (SELECT id FROM projects WHERE path LIKE ?))`,
     );
-    params.push(toFtsQuery(f.q));
+    params.push(toFtsQuery(f.q), like, like, like);
   }
   const whereSql = where.length ? `WHERE ${where.join(" AND ")}` : "";
 
@@ -186,7 +193,7 @@ export function getSession(db: DB, id: string) {
     .all(id) as any[];
   const toolRows = db
     .prepare(
-      `SELECT event_uuid, tool_name, skill_name, agent_type, spawned_session_id,
+      `SELECT id, event_uuid, tool_name, skill_name, agent_type, spawned_session_id,
               workflow_run_id, workflow_name, status,
               total_duration_ms, total_tokens, input_json, result_summary,
               (SELECT COUNT(*) FROM sessions s WHERE s.workflow_run_id = tool_calls.workflow_run_id) AS workflow_agent_count
@@ -322,4 +329,97 @@ export function getSession(db: DB, id: string) {
     .all(id) as any[];
 
   return { session, turns, events, classification, parent, children, workflow_runs };
+}
+
+/**
+ * A Workflow-tool run's detail: the launching tool_call (name, status, returned result) + the turn
+ * and session it was launched from, every subagent session fanned out under its `workflow_run_id`,
+ * and roll-up stats (agent count, tokens, cost, wall-clock span). Powers the /workflow/:run_id page.
+ * Returns null when no Workflow tool_call carries this run id (→ 404).
+ */
+/** Pull the inner text of a single `<tag>…</tag>` from a flattened message (non-greedy). */
+function xmlTag(text: string, tag: string): string | null {
+  return text.match(new RegExp(`<${tag}>([\\s\\S]*?)</${tag}>`))?.[1]?.trim() ?? null;
+}
+
+export function getWorkflow(db: DB, runId: string) {
+  const wf = db
+    .prepare(
+      `SELECT tc.id AS tool_use_id, tc.workflow_run_id AS run_id, tc.workflow_name AS name, tc.status, tc.result_summary,
+              tc.session_id AS parent_session_id, t.seq AS turn_seq,
+              ps.ai_title AS parent_ai_title, ps.slug AS parent_slug
+       FROM tool_calls tc
+       LEFT JOIN turns t ON t.id = tc.turn_id
+       LEFT JOIN sessions ps ON ps.id = tc.session_id
+       WHERE tc.workflow_run_id = ? AND tc.tool_name = 'Workflow'
+       ORDER BY t.seq
+       LIMIT 1`,
+    )
+    .get(runId) as any;
+  if (!wf) return null;
+
+  // Subagent sessions in this run (same projection as getSession's children, plus the wall-clock
+  // fields so the page can show each agent's span and a run-level min/max).
+  const agents = db
+    .prepare(
+      `SELECT s.id, s.ai_title, s.slug, s.turn_count, s.started_at, s.ended_at, s.duration_ms,
+              (SELECT GROUP_CONCAT(DISTINCT model) FROM token_usage t WHERE t.session_id = s.id) AS models
+       FROM sessions s WHERE s.workflow_run_id = ? ORDER BY s.started_at`,
+    )
+    .all(runId) as any[];
+
+  let total_tokens = 0;
+  let total_cost = 0;
+  let started_at: string | null = null;
+  let ended_at: string | null = null;
+  for (const a of agents) {
+    a.title = a.ai_title || a.slug || null;
+    const u = db
+      .prepare(
+        `SELECT model, SUM(input_tokens) i, SUM(output_tokens) o,
+                SUM(cache_creation_input_tokens) cw, SUM(cache_read_input_tokens) cr
+         FROM token_usage WHERE session_id = ? GROUP BY model`,
+      )
+      .all(a.id) as any[];
+    a.tokens = u.reduce((acc, r) => acc + r.i + r.o + r.cw + r.cr, 0);
+    a.cost = Number(
+      u.reduce((acc, r) => acc + costForUsage(r.model, { input_tokens: r.i, output_tokens: r.o, cache_creation_input_tokens: r.cw, cache_read_input_tokens: r.cr }), 0).toFixed(4),
+    );
+    total_tokens += a.tokens;
+    total_cost += a.cost;
+    if (a.started_at && (!started_at || a.started_at < started_at)) started_at = a.started_at;
+    if (a.ended_at && (!ended_at || a.ended_at > ended_at)) ended_at = a.ended_at;
+  }
+  const duration_ms = started_at && ended_at ? new Date(ended_at).getTime() - new Date(started_at).getTime() : null;
+
+  // The workflow's ACTUAL result arrives later as a `<task-notification>` user message in the
+  // launching session — tc.result_summary is only the "launched in background" ack. Find that
+  // message by the Workflow tool-use id and surface its completion status, summary, result, and
+  // failures. (The same task can notify more than once; take the most recent.)
+  let completion: { status: string | null; summary: string | null; result: string | null; failures: string | null } | null = null;
+  if (wf.tool_use_id && wf.parent_session_id) {
+    const ev = db
+      .prepare(
+        `SELECT raw_json FROM events
+         WHERE session_id = ? AND text LIKE '%<task-notification>%' AND text LIKE ?
+         ORDER BY timestamp DESC LIMIT 1`,
+      )
+      .get(wf.parent_session_id, `%${wf.tool_use_id}%`) as any;
+    if (ev) {
+      const { text } = extractParts(ev.raw_json);
+      const t = text ?? "";
+      completion = { status: xmlTag(t, "status"), summary: xmlTag(t, "summary"), result: xmlTag(t, "result"), failures: xmlTag(t, "failures") };
+    }
+  }
+
+  return {
+    run_id: wf.run_id,
+    name: wf.name ?? null,
+    status: wf.status ?? null,
+    result_summary: wf.result_summary ?? null,
+    completion,
+    parent: { id: wf.parent_session_id, title: wf.parent_ai_title || wf.parent_slug || null, turn_seq: wf.turn_seq ?? null },
+    agents,
+    stats: { agent_count: agents.length, total_tokens, total_cost: Number(total_cost.toFixed(4)), started_at, ended_at, duration_ms },
+  };
 }

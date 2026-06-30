@@ -161,6 +161,61 @@ table.sessions { width: 100%; border-collapse: collapse; }
   font-size: 12px; white-space: pre-wrap; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
 .cmd-note { margin: 2px 0; }
 
+/* Task notification: a compact status card for an async task/workflow completion message, instead of
+ * the raw <task-notification> XML. */
+.task-notif { margin: 4px 0; padding: 7px 10px; border: 1px solid var(--border); border-left: 3px solid var(--accent);
+  border-radius: 6px; background: var(--panel2); }
+.task-notif-head { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+.task-notif-id { font-size: 11px; color: var(--muted); }
+.task-notif-summary { margin-top: 4px; font-size: 13px; color: var(--muted); }
+.task-status { text-transform: lowercase; }
+.task-status-completed { color: var(--ok, #2e7d32); border-color: var(--ok, #2e7d32); }
+.task-status-failed, .task-status-error { color: var(--err, #c62828); border-color: var(--err, #c62828); }
+
+/* Workflow detail page: returned-result block. */
+.wf-result { margin-top: 14px; }
+.wf-result h2 { margin-bottom: 6px; display: flex; align-items: baseline; gap: 8px; }
+.wf-result-summary { margin: 0 0 8px; font-size: 14px; }
+.wf-result-body { max-height: 520px; overflow: auto; }
+.wf-failures { margin-top: 8px; }
+.wf-failures > summary { cursor: pointer; color: var(--muted); font-size: 13px; }
+.wf-trunc { margin-top: 6px; }
+
+/* Browsable structured render of a workflow's returned JSON (ResultView): metrics grids, tables for
+ * maps / arrays-of-objects, and collapsible sections to drill into nested data. */
+.rv-root { font-size: 13px; line-height: 1.55; }
+.json-chev { color: var(--muted); display: inline-block; width: 1.1em; }
+.json-number { color: #f0a868; }
+.json-null { color: var(--muted); }
+.rv-str { overflow-wrap: anywhere; }
+.rv-true { color: var(--user); }
+.rv-false { color: var(--err); }
+
+.rv-metrics { display: flex; flex-wrap: wrap; gap: 4px 20px; margin: 4px 0 10px; }
+.rv-metric { display: flex; gap: 7px; align-items: baseline; }
+.rv-mkey { color: var(--muted); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
+.rv-mval { font-weight: 600; }
+.rv-list { margin: 4px 0; padding-left: 18px; }
+
+.rv-section { margin: 3px 0; }
+.rv-sec-head {
+  background: none; border: none; border-radius: 0; padding: 3px 0; margin: 0; cursor: pointer;
+  font: inherit; color: var(--text); text-align: left; width: 100%; display: flex; gap: 6px; align-items: baseline;
+}
+.rv-sec-head:hover { text-decoration: none; }
+.rv-sec-name { color: var(--accent); font-weight: 600; }
+.rv-sec-body { padding-left: 12px; margin-left: 4px; border-left: 1px solid var(--border); }
+
+.rv-table-wrap { max-height: 360px; overflow: auto; border: 1px solid var(--border); border-radius: 6px; margin: 4px 0; }
+.rv-table { border-collapse: collapse; width: 100%; font-size: 12.5px; }
+.rv-table th {
+  position: sticky; top: 0; background: var(--panel2); text-align: left; padding: 5px 9px;
+  color: var(--muted); font-weight: 600; border-bottom: 1px solid var(--border); white-space: nowrap;
+}
+.rv-table td { padding: 4px 9px; border-bottom: 1px solid var(--border); vertical-align: top; }
+.rv-table tr:last-child td { border-bottom: none; }
+.rv-rowkey { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--accent); white-space: nowrap; }
+
 .transcript { display: flex; flex-direction: column; gap: 10px; }
 .transcript-tools { display: flex; align-items: center; gap: 12px; margin-bottom: 2px; }
 .unturned { display: flex; flex-direction: column; gap: 10px; }

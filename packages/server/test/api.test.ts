@@ -94,6 +94,21 @@ describe("server API smoke", () => {
     }
   });
 
+  it("GET /api/sessions?q=<session name> → matches slug/ai_title, not just transcript text", async () => {
+    // "Demo" is the ai_title, and appears in NO event text (events say "hello world"/"hi"), so this
+    // only passes because search now also matches the session's own name.
+    const r = await app.inject({ method: "GET", url: "/api/sessions?q=Demo" });
+    expect(r.statusCode).toBe(200);
+    expect(r.json().sessions.map((s: any) => s.id)).toContain("sess1");
+  });
+
+  it("GET /api/sessions?q=<project name> → matches the project path", async () => {
+    // "proj" is only in the project path (/tmp/proj), never in the transcript.
+    const r = await app.inject({ method: "GET", url: "/api/sessions?q=proj" });
+    expect(r.statusCode).toBe(200);
+    expect(r.json().sessions.map((s: any) => s.id)).toContain("sess1");
+  });
+
   it("GET /api/dashboard/overview → aggregates", async () => {
     const r = await app.inject({ method: "GET", url: "/api/dashboard/overview" });
     expect(r.statusCode).toBe(200);
@@ -145,6 +160,62 @@ describe("session detail exposes workflow run grouping", () => {
     const wfTool = body.events.flatMap((e: any) => e.toolCalls).find((t: any) => t.tool_name === "Workflow");
     expect(wfTool.workflow_name).toBe("my-flow");
     expect(wfTool.workflow_agent_count).toBe(2);
+    await app2.close();
+  });
+});
+
+// The workflow detail endpoint (/api/workflows/:run_id) backs the workflow detail page: it resolves
+// the launching Workflow tool_call (name, parent crumb) and the agents fanned out under the run id,
+// with roll-up stats.
+describe("workflow detail endpoint", () => {
+  async function appWithRun() {
+    const db = new Database(":memory:");
+    db.pragma("foreign_keys = ON");
+    db.exec(SCHEMA_SQL);
+    db.exec(`
+      INSERT INTO agents (id, name, kind) VALUES ('claude-code', 'Claude Code CLI', 'cli');
+      INSERT INTO sources (id, label, agent_id, config_dir) VALUES ('test', 'test', 'claude-code', NULL);
+      INSERT INTO sessions (id, agent_id, source_id, ai_title, is_sidechain, event_count, turn_count) VALUES
+        ('orch', 'claude-code', 'test', 'Orchestrator', 0, 2, 1);
+      INSERT INTO turns (id, session_id, seq, user_event_uuid, prompt_preview, started_at, ended_at, duration_ms)
+        VALUES ('orch:0', 'orch', 0, 'oe1', 'run it', '2026-01-01T00:00:00Z', '2026-01-01T00:01:00Z', 60000);
+      INSERT INTO events (uuid, session_id, turn_id, seq, type, role, timestamp, is_sidechain, is_meta, text, raw_json)
+        VALUES ('oe2', 'orch', 'orch:0', 1, 'assistant', 'assistant', '2026-01-01T00:00:30Z', 0, 0, NULL, '{"message":{"content":[]}}');
+      INSERT INTO events (uuid, session_id, turn_id, seq, type, role, timestamp, is_sidechain, is_meta, text, raw_json)
+        VALUES ('oe3', 'orch', 'orch:0', 2, 'user', 'user', '2026-01-01T00:02:00Z', 0, 0,
+                '<task-notification><tool-use-id>tu_wf</tool-use-id><status>completed</status><summary>flow done</summary><result>{"ok":true}</result><failures>none</failures></task-notification>',
+                '{"message":{"content":"<task-notification><tool-use-id>tu_wf</tool-use-id><status>completed</status><summary>flow done</summary><result>{\\"ok\\":true}</result><failures>none</failures></task-notification>"}}');
+      INSERT INTO tool_calls (id, event_uuid, session_id, turn_id, tool_name, workflow_run_id, workflow_name, status, result_summary)
+        VALUES ('tu_wf', 'oe2', 'orch', 'orch:0', 'Workflow', 'wf_run1', 'my-flow', 'async_launched', 'all done');
+      INSERT INTO sessions (id, agent_id, source_id, ai_title, is_sidechain, workflow_run_id, parent_session_id, parent_turn_id, started_at, ended_at, event_count, turn_count) VALUES
+        ('agent-x', 'claude-code', 'test', 'Agent X', 1, 'wf_run1', 'orch', 'orch:0', '2026-01-01T00:00:40Z', '2026-01-01T00:00:50Z', 1, 1),
+        ('agent-y', 'claude-code', 'test', 'Agent Y', 1, 'wf_run1', 'orch', 'orch:0', '2026-01-01T00:00:45Z', '2026-01-01T00:01:10Z', 1, 1);
+    `);
+    const app2 = await createApp(db);
+    await app2.ready();
+    return app2;
+  }
+
+  it("GET /api/workflows/:run_id → name, parent crumb, agents + stats", async () => {
+    const app2 = await appWithRun();
+    const r = await app2.inject({ method: "GET", url: "/api/workflows/wf_run1" });
+    expect(r.statusCode).toBe(200);
+    const body = r.json();
+    expect(body).toMatchObject({ run_id: "wf_run1", name: "my-flow", status: "async_launched", result_summary: "all done" });
+    expect(body.parent).toMatchObject({ id: "orch", title: "Orchestrator", turn_seq: 0 });
+    expect(body.agents.map((a: any) => a.id).sort()).toEqual(["agent-x", "agent-y"]);
+    expect(body.stats.agent_count).toBe(2);
+    // Wall-clock span = earliest start (00:00:40) → latest end (00:01:10) = 30s.
+    expect(body.stats.duration_ms).toBe(30000);
+    // The completion comes from the <task-notification>, not the launch ack (result_summary).
+    expect(body.completion).toMatchObject({ status: "completed", summary: "flow done", result: '{"ok":true}', failures: "none" });
+    await app2.close();
+  });
+
+  it("GET /api/workflows/:run_id → 404 for unknown run", async () => {
+    const app2 = await appWithRun();
+    const r = await app2.inject({ method: "GET", url: "/api/workflows/nope" });
+    expect(r.statusCode).toBe(404);
     await app2.close();
   });
 });

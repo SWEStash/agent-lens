@@ -116,9 +116,18 @@ async function main() {
   // Every session detail + Markdown export (main AND subagent, so parent/child links resolve).
   const subList = await getJson("/api/sessions?kind=subagent&limit=1000");
   const ids = [...mainList.sessions, ...subList.sessions].map((s) => s.id);
+  const runIds = new Set();
   for (const id of ids) {
-    writeSnap(`sessions/${id}.json`, await getJson(`/api/sessions/${encodeURIComponent(id)}`));
+    const detail = await getJson(`/api/sessions/${encodeURIComponent(id)}`);
+    writeSnap(`sessions/${id}.json`, detail);
     writeSnap(`sessions/${id}.export.md`, await getText(`/api/sessions/${encodeURIComponent(id)}/export.md`));
+    for (const r of detail.workflow_runs ?? []) if (r.run_id) runIds.add(r.run_id);
+  }
+
+  // Workflow detail pages: one per distinct run launched across the corpus (api.ts resolves
+  // /workflows/<id> → snapshot/workflows/<id>.json).
+  for (const runId of runIds) {
+    writeSnap(`workflows/${runId}.json`, await getJson(`/api/workflows/${encodeURIComponent(runId)}`));
   }
 
   writeSnap("manifest.json", {
@@ -128,7 +137,7 @@ async function main() {
     note: "Static corpus-only snapshot — filters/pagination collapse to the default view.",
   });
 
-  console.log(`export-snapshot: wrote ${ids.length} sessions + dashboards to ${OUT}`);
+  console.log(`export-snapshot: wrote ${ids.length} sessions + ${runIds.size} workflows + dashboards to ${OUT}`);
 }
 
 main()
