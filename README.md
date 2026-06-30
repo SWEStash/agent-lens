@@ -3,7 +3,7 @@
 > Passively collect, browse, and analyze your Claude Code CLI session traces — **100% local**.
 
 ![License: MIT](https://img.shields.io/badge/license-MIT-blue)
-![Node](https://img.shields.io/badge/node-%E2%89%A522-brightgreen)
+![Node](https://img.shields.io/badge/node-%E2%89%A524-brightgreen)
 ![Platform: Linux](https://img.shields.io/badge/platform-Linux-lightgrey)
 ![Privacy: local-only](https://img.shields.io/badge/privacy-local--only-success)
 
@@ -15,6 +15,7 @@ without a single byte leaving your machine.
 ## Table of contents
 
 - [At a glance](#at-a-glance)
+- [Screenshots](#screenshots)
 - [Features](#features)
 - [How it works](#how-it-works)
 - [Requirements](#requirements)
@@ -66,6 +67,32 @@ agent-lens-ingest: files=312 skipped=298 new_events=1840 malformed=0
 - Which skills and subagents do I actually use, and how often?
 - What exactly happened in that session three weeks ago? *(full transcript + full-text search)*
 
+## Screenshots
+
+A live, **corpus-only** demo (synthetic + redacted data, no real sessions) is published via GitHub
+Pages: **<https://swestash.github.io/agent-lens/>**. The images below are generated from that same
+committed corpus by `node scripts/screenshots.mjs` — fully reproducible, never any real data.
+
+**Dashboard** — token breakdown, estimated cost, cache-read ratio, and breakdowns by model, category,
+complexity, tool, skill, and subagent fan-out:
+
+![Agent Lens dashboard showing KPI cards (token breakdown, estimated cost, cache-read ratio, total tokens), tokens/cost/activity-over-time charts, and breakdown charts by model, task category, complexity band, tool frequency, skill activation, and subagent fan-out](docs/img/dashboard.png)
+
+**Session transcript** — turn-segmented, with the spawned-subagent fan-out **grouped by workflow run**
+(named, counted, and linked to the launching turn) and slash commands rendered as outlined chips:
+
+![A workflow orchestrator session ("Run the full DB migration workflow") showing its spawned subagents grouped under the named workflow run, the Workflow tool call, and the turn-by-turn transcript](docs/img/session-transcript.png)
+
+![A slash-command session showing the /plugin invocation rendered as an outlined command chip with its local output, instead of raw command markup](docs/img/session-command.png)
+
+**Classification signals** — the deterministic, no-AI explainer for why a session scored as it did:
+
+![The classifier "why" panel: a complexity breakdown by signal (work tokens, subagents, turns, duration, lines changed, files), category scores, and the evidence behind the verdict](docs/img/session-signals.png)
+
+**Sessions browser** — a filterable, full-text-searchable index across every collected source:
+
+![The Agent Lens sessions list with source/model filters and full-text search across all sources](docs/img/sessions.png)
+
 ## Features
 
 - **Passive collection** — a user `systemd` timer `rsync`s each account's transcripts into a local
@@ -111,7 +138,7 @@ Design decisions are recorded as ADRs in [`docs/decisions/`](docs/decisions/).
 ## Requirements
 
 - Linux (developed against Ubuntu 24.04 LTS+)
-- [`rsync`](https://rsync.samba.org/) 3.x · `systemd` (user instance) · [Node.js](https://nodejs.org/) ≥ 22 · [pnpm](https://pnpm.io/)
+- [`rsync`](https://rsync.samba.org/) 3.x · `systemd` (user instance) · [Node.js](https://nodejs.org/) ≥ 24 · [pnpm](https://pnpm.io/)
 
 ## Quick start
 

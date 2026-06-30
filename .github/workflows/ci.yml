@@ -1,0 +1,56 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  build-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+
+      - name: Enable corepack (pnpm pinned via package.json packageManager)
+        run: corepack enable
+
+      - name: Locate pnpm store
+        id: pnpm
+        run: echo "dir=$(pnpm store path --silent)" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/cache@v4
+        with:
+          path: ${{ steps.pnpm.outputs.dir }}
+          key: pnpm-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
+          restore-keys: pnpm-${{ runner.os }}-
+
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build
+      - run: pnpm test # builds all packages + vitest (incl. corpus-scenarios, determinism, redaction)
+
+      - name: sqlite3 CLI (for the sandbox harness)
+        run: sudo apt-get update && sudo apt-get install -y sqlite3
+
+      - name: Sandbox e2e over the committed corpus
+        run: bash scripts/sandbox.sh
+
+      - name: Invariant validation over a freshly-ingested corpus DB
+        run: |
+          cat > /tmp/corpus-sources.json <<'JSON'
+          { "sources": [
+            { "label": "team-a",    "agent": "claude-code", "configDir": "/unused" },
+            { "label": "team-b",    "agent": "claude-code", "configDir": "/unused" },
+            { "label": "scenarios", "agent": "claude-code", "configDir": "/unused" }
+          ] }
+          JSON
+          AGENT_LENS_CONFIG=/tmp/corpus-sources.json \
+            node packages/ingest/dist/index.js --full --db /tmp/corpus.db --archive test/fixtures/corpus
+          node scripts/validate.mjs --db /tmp/corpus.db

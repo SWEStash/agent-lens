@@ -16,9 +16,13 @@ const Loading = () => (
   </div>
 );
 
+// Under GitHub Pages the app is served from a repo subpath (Vite's BASE_URL, e.g. "/agent-lens/");
+// the router basename keeps client routes working there. "/" → "" (no basename) for local serving.
+const basename = ((import.meta as any).env?.BASE_URL ?? "/").replace(/\/$/, "");
+
 createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
-    <BrowserRouter>
+    <BrowserRouter basename={basename}>
       <Routes>
         <Route path="/" element={<App />}>
           <Route index element={<SessionsView />} />

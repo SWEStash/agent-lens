@@ -18,7 +18,7 @@ flowchart LR
 ## Requirements
 
 - Linux (developed on Ubuntu 24.04 LTS+)
-- `rsync` 3.x, `systemd` (user instance), `node` >= 22, `pnpm`
+- `rsync` 3.x, `systemd` (user instance), `node` >= 24, `pnpm`
 
 ## Install
 
@@ -171,6 +171,13 @@ instead: `scripts/setup-systemd.sh install web-ui` (binds `127.0.0.1`; override 
 `AGENT_LENS_PORT` / `AGENT_LENS_HOST`).
 
 Open the URL. The app has two views (nav tabs): **Sessions** (browse) and **Dashboard** (analytics).
+A live, corpus-only demo of these views (no real data) is published at
+<https://swestash.github.io/agent-lens/>; the screenshots below are generated from the committed
+corpus by `node scripts/screenshots.mjs`.
+
+![Agent Lens dashboard — KPI cards, tokens/cost/activity charts, and per-model / category / complexity / tool / skill / subagent breakdowns](img/dashboard.png)
+
+![Agent Lens session transcript — turn-segmented view with the spawned-subagent fan-out linked to the orchestrating session](img/session-transcript.png)
 
 **Sessions** — you can:
 

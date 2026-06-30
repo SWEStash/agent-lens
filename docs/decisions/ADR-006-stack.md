@@ -11,7 +11,7 @@ one language end-to-end where practical and low operational burden.
 
 ## Decision
 
-- **Language:** TypeScript on Node (>= 22) across ingest, server, and web.
+- **Language:** TypeScript on Node (>= 24) across ingest, server, and web.
 - **Store:** SQLite via `better-sqlite3` + FTS5 (see ADR-003).
 - **Server:** a small HTTP API (Fastify or Express) bound to `127.0.0.1` (see ADR-005).
 - **Web:** Vite + React SPA; charting library chosen at Phase 4 (Recharts vs ECharts — open item).

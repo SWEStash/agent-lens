@@ -1,0 +1,61 @@
+name: Pages
+
+# Publish a static, read-only demo of the dashboard built ONLY from the committed corpus
+# (synthetic scenarios + redacted team-a/team-b). It never reads data/ or any real session, so the
+# published site cannot contain real data.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+
+      - run: corepack enable
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build # ingest/server/web dist needed by the exporter
+
+      - name: Refresh synthetic scenarios (deterministic, corpus-only)
+        run: node scripts/build-scenarios.mjs
+
+      - name: Export the corpus API snapshot (static JSON)
+        run: node scripts/export-snapshot.mjs
+
+      - name: Build the static SPA (snapshot mode, repo subpath)
+        env:
+          VITE_SNAPSHOT: "1"
+          VITE_BASE: /agent-lens/
+        run: pnpm --filter @agent-lens/web build
+
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: packages/web/dist
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
