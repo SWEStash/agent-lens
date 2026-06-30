@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { useSearchParams } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import {
   ResponsiveContainer,
   AreaChart,
@@ -54,8 +54,34 @@ interface Source {
 
 const BAND_ORDER = ["trivial", "small", "medium", "large", "xl"];
 
+type SkillVersionRow = DashBreakdowns["skill_versions"][number];
+
+/** Read-only hover for the grouped skill bar: the skill's total + each version's firing count.
+ * (Recharts tooltips aren't interactive, so the per-version links live on the skill page; click the
+ * bar to go there.) */
+function SkillTooltip({ active, payload, versionsByName }: any) {
+  if (!active || !payload?.length) return null;
+  const name: string = payload[0]?.payload?.name;
+  const total: number = payload[0]?.payload?.n ?? 0;
+  const versions: SkillVersionRow[] = versionsByName.get(name) ?? [];
+  return (
+    <div style={{ ...tooltipStyle.contentStyle, padding: "8px 10px", maxWidth: 280 }}>
+      <div style={{ color: C.text, fontWeight: 600, marginBottom: 4 }}>{name}</div>
+      <div style={{ color: C.muted, marginBottom: versions.length ? 6 : 0 }}>{total} firing{total === 1 ? "" : "s"} total</div>
+      {versions.map((v) => (
+        <div key={v.version_id} style={{ color: C.text, display: "flex", justifyContent: "space-between", gap: 12 }}>
+          <span style={{ color: C.muted }}>{v.version_id.slice(0, 8)}</span>
+          <span>{v.n}</span>
+        </div>
+      ))}
+      {versions.length > 0 && <div style={{ color: C.muted, marginTop: 6, fontSize: 11 }}>click to open skill →</div>}
+    </div>
+  );
+}
+
 export default function Dashboard() {
   const [params, setParams] = useSearchParams();
+  const navigate = useNavigate();
   const [sources, setSources] = useState<Source[]>([]);
   const [overview, setOverview] = useState<DashOverview | null>(null);
   const [ts, setTs] = useState<DashTimeseries | null>(null);
@@ -103,6 +129,13 @@ export default function Dashboard() {
     value: bd?.by_complexity.find((b) => b.band === band)?.n ?? 0,
   })).filter((d) => d.value > 0);
   const modelData = (bd?.by_model ?? []).map((m) => ({ name: shortModel(m.model), tokens: m.total_tokens, cost: m.cost }));
+  // Group skill versions under each skill name for the bar's hover breakdown (bars show the per-name total).
+  const versionsByName = new Map<string, SkillVersionRow[]>();
+  for (const v of bd?.skill_versions ?? []) {
+    const arr = versionsByName.get(v.name) ?? [];
+    arr.push(v);
+    versionsByName.set(v.name, arr);
+  }
 
   return (
     <div>
@@ -265,7 +298,7 @@ export default function Dashboard() {
 
             <ChartCard
               title="Skill activation"
-              hint="Skill tool calls by skill"
+              hint="firings per skill (all versions grouped) · hover for versions · click to open"
             >
               {bd && bd.skills.length === 0 ? (
                 <div className="empty">
@@ -278,8 +311,16 @@ export default function Dashboard() {
                     <CartesianGrid {...gridProps} horizontal={false} />
                     <XAxis type="number" {...axisProps} />
                     <YAxis type="category" dataKey="name" {...axisProps} width={140} />
-                    <Tooltip {...tooltipStyle} />
-                    <Bar dataKey="n" fill={C.gold} />
+                    <Tooltip cursor={{ fill: C.border, fillOpacity: 0.25 }} content={<SkillTooltip versionsByName={versionsByName} />} />
+                    <Bar
+                      dataKey="n"
+                      fill={C.gold}
+                      cursor="pointer"
+                      onClick={(d: any) => {
+                        const nm = d?.payload?.name ?? d?.name;
+                        if (nm) navigate(`/skill/${encodeURIComponent(nm)}`);
+                      }}
+                    />
                   </BarChart>
                 </ResponsiveContainer>
               )}

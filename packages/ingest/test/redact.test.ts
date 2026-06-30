@@ -139,3 +139,32 @@ describe("redactor — leak-free output", () => {
     expect(findLeak("/home/user/x")).toBeNull(); // the pseudonym is allowed
   });
 });
+
+describe("redactor — preserves skill bodies (the real skill content)", () => {
+  const body = "# Demo Skill\n\nDo the thing. No secrets here.";
+  const out = new Redactor("fixed-test-salt").transcript(
+    jsonl({
+      uuid: "x1", type: "user", isMeta: true, timestamp: T(1),
+      message: { role: "user", content: `Base directory for this skill: /home/alice/.claude/skills/demo-skill\n\n${body}\n\nARGUMENTS: alice@acme.com secret task` },
+    }),
+  );
+
+  it("keeps the body but strips the home-path base-dir line + per-call ARGUMENTS, and is leak-free", () => {
+    expect(out).toContain("Demo Skill"); // body preserved (drives version tracking)
+    expect(out).toContain("Base directory for this skill: /skills/demo-skill"); // name tail kept for linkage
+    expect(out).not.toContain("alice"); // home/user scrubbed
+    expect(out).not.toContain("ARGUMENTS"); // per-call args dropped
+    expect(out).not.toContain("acme.com"); // arg-borne PII dropped
+    expect(findLeak(out)).toBeNull();
+  });
+
+  it("falls back to full redaction when the body itself would leak", () => {
+    const leaky = jsonl({
+      uuid: "x2", type: "user", isMeta: true, timestamp: T(1),
+      message: { role: "user", content: "Base directory for this skill: /home/x/.claude/skills/leaky\n\n# Leaky\n\nSee https://internal.example.com/x\n\nARGUMENTS: y" },
+    });
+    const o = new Redactor("s").transcript(leaky);
+    expect(o).toContain("[redacted]"); // URL in body → not preserved
+    expect(findLeak(o)).toBeNull();
+  });
+});

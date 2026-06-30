@@ -97,6 +97,28 @@ const MULTIBLOCK = file(
   ),
 );
 
+// Skill versioning: three Skill firings of "demo-skill", each followed by the isMeta user event that
+// injects the SKILL.md body ("Base directory for this skill: …\n\n<body>\n\nARGUMENTS: <args>").
+// Firings 1+2 share body v1 (→ one version), firing 3 has changed content (→ a second version).
+const TS = (n: number) => `2026-01-02T00:${String(n).padStart(2, "0")}:00.000Z`;
+const inject = (body: string, args: string) =>
+  `Base directory for this skill: /home/x/.claude/skills/demo-skill\n\n${body}\n\nARGUMENTS: ${args}`;
+const BODY_V1 = "# Demo Skill\n\nThis is the demo body version one.";
+const BODY_V2 = "# Demo Skill\n\nThis is the demo body version TWO — changed.";
+const SKILLVERS = file(
+  "sess-skillvers",
+  jsonl(
+    { uuid: "k0", type: "user", timestamp: TS(1), cwd: "/tmp/proj", message: { role: "user", content: "do skill work" } },
+    { uuid: "k1", type: "assistant", timestamp: TS(2), message: { role: "assistant", model: "claude-opus-4-8", content: [{ type: "tool_use", id: "tc_v1a", name: "Skill", input: { skill: "demo-skill", args: "first" } }], usage: { input_tokens: 10, output_tokens: 1, cache_creation_input_tokens: 0, cache_read_input_tokens: 0 } } },
+    { uuid: "k2", type: "user", timestamp: TS(3), message: { role: "user", content: [{ type: "tool_result", tool_use_id: "tc_v1a", content: "Launching skill: demo-skill" }] } },
+    { uuid: "k3", type: "user", timestamp: TS(4), isMeta: true, message: { role: "user", content: inject(BODY_V1, "first") } },
+    { uuid: "k4", type: "assistant", timestamp: TS(5), message: { role: "assistant", model: "claude-opus-4-8", content: [{ type: "tool_use", id: "tc_v1b", name: "Skill", input: { skill: "demo-skill", args: "second" } }], usage: { input_tokens: 10, output_tokens: 1, cache_creation_input_tokens: 0, cache_read_input_tokens: 0 } } },
+    { uuid: "k5", type: "user", timestamp: TS(6), isMeta: true, message: { role: "user", content: inject(BODY_V1, "second") } },
+    { uuid: "k6", type: "assistant", timestamp: TS(7), message: { role: "assistant", model: "claude-opus-4-8", content: [{ type: "tool_use", id: "tc_v2", name: "Skill", input: { skill: "demo-skill", args: "third" } }], usage: { input_tokens: 10, output_tokens: 1, cache_creation_input_tokens: 0, cache_read_input_tokens: 0 } } },
+    { uuid: "k7", type: "user", timestamp: TS(8), isMeta: true, message: { role: "user", content: inject(BODY_V2, "third") } },
+  ),
+);
+
 let db: ReturnType<typeof openDb>;
 
 beforeAll(() => {
@@ -108,7 +130,7 @@ beforeAll(() => {
   // Agent + source must exist before sessions reference them (FK).
   stmts.insAgent.run(AGENT, "Claude Code CLI");
   stmts.insSource.run({ id: SOURCE, label: SOURCE, agent_id: AGENT, config_dir: null });
-  for (const f of [PARENT, SUBAGENT, ZERO, MULTIBLOCK]) {
+  for (const f of [PARENT, SUBAGENT, ZERO, MULTIBLOCK, SKILLVERS]) {
     ingestFile(db, stmts, adapter, f.file, f.content.split("\n"), { size: f.content.length, mtimeMs: 0, hash: f.file.sessionId }, now, stats);
   }
   rebuildDerived(db);
@@ -118,12 +140,36 @@ beforeAll(() => {
 describe("ingest pipeline (golden fixtures)", () => {
   it("creates one session per transcript file", () => {
     const n = (db.prepare("SELECT COUNT(*) n FROM sessions").get() as any).n;
-    expect(n).toBe(4);
+    expect(n).toBe(5);
   });
 
   it("extracts skill_name from a Skill tool_use", () => {
     const row = db.prepare("SELECT skill_name FROM tool_calls WHERE id = ?").get("toolu_skill1") as any;
     expect(row.skill_name).toBe("test-suite-design");
+  });
+
+  it("content-addresses skill versions: same body → one version, changed body → a new one", () => {
+    const versions = db.prepare("SELECT id, body, summary, body_bytes FROM skills WHERE name = ?").all("demo-skill") as any[];
+    expect(versions.length).toBe(2); // v1 (fired twice) collapses; v2 is distinct
+    const bodies = versions.map((v) => v.body).sort();
+    expect(bodies).toEqual(["# Demo Skill\n\nThis is the demo body version TWO — changed.", "# Demo Skill\n\nThis is the demo body version one."]);
+    // Normalization strips the Base-directory line and the trailing ARGUMENTS block.
+    for (const v of versions) {
+      expect(v.body).not.toContain("Base directory");
+      expect(v.body).not.toContain("ARGUMENTS");
+      expect(v.summary).toBe("Demo Skill");
+    }
+  });
+
+  it("links each Skill tool_call to its version (skill_id); identical firings share an id", () => {
+    const rows = db.prepare("SELECT id, skill_id FROM tool_calls WHERE id IN ('tc_v1a','tc_v1b','tc_v2')").all() as any[];
+    const byId = Object.fromEntries(rows.map((r) => [r.id, r.skill_id]));
+    expect(byId.tc_v1a).toBeTruthy();
+    expect(byId.tc_v1a).toBe(byId.tc_v1b); // same body → same version
+    expect(byId.tc_v2).not.toBe(byId.tc_v1a); // changed body → different version
+    // The linked id matches the stored version row for v1's body.
+    const v1 = db.prepare("SELECT id FROM skills WHERE body LIKE '%version one.%'").get() as any;
+    expect(byId.tc_v1a).toBe(v1.id);
   });
 
   it("records agent_type and spawned_session_id on an Agent tool_use", () => {
@@ -150,7 +196,7 @@ describe("ingest pipeline (golden fixtures)", () => {
 
   it("records token usage per assistant event", () => {
     const n = (db.prepare("SELECT COUNT(*) n FROM token_usage").get() as any).n;
-    expect(n).toBe(5); // u2, u4, u6, s2 (no message.id → kept per-event), + 1 deduped multiblock
+    expect(n).toBe(8); // u2, u4, u6, s2 + 3 skill-firing assistant events (k1,k4,k6); no message.id → kept per-event), + 1 deduped multiblock
     const u2 = db.prepare("SELECT input_tokens, output_tokens FROM token_usage WHERE event_uuid = ?").get("u2") as any;
     expect(u2.input_tokens).toBe(100);
     expect(u2.output_tokens).toBe(20);
@@ -179,7 +225,7 @@ describe("ingest pipeline (golden fixtures)", () => {
 
   it("classifies every session (incl. the zero-turn one)", () => {
     const n = (db.prepare("SELECT COUNT(*) n FROM classifications WHERE scope = 'session'").get() as any).n;
-    expect(n).toBe(4);
+    expect(n).toBe(5);
   });
 });
 

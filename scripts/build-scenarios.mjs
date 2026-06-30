@@ -102,6 +102,30 @@ write(`projects/${PROJ}/sc-command-0006.jsonl`, [
   u("cmd2", { type: "user", timestamp: ts(3), cwd: CWD, message: { role: "user", content: "<local-command-stdout>(no content)</local-command-stdout>" } }),
 ]);
 
+// 3c) SKILL VERSIONING: a skill fires three times. Each firing injects the SKILL.md body as an isMeta
+//     user event ("Base directory for this skill: …\n\n<body>\n\nARGUMENTS: …"). Firings 1+2 share the
+//     same body (→ one content-addressed version); firing 3 has changed content (→ a second version).
+//     Exercises the skills list, the per-version skill page, the session→version link, and the
+//     dashboard's grouped (versions-on-hover) skill bar. Bodies are hand-authored — no real data.
+const skillInject = (id, t, body, args) =>
+  u(id, { type: "user", timestamp: ts(t), isMeta: true, message: { role: "user", content: `Base directory for this skill: /demo/skills/api-design\n\n${body}\n\nARGUMENTS: ${args}` } });
+const SKILL_V1 = "# API Design\n\nDesign RESTful endpoints: pick nouns, return correct status codes, and paginate list responses.";
+const SKILL_V2 = "# API Design\n\nDesign RESTful and GraphQL endpoints: pick nouns, return correct status codes, paginate list responses, and version the contract.";
+const skillFire = (a, t, tuid, args) => asst(a, t, OPUS, [{ type: "tool_use", id: tuid, name: "Skill", input: { skill: "api-design", args } }], usage(300, 40, 0, 1000));
+write(`projects/${PROJ}/sc-skill-0007.jsonl`, [
+  userMsg("k1", 1, "Design the orders API"),
+  skillFire("k2", 2, "tu_sk1", "design orders endpoint"),
+  toolResult("k3", 3, "tu_sk1"),
+  skillInject("k4", 4, SKILL_V1, "design orders endpoint"),
+  userMsg("k5", 5, "Now design the invoices API the same way"),
+  skillFire("k6", 6, "tu_sk2", "design invoices endpoint"),
+  skillInject("k7", 7, SKILL_V1, "design invoices endpoint"), // same body → same version as the first firing
+  userMsg("k8", 8, "Re-run with the updated skill"),
+  skillFire("k9", 9, "tu_sk3", "design payments endpoint"),
+  skillInject("k10", 10, SKILL_V2, "design payments endpoint"), // changed body → a second version
+  asst("k11", 11, OPUS, [{ type: "text", text: "Designed all three endpoints." }], usage(400, 90, 0, 2000)),
+]);
+
 // 4) MALFORMED / PARTIAL JSONL: a truncated line is counted as malformed, the valid lines still ingest.
 write(`projects/${PROJ}/sc-malformed-0004.jsonl`, [
   userMsg("m1", 1, "Quick question about the config"),

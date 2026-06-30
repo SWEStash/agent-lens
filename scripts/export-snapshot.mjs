@@ -108,6 +108,14 @@ async function main() {
   writeSnap("dashboard/timeseries.json", await getJson("/api/dashboard/timeseries"));
   writeSnap("dashboard/breakdowns.json", await getJson("/api/dashboard/breakdowns"));
 
+  // Skills list + one detail page per fired skill (api.ts resolves /skills/<name> →
+  // snapshot/skills/<name>.json; encode the name to match the client fetch path exactly).
+  const skills = await getJson("/api/skills");
+  writeSnap("skills.json", skills);
+  for (const sk of skills) {
+    writeSnap(`skills/${encodeURIComponent(sk.name)}.json`, await getJson(`/api/skills/${encodeURIComponent(sk.name)}`));
+  }
+
   // Sessions list (default view = main sessions). limit covers the whole corpus so there is no
   // pagination to fake; the static list is the complete default page. Shape: { total, sessions }.
   const mainList = await getJson("/api/sessions?kind=main&limit=1000");

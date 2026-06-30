@@ -222,6 +222,14 @@ function ToolChip({ t }: { t: ToolCall }) {
           🔀 launched {t.workflow_agent_count ?? 0} agent{t.workflow_agent_count === 1 ? "" : "s"} · <code>{t.workflow_run_id}</code> →
         </Link>
       )}
+      {t.skill_name && (
+        <Link
+          className="subagent-link small"
+          to={`/skill/${encodeURIComponent(t.skill_name)}${t.skill_id ? `?v=${t.skill_id}` : ""}`}
+        >
+          📖 view skill{t.skill_id ? " version" : ""} →
+        </Link>
+      )}
       {open && (
         <div className="tool-body" id={bodyId}>
           {t.input_json && t.input_json !== "{}" && (

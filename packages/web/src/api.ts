@@ -50,6 +50,8 @@ export interface ToolCall {
   id: string | null;
   tool_name: string;
   skill_name: string | null;
+  /** the specific skill version (content hash) this call fired; null when no body was captured */
+  skill_id: string | null;
   agent_type: string | null;
   spawned_session_id: string | null;
   workflow_run_id: string | null;
@@ -190,6 +192,48 @@ export interface TokenSplit {
   cache_read: number;
 }
 
+/** One row in the Skills list (GET /api/skills) — a fired skill grouped by name. */
+export interface SkillSummary {
+  name: string;
+  call_count: number;
+  version_count: number;
+  last_fired: string | null;
+  sources: string[];
+}
+
+/** A content-addressed version of a skill (its captured SKILL.md body + firing stats). */
+export interface SkillVersion {
+  id: string;
+  base_dir: string | null;
+  summary: string | null;
+  body: string;
+  body_bytes: number | null;
+  first_seen: string | null;
+  last_seen: string | null;
+  call_count: number;
+}
+
+/** A session that fired a skill, tagged with which version (version_id) it fired. */
+export interface SkillSession {
+  id: string;
+  title: string | null;
+  slug: string | null;
+  source_id: string | null;
+  started_at: string | null;
+  project_path: string | null;
+  version_id: string | null;
+  fired_at: string | null;
+  fire_count: number;
+}
+
+/** GET /api/skills/:name — every version of a skill + the sessions that fired it. */
+export interface SkillDetail {
+  name: string;
+  versions: SkillVersion[];
+  sessions: SkillSession[];
+  call_count: number;
+}
+
 export interface DashOverview {
   range: { from: string | null; to: string | null; source: string | null };
   sessions: number;
@@ -224,6 +268,7 @@ export interface DashBreakdowns {
   by_complexity: Array<{ band: string; n: number }>;
   tools: Array<{ name: string; n: number }>;
   skills: Array<{ name: string; n: number }>;
+  skill_versions: Array<{ name: string; version_id: string; summary: string | null; last_seen: string | null; n: number }>;
   subagent_fanout: {
     by_type: Array<{ type: string; n: number }>;
     sessions_with_subagents: number;

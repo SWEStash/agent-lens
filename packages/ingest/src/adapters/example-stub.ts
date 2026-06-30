@@ -117,6 +117,7 @@ export class ExampleStubAdapter implements SourceAdapter {
           tool_name: typeof t.name === "string" ? t.name : "unknown",
           caller: null,
           skill_name: null,
+          skill_id: null,
           agent_type: null,
           spawned_session_id: null,
           workflow_run_id: null,

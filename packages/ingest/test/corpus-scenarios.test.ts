@@ -61,10 +61,22 @@ describe("committed corpus represents every pipeline scenario", () => {
     expect(one("SELECT COUNT(*) n FROM sessions WHERE source_id NOT IN ('team-a','team-b','scenarios')").n).toBe(0);
   });
 
-  it("session counts: 13 total, 8 main, 5 subagent", () => {
-    expect(one("SELECT COUNT(*) n FROM sessions").n).toBe(13);
-    expect(one("SELECT COUNT(*) n FROM sessions WHERE is_sidechain=0").n).toBe(8);
+  it("session counts: 14 total, 9 main, 5 subagent", () => {
+    expect(one("SELECT COUNT(*) n FROM sessions").n).toBe(14);
+    expect(one("SELECT COUNT(*) n FROM sessions WHERE is_sidechain=0").n).toBe(9);
     expect(one("SELECT COUNT(*) n FROM sessions WHERE is_sidechain=1").n).toBe(5);
+  });
+
+  it("skill versioning: api-design fires 3× across 2 content versions; firings link to a version", () => {
+    // The sc-skill-0007 scenario fires api-design 3 times: 2 share body v1, 1 has changed body v2.
+    expect(one("SELECT COUNT(*) n FROM skills WHERE name='api-design'").n).toBe(2); // content-addressed
+    expect(one("SELECT COUNT(*) n FROM tool_calls WHERE skill_name='api-design'").n).toBe(3);
+    expect(one("SELECT COUNT(DISTINCT skill_id) n FROM tool_calls WHERE skill_name='api-design'").n).toBe(2);
+    // Bodies are normalized (no Base-directory line / ARGUMENTS block) and carry a summary.
+    const v = one("SELECT body, summary FROM skills WHERE name='api-design' ORDER BY last_seen LIMIT 1");
+    expect(v.summary).toBe("API Design");
+    expect(v.body).not.toContain("Base directory");
+    expect(v.body).not.toContain("ARGUMENTS");
   });
 
   it("subagents: all 5 link to a parent (3 Task via toolUseResult, 2 workflow via run id)", () => {

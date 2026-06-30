@@ -234,6 +234,20 @@ export function dashboardBreakdowns(db: DB, f: DashFilters) {
     )
     .all(...w.params);
 
+  // Per-version breakdown for the grouped skill bar chart: each captured version's firing count,
+  // with the version id + its last-seen time so the chart can stack/hover and deep-link to
+  // /skill/:name?v=<id>. Same source/from/to filter as the by-name `skills` query above.
+  const skillVersions = db
+    .prepare(
+      `SELECT tc.skill_name name, sk.id version_id, sk.summary, sk.last_seen, COUNT(*) n
+       FROM tool_calls tc
+       JOIN skills sk ON sk.id = tc.skill_id
+       JOIN sessions s ON s.id = tc.session_id
+       ${w.sql ? w.sql + " AND" : "WHERE"} tc.skill_id IS NOT NULL
+       GROUP BY tc.skill_name, sk.id ORDER BY name, n DESC`,
+    )
+    .all(...w.params);
+
   // Subagent fan-out: spawns by type, plus a per-(main-)session histogram of subagent calls.
   const subagentByType = db
     .prepare(
@@ -257,5 +271,5 @@ export function dashboardBreakdowns(db: DB, f: DashFilters) {
     avg_per_session: counts.length ? Number((counts.reduce((a, b) => a + b, 0) / counts.length).toFixed(2)) : 0,
   };
 
-  return { by_model: byModel, by_source: bySource, by_category: byCategory, by_complexity: byComplexity, tools, skills, subagent_fanout: subagentFanout };
+  return { by_model: byModel, by_source: bySource, by_category: byCategory, by_complexity: byComplexity, tools, skills, skill_versions: skillVersions, subagent_fanout: subagentFanout };
 }

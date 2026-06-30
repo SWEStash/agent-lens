@@ -51,6 +51,7 @@ export function resetSchema(db: DB): void {
     DROP TABLE IF EXISTS classifications;
     DROP TABLE IF EXISTS token_usage;
     DROP TABLE IF EXISTS tool_calls;
+    DROP TABLE IF EXISTS skills;
     DROP TABLE IF EXISTS events;
     DROP TABLE IF EXISTS turns;
     DROP TABLE IF EXISTS sessions;

@@ -193,7 +193,7 @@ export function getSession(db: DB, id: string) {
     .all(id) as any[];
   const toolRows = db
     .prepare(
-      `SELECT id, event_uuid, tool_name, skill_name, agent_type, spawned_session_id,
+      `SELECT id, event_uuid, tool_name, skill_name, skill_id, agent_type, spawned_session_id,
               workflow_run_id, workflow_name, status,
               total_duration_ms, total_tokens, input_json, result_summary,
               (SELECT COUNT(*) FROM sessions s WHERE s.workflow_run_id = tool_calls.workflow_run_id) AS workflow_agent_count
@@ -422,4 +422,75 @@ export function getWorkflow(db: DB, runId: string) {
     agents,
     stats: { agent_count: agents.length, total_tokens, total_cost: Number(total_cost.toFixed(4)), started_at, ended_at, duration_ms },
   };
+}
+
+export interface SkillFilters {
+  q?: string;
+  source?: string;
+  project?: string;
+}
+
+/**
+ * One row per fired skill (grouped by name), for the Skills list. `version_count` is the number of
+ * distinct captured content versions (COUNT(DISTINCT skill_id) ignores firings with no body), while
+ * `call_count` counts every firing — so a skill whose body was never captured still appears. Filters
+ * (name search, source, project) mirror the sessions list and apply to the firing session.
+ */
+export function listSkills(db: DB, f: SkillFilters = {}) {
+  const where = ["tc.tool_name = 'Skill'", "tc.skill_name IS NOT NULL"];
+  const params: any[] = [];
+  if (f.q && f.q.trim()) (where.push("tc.skill_name LIKE ?"), params.push(`%${f.q.trim()}%`));
+  if (f.source) (where.push("s.source_id = ?"), params.push(f.source));
+  if (f.project) (where.push("s.project_id = ?"), params.push(f.project));
+  const rows = db
+    .prepare(
+      `SELECT tc.skill_name AS name,
+              COUNT(*) AS call_count,
+              COUNT(DISTINCT tc.skill_id) AS version_count,
+              MAX(e.timestamp) AS last_fired,
+              GROUP_CONCAT(DISTINCT s.source_id) AS sources
+       FROM tool_calls tc
+       JOIN sessions s ON s.id = tc.session_id
+       LEFT JOIN events e ON e.uuid = tc.event_uuid
+       WHERE ${where.join(" AND ")}
+       GROUP BY tc.skill_name
+       ORDER BY call_count DESC, name`,
+    )
+    .all(...params) as any[];
+  for (const r of rows) r.sources = r.sources ? String(r.sources).split(",").filter(Boolean) : [];
+  return rows;
+}
+
+/**
+ * All data for one skill (by name): its content versions (most-recent first, each with body +
+ * firing count) and the sessions that fired it, tagged with which version (`version_id`) so the UI
+ * can map the session list to the selected version. Returns null (→ 404) when the name never fired.
+ */
+export function getSkill(db: DB, name: string) {
+  const versions = db
+    .prepare(
+      `SELECT sk.id, sk.base_dir, sk.summary, sk.body, sk.body_bytes, sk.first_seen, sk.last_seen,
+              (SELECT COUNT(*) FROM tool_calls tc WHERE tc.skill_id = sk.id) AS call_count
+       FROM skills sk WHERE sk.name = ? ORDER BY sk.last_seen DESC, sk.id`,
+    )
+    .all(name) as any[];
+
+  const sessions = db
+    .prepare(
+      `SELECT s.id, s.ai_title, s.slug, s.source_id, s.started_at, p.path AS project_path,
+              tc.skill_id AS version_id, MIN(e.timestamp) AS fired_at, COUNT(*) AS fire_count
+       FROM tool_calls tc
+       JOIN sessions s ON s.id = tc.session_id
+       LEFT JOIN projects p ON p.id = s.project_id
+       LEFT JOIN events e ON e.uuid = tc.event_uuid
+       WHERE tc.tool_name = 'Skill' AND tc.skill_name = ?
+       GROUP BY s.id, tc.skill_id
+       ORDER BY fired_at DESC`,
+    )
+    .all(name) as any[];
+
+  if (!versions.length && !sessions.length) return null;
+  for (const s of sessions) s.title = s.ai_title || s.slug || null;
+  const call_count = sessions.reduce((a, s) => a + (s.fire_count as number), 0);
+  return { name, versions, sessions, call_count };
 }

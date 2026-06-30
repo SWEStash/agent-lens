@@ -89,6 +89,8 @@ export interface ToolCallRow {
   tool_name: string;
   caller: string | null;
   skill_name: string | null;
+  /** the specific skill *version* (content hash) this call fired; set in rebuildDerived, null until then / when no body was captured */
+  skill_id: string | null;
   agent_type: string | null;
   spawned_session_id: string | null;
   workflow_run_id: string | null;
@@ -100,6 +102,22 @@ export interface ToolCallRow {
   total_tool_use_count: number | null;
   input_json: string | null;
   result_summary: string | null;
+}
+
+/**
+ * A content-addressed skill *version*. Built in rebuildDerived from the SKILL.md body that a Skill
+ * firing injects into the transcript. `id` is the hash of the normalized body, so a skill that
+ * changes content yields a new row; firings of unchanged content collapse to one row.
+ */
+export interface SkillRow {
+  id: string;
+  name: string;
+  base_dir: string | null;
+  body: string;
+  summary: string | null;
+  body_bytes: number | null;
+  first_seen: string | null;
+  last_seen: string | null;
 }
 
 /**

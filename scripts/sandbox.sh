@@ -47,8 +47,11 @@ echo "=== scenario assertions (DB) ==="
 ok 1 "$(echo "$INGEST" | grep -oE 'malformed=[0-9]+' | cut -d= -f2)" "malformed line counted"
 # multi-source: three labeled sources, no cross-source bleed.
 ok 3 "$(q "SELECT COUNT(DISTINCT source_id) FROM sessions;")" "multi-source (3 sources)"
-ok 13 "$(q "SELECT COUNT(*) FROM sessions;")" "total sessions"
-ok 8 "$(q "SELECT COUNT(*) FROM sessions WHERE is_sidechain=0;")" "main sessions"
+ok 14 "$(q "SELECT COUNT(*) FROM sessions;")" "total sessions"
+ok 9 "$(q "SELECT COUNT(*) FROM sessions WHERE is_sidechain=0;")" "main sessions"
+# skill versioning: api-design fires 3× over 2 content-addressed versions.
+ok 2 "$(q "SELECT COUNT(*) FROM skills WHERE name='api-design';")" "skill versions (content-addressed)"
+ok 2 "$(q "SELECT COUNT(DISTINCT skill_id) FROM tool_calls WHERE skill_name='api-design';")" "skill firings link to a version"
 # subagents: all 5 link to a parent — 3 Task (toolUseResult.agentId) + 2 workflow (run id).
 ok 5 "$(q "SELECT COUNT(*) FROM sessions WHERE is_sidechain=1 AND parent_session_id IS NOT NULL;")" "linked subagents"
 ok 0 "$(q "SELECT COUNT(*) FROM sessions WHERE is_sidechain=1 AND parent_session_id IS NULL;")" "no orphan subagents"
@@ -72,15 +75,21 @@ SERVER_PID=$!
 for i in $(seq 1 50); do curl -sf "http://127.0.0.1:$PORT/api/health" >/dev/null 2>&1 && break; sleep 0.1; done
 OV="$(curl -sf "http://127.0.0.1:$PORT/api/dashboard/overview")"
 BD="$(curl -sf "http://127.0.0.1:$PORT/api/dashboard/breakdowns")"
+SK="$(curl -sf "http://127.0.0.1:$PORT/api/skills")"
+SKD="$(curl -sf "http://127.0.0.1:$PORT/api/skills/api-design")"
 node -e '
   const ov = JSON.parse(process.argv[1]), bd = JSON.parse(process.argv[2]);
+  const sk = JSON.parse(process.argv[3]), skd = JSON.parse(process.argv[4]);
   let bad = 0; const ok = (c, n) => { console.log(`  ${c ? "PASS" : "FAIL"}  ${n}`); if (!c) bad++; };
-  ok(ov.sessions === 13, "overview serves 13 sessions");
+  ok(ov.sessions === 14, "overview serves 14 sessions");
   ok(bd.by_source.length === 3, "breakdowns: 3 sources");
   ok(ov.cost > 0 && ov.tokens.cache_read > 0, "overview: cost + cache_read > 0");
   ok(bd.subagent_fanout.total_spawns >= 1, "breakdowns: subagent fan-out present");
+  ok(bd.skill_versions.length === 2, "breakdowns: skill versions present");
+  ok(sk.length === 1 && sk[0].name === "api-design" && sk[0].version_count === 2, "skills list: api-design with 2 versions");
+  ok(skd.versions.length === 2 && skd.versions.every(v => v.body && v.summary === "API Design"), "skill detail: 2 versions with bodies");
   process.exit(bad ? 1 : 0);
-' "$OV" "$BD" || fails=$((fails + 1))
+' "$OV" "$BD" "$SK" "$SKD" || fails=$((fails + 1))
 
 echo
 [ "$fails" -eq 0 ] && { echo "=== sandbox e2e PASS (all scenarios) ==="; } || { echo "=== sandbox e2e FAILED: $fails check(s) ==="; exit 1; }

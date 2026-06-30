@@ -8,7 +8,7 @@ import { existsSync } from "node:fs";
 import Fastify, { type FastifyInstance } from "fastify";
 import fastifyStatic from "@fastify/static";
 import { sessionToMarkdown, type MarkdownEvent } from "@agent-lens/core";
-import { type DB, listSources, listProjects, listModels, listSessions, getSession, getWorkflow } from "./db.js";
+import { type DB, listSources, listProjects, listModels, listSessions, getSession, getWorkflow, listSkills, getSkill } from "./db.js";
 import { dashboardOverview, dashboardTimeseries, dashboardBreakdowns, type DashFilters } from "./dashboard.js";
 
 export interface CreateAppOpts {
@@ -61,6 +61,18 @@ export async function createApp(db: DB, opts: CreateAppOpts = {}): Promise<Fasti
   app.get("/api/workflows/:run_id", async (req, reply) => {
     const { run_id } = req.params as { run_id: string };
     const result = getWorkflow(db, run_id);
+    if (!result) return reply.code(404).send({ error: "not found" });
+    return result;
+  });
+
+  app.get("/api/skills", async (req) => {
+    const q = req.query as Record<string, string>;
+    return listSkills(db, { q: q.q, source: q.source, project: q.project });
+  });
+
+  app.get("/api/skills/:name", async (req, reply) => {
+    const { name } = req.params as { name: string };
+    const result = getSkill(db, decodeURIComponent(name));
     if (!result) return reply.code(404).send({ error: "not found" });
     return result;
   });

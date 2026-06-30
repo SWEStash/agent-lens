@@ -24,6 +24,7 @@
  * and runs a final leak-scan before writing.
  */
 import { createHash, randomBytes } from "node:crypto";
+import { parseSkillInjection } from "./pipeline.js";
 
 const PLACEHOLDER = "[redacted]";
 
@@ -90,6 +91,23 @@ export class Redactor {
     return typeof s === "string" && s.length > 0 ? PLACEHOLDER : "";
   }
 
+  /**
+   * Preserve a skill-body injection ("Base directory for this skill: …\n\n<SKILL.md body>\n\nARGUMENTS:…")
+   * instead of redacting it — the body is the only real skill content and drives version tracking.
+   * We strip the per-call ARGUMENTS block, replace the home-path base-dir line with a non-leaking
+   * `/skills/<name>` (keeping the skill-name tail so ingest still links it), keep the body verbatim,
+   * and fail closed: if the result trips the leak scan, return null so the caller fully redacts it.
+   * Returns null when `s` is not a skill injection.
+   */
+  private skillText(s: unknown): string | null {
+    if (typeof s !== "string") return null;
+    const inj = parseSkillInjection(s);
+    if (!inj) return null;
+    const nameTail = (inj.baseDir ?? "").split("/").filter(Boolean).pop() ?? "";
+    const rebuilt = `Base directory for this skill: /skills/${nameTail}\n\n${inj.body}\n`;
+    return findLeak(rebuilt) ? null : rebuilt;
+  }
+
   private toolInput(name: string, input: any): any {
     if (!input || typeof input !== "object") return {};
     const out: any = {};
@@ -114,7 +132,7 @@ export class Redactor {
     if (!b || typeof b !== "object") return b;
     switch (b.type) {
       case "text":
-        return { type: "text", text: this.text(b.text) };
+        return { type: "text", text: this.skillText(b.text) ?? this.text(b.text) };
       case "thinking":
         return { type: "thinking", thinking: this.text(b.thinking) };
       case "tool_use":
@@ -130,7 +148,7 @@ export class Redactor {
     if (!m || typeof m !== "object") return m;
     const out: any = {};
     for (const k of ["role", "id", "model", "type", "usage", "stop_reason", "stop_sequence"]) if (k in m) out[k] = m[k];
-    if (typeof m.content === "string") out.content = this.text(m.content);
+    if (typeof m.content === "string") out.content = this.skillText(m.content) ?? this.text(m.content);
     else if (Array.isArray(m.content)) out.content = m.content.map((b: any) => this.block(b));
     return out;
   }

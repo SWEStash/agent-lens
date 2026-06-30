@@ -90,6 +90,8 @@ select:focus-visible,
 .brand { font-weight: 700; font-size: 16px; color: var(--text); }
 .tagline { color: var(--muted); font-size: 12px; }
 .content { max-width: 1100px; margin: 0 auto; padding: 20px; }
+/* Layout-heavy pages (dashboard grid, skill body+sessions) get more room; text pages stay readable. */
+.content.wide { max-width: min(1600px, 94vw); }
 
 .filters { display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 16px; }
 .search { display: flex; gap: 6px; flex: 1; min-width: 280px; }
@@ -459,3 +461,16 @@ button.small { padding: 2px 8px; font-size: 12px; }
 .sig-chips { display: inline-flex; flex-wrap: wrap; gap: 4px 6px; }
 .sig-chip { background: var(--panel2); border: 1px solid var(--border); border-radius: 4px; padding: 1px 6px; }
 .sig-files { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 11px; color: var(--muted); word-break: break-all; max-height: 140px; overflow: auto; }
+
+/* --- Skill detail page --- */
+.skill-head { margin: 8px 0 14px; }
+.skill-head h1 { margin: 0 0 4px; font-size: 1.5em; }
+.skill-head-meta { font-size: 13px; }
+.skill-version-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 14px; margin-bottom: 14px; }
+.skill-version-bar select { max-width: 460px; }
+/* Body panel + sessions side by side on wide screens, stacked when narrow. */
+.skill-cards { display: grid; grid-template-columns: minmax(0, 3fr) minmax(0, 2fr); gap: 14px; align-items: start; }
+@media (max-width: 900px) { .skill-cards { grid-template-columns: 1fr; } }
+.skill-body { max-height: 70vh; overflow: auto; }
+.skill-body-card, .skill-sessions-card { min-width: 0; }
+.skill-sessions-card table { width: 100%; }

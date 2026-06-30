@@ -215,6 +215,7 @@ export class ClaudeCodeAdapter implements SourceAdapter {
             tool_name: name,
             caller: asString(b.caller),
             skill_name: name === "Skill" ? asString(input.skill) ?? asString(input.command) : null,
+            skill_id: null, // content-addressed skill version; linked in rebuildDerived from the injected body
             agent_type:
               name === "Task" || name === "Agent" ? asString(input.subagent_type) : null,
             spawned_session_id: null, // patched in once the tool_result carries toolUseResult.agentId

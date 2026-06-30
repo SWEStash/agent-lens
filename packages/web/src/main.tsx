@@ -10,6 +10,8 @@ import "./styles.css";
 const Dashboard = lazy(() => import("./Dashboard"));
 const SessionView = lazy(() => import("./SessionView"));
 const WorkflowView = lazy(() => import("./WorkflowView"));
+const SkillsView = lazy(() => import("./SkillsView"));
+const SkillView = lazy(() => import("./SkillView"));
 
 const Loading = () => (
   <div className="muted pad" role="status" aria-live="polite">
@@ -48,6 +50,22 @@ createRoot(document.getElementById("root")!).render(
             element={
               <Suspense fallback={<Loading />}>
                 <WorkflowView />
+              </Suspense>
+            }
+          />
+          <Route
+            path="skills"
+            element={
+              <Suspense fallback={<Loading />}>
+                <SkillsView />
+              </Suspense>
+            }
+          />
+          <Route
+            path="skill/:name"
+            element={
+              <Suspense fallback={<Loading />}>
+                <SkillView />
               </Suspense>
             }
           />

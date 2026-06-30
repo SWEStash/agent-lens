@@ -25,6 +25,55 @@ export function preview(text: string): string {
   return text.replace(/\s+/g, " ").trim().slice(0, 140);
 }
 
+const SKILL_INJECT_PREFIX = "Base directory for this skill:";
+
+/** Final name token of a skill id/dir, ignoring path and plugin prefix: "plugin:foo" / ".../foo" → "foo". */
+function skillNameKey(name: string): string {
+  const afterSlash = name.split("/").pop() ?? name;
+  const afterColon = afterSlash.split(":").pop() ?? afterSlash;
+  return afterColon.trim();
+}
+
+/**
+ * Parse a skill-body injection event. A Skill firing injects an isMeta user message of the shape
+ *   `Base directory for this skill: <abs path>/<name>\n\n<SKILL.md body>\n\nARGUMENTS: <args>`
+ * into the transcript — the only place the real skill content appears. We split off the
+ * Base-directory line (path differs per install) and the trailing ARGUMENTS block (per-call) so the
+ * remaining body is stable across installs/args and can be content-hashed into a version.
+ */
+export function parseSkillInjection(
+  text: string,
+): { baseDir: string | null; nameKey: string; body: string; args: string | null } | null {
+  if (!text.startsWith(SKILL_INJECT_PREFIX)) return null;
+  const firstNl = text.indexOf("\n");
+  const firstLine = (firstNl >= 0 ? text.slice(0, firstNl) : text).slice(SKILL_INJECT_PREFIX.length).trim();
+  const baseDir = firstLine || null;
+  let body = firstNl >= 0 ? text.slice(firstNl + 1) : "";
+  // Strip the trailing per-call ARGUMENTS block (use lastIndexOf — the body may mention "ARGUMENTS").
+  let args: string | null = null;
+  const argIdx = body.lastIndexOf("\nARGUMENTS:");
+  if (argIdx >= 0) {
+    args = body.slice(argIdx + "\nARGUMENTS:".length).trim() || null;
+    body = body.slice(0, argIdx);
+  }
+  return { baseDir, nameKey: baseDir ? skillNameKey(baseDir) : "", body: body.trim(), args };
+}
+
+/** First markdown heading (or first non-empty line) of a body, for list/detail display. */
+function skillSummary(body: string): string | null {
+  for (const line of body.split("\n")) {
+    const t = line.trim();
+    if (!t) continue;
+    return (t.startsWith("#") ? t.replace(/^#+\s*/, "").trim() : t).slice(0, 200) || null;
+  }
+  return null;
+}
+
+/** Content-addressed skill version id: hash of name + normalized body (matches the project's sha1 id convention). */
+function skillVersionId(name: string, body: string): string {
+  return createHash("sha1").update(name).update("\0").update(body).digest("hex").slice(0, 16);
+}
+
 /**
  * Remove every session whose project path is in `excludedPaths` — plus its subagent descendants —
  * along with all dependent rows (events → FTS via trigger, token_usage, tool_calls, turns,
@@ -187,6 +236,8 @@ export function rebuildDerived(db: DB, dirty?: Set<string> | null): Set<string> 
   db.exec(`UPDATE events SET turn_id = NULL${bySession}`);
   db.exec(`UPDATE token_usage SET turn_id = NULL${bySession}`);
   db.exec(`UPDATE tool_calls SET turn_id = NULL${bySession}`);
+  // Clear skill-version links for the scope so changed/removed bodies don't leave a stale link.
+  db.exec(`UPDATE tool_calls SET skill_id = NULL${bySession}`);
   db.exec(`UPDATE sessions SET parent_turn_id = NULL${byId}`);
   db.exec(`DELETE FROM turns${bySession}`);
 
@@ -213,6 +264,91 @@ export function rebuildDerived(db: DB, dirty?: Set<string> | null): Set<string> 
   // Propagate turn_id to dependent tables.
   db.exec(`UPDATE token_usage SET turn_id = (SELECT turn_id FROM events WHERE events.uuid = token_usage.event_uuid)${bySession}`);
   db.exec(`UPDATE tool_calls SET turn_id = (SELECT turn_id FROM events WHERE events.uuid = tool_calls.event_uuid)${bySession}`);
+
+  // Link each Skill tool_call to a content-addressed skill *version*. A firing injects the full
+  // SKILL.md body as an isMeta user event right after the launch; we pair each Skill tool_call with
+  // the following injection (by skill-name token, ARGUMENTS as tiebreak), normalize + hash the body,
+  // UPSERT the version, and stamp tool_calls.skill_id. Firings without a captured body keep skill_id
+  // NULL (skill_name stays set). Runs over the same scoped session set as the turn rebuild.
+  {
+    const selEventsOrdered = db.prepare(
+      "SELECT uuid, type, is_meta, timestamp, text FROM events WHERE session_id = ?",
+    );
+    const selSkillCalls = db.prepare(
+      "SELECT id, event_uuid, skill_name, input_json FROM tool_calls WHERE session_id = ? AND tool_name = 'Skill'",
+    );
+    const upsertSkill = db.prepare(
+      `INSERT INTO skills (id, name, base_dir, body, summary, body_bytes, first_seen, last_seen)
+       VALUES (@id, @name, @base_dir, @body, @summary, @body_bytes, @ts, @ts)
+       ON CONFLICT(id) DO UPDATE SET
+         last_seen  = MAX(last_seen,  excluded.last_seen),
+         first_seen = MIN(first_seen, excluded.first_seen),
+         base_dir   = excluded.base_dir`,
+    );
+    const linkCall = db.prepare("UPDATE tool_calls SET skill_id = ? WHERE id = ?");
+
+    const linkTx = db.transaction(() => {
+      for (const { id: sid } of sessionIds) {
+        const calls = selSkillCalls.all(sid) as Array<{ id: string; event_uuid: string | null; skill_name: string | null; input_json: string | null }>;
+        if (!calls.length) continue;
+        const events = (selEventsOrdered.all(sid) as Array<{ uuid: string; type: string; is_meta: number; timestamp: string | null; text: string | null }>).sort(
+          (x, y) => (x.timestamp ?? "").localeCompare(y.timestamp ?? "") || x.uuid.localeCompare(y.uuid),
+        );
+        const callByEvent = new Map<string, typeof calls>();
+        for (const c of calls) {
+          if (!c.event_uuid) continue;
+          const arr = callByEvent.get(c.event_uuid) ?? [];
+          arr.push(c);
+          callByEvent.set(c.event_uuid, arr);
+        }
+        // Queue of pending Skill calls awaiting their body injection, keyed by skill-name token.
+        const pending = new Map<string, Array<{ id: string; args: string | null }>>();
+        for (const e of events) {
+          const here = callByEvent.get(e.uuid);
+          if (here) {
+            for (const c of here) {
+              if (!c.skill_name) continue;
+              const key = skillNameKey(c.skill_name);
+              let args: string | null = null;
+              try {
+                args = c.input_json ? (JSON.parse(c.input_json).args ?? null) : null;
+                if (typeof args === "string") args = args.trim() || null;
+                else if (args != null) args = JSON.stringify(args);
+              } catch {
+                /* keep null */
+              }
+              const arr = pending.get(key) ?? [];
+              arr.push({ id: c.id, args });
+              pending.set(key, arr);
+            }
+          }
+          if (e.is_meta !== 1 || e.type !== "user" || !e.text) continue;
+          const inj = parseSkillInjection(e.text);
+          if (!inj) continue;
+          const queue = pending.get(inj.nameKey);
+          if (!queue || !queue.length) continue;
+          // Prefer a call whose args match the injection's ARGUMENTS; else take the earliest pending.
+          let idx = inj.args != null ? queue.findIndex((q) => q.args === inj.args) : -1;
+          if (idx < 0) idx = 0;
+          const [match] = queue.splice(idx, 1);
+          const c = calls.find((x) => x.id === match.id)!;
+          const name = c.skill_name!;
+          const vid = skillVersionId(name, inj.body);
+          upsertSkill.run({
+            id: vid,
+            name,
+            base_dir: inj.baseDir,
+            body: inj.body,
+            summary: skillSummary(inj.body),
+            body_bytes: Buffer.byteLength(inj.body, "utf8"),
+            ts: e.timestamp,
+          });
+          linkCall.run(vid, match.id);
+        }
+      }
+    });
+    linkTx();
+  }
 
   // Link subagent (sidechain) sessions back to the parent turn/session that spawned them. The
   // deterministic key is the spawning Task/Agent tool_call's spawned_session_id (== this session id).
@@ -271,6 +407,11 @@ export function rebuildDerived(db: DB, dirty?: Set<string> | null): Set<string> 
   // (kept global — it is one row per session and must catch any now-missing target).
   db.exec(`DELETE FROM sessions WHERE event_count = 0${andId}`);
   db.exec("DELETE FROM classifications WHERE scope = 'session' AND target_id NOT IN (SELECT id FROM sessions)");
+  // Sweep skill versions no longer referenced by any tool_call. Full path only: an incremental run
+  // only re-derives dirty sessions, so a version could still be referenced by a non-dirty session.
+  if (!incremental) {
+    db.exec("DELETE FROM skills WHERE id NOT IN (SELECT skill_id FROM tool_calls WHERE skill_id IS NOT NULL)");
+  }
 
   if (incremental) {
     const expanded = new Set(
@@ -325,8 +466,8 @@ export function prepareStatements(db: DB): IngestStatements {
        ON CONFLICT DO NOTHING`,
     ),
     insTool: db.prepare(
-      `INSERT INTO tool_calls (id, event_uuid, session_id, turn_id, tool_name, caller, skill_name, agent_type, spawned_session_id, workflow_run_id, workflow_name, resolved_model, status, total_duration_ms, total_tokens, total_tool_use_count, input_json, result_summary)
-       VALUES (@id, @event_uuid, @session_id, @turn_id, @tool_name, @caller, @skill_name, @agent_type, @spawned_session_id, @workflow_run_id, @workflow_name, @resolved_model, @status, @total_duration_ms, @total_tokens, @total_tool_use_count, @input_json, @result_summary)
+      `INSERT INTO tool_calls (id, event_uuid, session_id, turn_id, tool_name, caller, skill_name, skill_id, agent_type, spawned_session_id, workflow_run_id, workflow_name, resolved_model, status, total_duration_ms, total_tokens, total_tool_use_count, input_json, result_summary)
+       VALUES (@id, @event_uuid, @session_id, @turn_id, @tool_name, @caller, @skill_name, @skill_id, @agent_type, @spawned_session_id, @workflow_run_id, @workflow_name, @resolved_model, @status, @total_duration_ms, @total_tokens, @total_tool_use_count, @input_json, @result_summary)
        ON CONFLICT(id) DO NOTHING`,
     ),
     patchTool: db.prepare(

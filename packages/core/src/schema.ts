@@ -17,7 +17,7 @@
  * (Phase 2). Bump SCHEMA_VERSION on any DDL change.
  */
 
-export const SCHEMA_VERSION = 7;
+export const SCHEMA_VERSION = 8;
 
 export const SCHEMA_SQL = /* sql */ `
 PRAGMA journal_mode = WAL;
@@ -131,6 +131,7 @@ CREATE TABLE IF NOT EXISTS tool_calls (
   tool_name           TEXT NOT NULL,     -- Edit, Write, Bash, Skill, Task, ...
   caller              TEXT,
   skill_name          TEXT,              -- when tool_name = Skill
+  skill_id            TEXT REFERENCES skills(id), -- the specific skill *version* this call fired (content hash); set in rebuildDerived
   agent_type          TEXT,              -- subagent type (toolUseResult.agentType)
   spawned_session_id  TEXT,              -- for Task/Agent: the subagent session id ('agent-'||agentId)
   workflow_run_id     TEXT,              -- for Workflow: the run id (toolUseResult.runId, e.g. wf_<id>) — ties the run to its subagents
@@ -146,8 +147,28 @@ CREATE TABLE IF NOT EXISTS tool_calls (
 CREATE INDEX IF NOT EXISTS idx_tool_calls_session ON tool_calls(session_id);
 CREATE INDEX IF NOT EXISTS idx_tool_calls_tool ON tool_calls(tool_name);
 CREATE INDEX IF NOT EXISTS idx_tool_calls_skill ON tool_calls(skill_name);
+CREATE INDEX IF NOT EXISTS idx_tool_calls_skill_id ON tool_calls(skill_id);
 CREATE INDEX IF NOT EXISTS idx_tool_calls_spawned ON tool_calls(spawned_session_id);
 CREATE INDEX IF NOT EXISTS idx_tool_calls_workflow_run ON tool_calls(workflow_run_id);
+
+-- Skill *versions* (content-addressed). A skill firing injects the full SKILL.md body into the
+-- transcript as an isMeta user event (begins "Base directory for this skill: …", then the body,
+-- then a trailing "ARGUMENTS: …" block). That body is the only real skill content available (the
+-- trace carries no description/created_at). We identify a version by hashing the *normalized* body
+-- (Base-directory line + per-call ARGUMENTS block stripped, trailing whitespace trimmed) so the same
+-- content from either install / any args is one version, and a content change shows as a new row.
+-- Linked from tool_calls.skill_id in rebuildDerived. See plan: content-addressed skill versioning.
+CREATE TABLE IF NOT EXISTS skills (
+  id          TEXT PRIMARY KEY,   -- sha1 of name + NUL + normalized_body
+  name        TEXT NOT NULL,
+  base_dir    TEXT,               -- last-seen base directory (informational; NOT part of the hash)
+  body        TEXT NOT NULL,      -- normalized SKILL.md body (Base-dir line + ARGUMENTS block stripped)
+  summary     TEXT,               -- first heading/intro line, for list + detail display
+  body_bytes  INTEGER,
+  first_seen  TEXT,               -- earliest firing timestamp (MIN across firings)
+  last_seen   TEXT                -- latest firing timestamp (MAX across firings)
+);
+CREATE INDEX IF NOT EXISTS idx_skills_name ON skills(name);
 
 -- Token usage at the assistant-response grain. Cost derived later from model. --
 -- One API response is logged across multiple JSONL lines (one per content block: text + each
