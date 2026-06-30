@@ -16,8 +16,9 @@ the [Operations Guide](USAGE.md). This runbook covers running, migrating, and tr
   ([env table](USAGE.md#environment-variables)). The archive is read-only to ingest — it is never
   mutated, so any run is safe to repeat.
 
-A run prints: `files / skipped / new_events / malformed`, then `sessions / turns / events / tool_calls /
-classified`, then `tokens / est_cost / db`.
+A run prints: `files / skipped / new_events / malformed` (plus `excluded_pruned=N` when an excluded
+project's sessions were removed — see *Excluding projects* in USAGE.md), then `sessions / turns /
+events / tool_calls / classified`, then `tokens / est_cost / db`.
 
 ## Incremental vs. `--full`
 

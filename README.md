@@ -156,6 +156,15 @@ The same resolver (`scripts/sources.mjs`) feeds both collection and ingest, so s
 with their source and you can filter/compare across accounts. Runtime knobs (ports, paths, retention
 window) are environment variables — see the [environment table in USAGE.md](docs/USAGE.md#reference).
 
+**Excluding projects.** Add real project paths to an optional `exclude` array (or set
+`AGENT_LENS_EXCLUDE`, comma-separated) to keep playgrounds, throwaway tests, or private work out of
+Agent Lens entirely — never collected, never ingested, pruned from the DB on the next ingest. See
+[*Exclude projects* in USAGE.md](docs/USAGE.md#exclude-projects-playgrounds-throwaway-private).
+
+```jsonc
+{ "sources": [ /* … */ ], "exclude": ["~/git-projects/playground", "~/scratch"] }
+```
+
 ## Privacy
 
 This is the whole point of the tool, so it's a hard constraint, not a feature flag:
@@ -166,6 +175,8 @@ This is the whole point of the tool, so it's a hard constraint, not a feature fl
 - The `data/` store is as sensitive as the originals — it is **gitignored** and stays on your machine.
   (See [ADR-005](docs/decisions/ADR-005-privacy-posture.md) and the at-rest guidance in
   [ADR-009](docs/decisions/ADR-009-retention-and-at-rest.md).)
+- **Exclude private projects** entirely via the `exclude` list — they are never collected, ingested,
+  or included in any shareable artifact.
 
 ## Documentation
 
@@ -176,6 +187,8 @@ This is the whole point of the tool, so it's a hard constraint, not a feature fl
   the daily loop, retention/pruning, environment variables, the HTTP API, and troubleshooting.
 - **[docs/INGEST-RUNBOOK.md](docs/INGEST-RUNBOOK.md)** — running, migrating, and troubleshooting Stage 2
   ingest (incremental vs `--full`, the compression migration, recovery).
+- **[docs/VALIDATION.md](docs/VALIDATION.md)** — how metric correctness is verified end to end: the
+  five validation layers, the invariant suite, the redaction oracle, and the latest results.
 - **[docs/decisions/](docs/decisions/)** — Architecture Decision Records (tracked in git).
 
 ## Project layout
@@ -185,9 +198,11 @@ packages/core     shared types + SQLite schema (agent-agnostic)
 packages/ingest   Stage-2 parser + heuristic classifier; ClaudeCodeAdapter (extensible)
 packages/server   Stage-3 read-only localhost API over the store
 packages/web      Vite + React SPA (browse + dashboards)
-scripts/          collect.sh · prune.sh · setup-systemd.sh · sources.mjs
+scripts/          collect.sh · ingest.sh · serve.sh · prune.sh · setup-systemd.sh · sources.mjs
+                  validate.mjs · oracle.mjs · build-corpus.sh · build-scenarios.mjs · sandbox.sh
 systemd/          user service + timer units
-docs/             ARCHITECTURE.md · USAGE.md · INGEST-RUNBOOK.md · decisions/ (ADRs)
+docs/             ARCHITECTURE.md · USAGE.md · INGEST-RUNBOOK.md · VALIDATION.md · decisions/ (ADRs)
+test/fixtures/    committed redacted + synthetic validation corpus (no real data)
 data/             archive/<label>/ + agent-lens.db  (contents gitignored)
 ```
 
@@ -207,10 +222,18 @@ pnpm typecheck     # type-check every package (tsc --noEmit)
 pnpm test          # build, then run the vitest suite
 ```
 
-Tests cover the ingest engine (golden synthetic JSONL → expected rows, including subagent linkage and
-zero-turn handling) and the server API (`app.inject()` smoke tests). After a **parser** change,
-re-ingest with `--full`; after a **classifier** change, bump `CLASSIFIER_VERSION` and re-run
-`agent-lens-metrics` (no re-ingest needed).
+Tests cover the ingest engine, the compute layer (pricing, dashboard aggregates, classifier),
+and the server API. Metric correctness is verified end to end by a five-layer harness — see
+[docs/VALIDATION.md](docs/VALIDATION.md):
+
+```bash
+cp data/agent-lens.db /tmp/al.db && pnpm validate --db /tmp/al.db   # invariants on a real-DB copy
+pnpm sandbox                                                        # ingest→server→API over the corpus
+pnpm build-corpus                                                   # regenerate the redacted corpus + oracle
+```
+
+After a **parser** change, re-ingest with `--full`; after a **classifier** change, bump
+`CLASSIFIER_VERSION` and re-run `agent-lens-metrics` (no re-ingest needed).
 
 ## Contributing
 

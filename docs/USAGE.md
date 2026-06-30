@@ -277,6 +277,7 @@ macOS) if you need at-rest protection. See `docs/decisions/ADR-009-retention-and
 | `AGENT_LENS_ARCHIVE` | `$AGENT_LENS_DATA/archive` | collect, ingest | archive location |
 | `AGENT_LENS_DB` | `$AGENT_LENS_DATA/agent-lens.db` | ingest, server | SQLite path |
 | `AGENT_LENS_CONFIG` | `<repo>/agent-lens.config.json` | collect, ingest | sources config path |
+| `AGENT_LENS_EXCLUDE` | _(unset)_ | collect, ingest | comma-separated project paths to exclude, additive to the config `exclude` array |
 | `AGENT_LENS_PORT` | `4477` | server | HTTP port |
 | `AGENT_LENS_HOST` | `127.0.0.1` | server | bind host (loopback) |
 | `AGENT_LENS_ALLOW_NONLOCAL` | _(unset)_ | server | required to bind a non-loopback host |
