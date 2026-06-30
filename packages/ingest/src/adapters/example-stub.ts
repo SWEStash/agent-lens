@@ -119,6 +119,8 @@ export class ExampleStubAdapter implements SourceAdapter {
           skill_name: null,
           agent_type: null,
           spawned_session_id: null,
+          workflow_run_id: null,
+          workflow_name: null,
           resolved_model: null,
           status: null,
           total_duration_ms: null,

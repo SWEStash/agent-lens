@@ -51,6 +51,35 @@ function asInt(v: unknown): number {
   return typeof v === "number" && Number.isFinite(v) ? Math.trunc(v) : 0;
 }
 
+/**
+ * Derive the parent session id for a subagent transcript from its on-disk path. Claude Code nests
+ * subagent transcripts under the spawning session's directory:
+ *   Task/Agent:  <...>/projects/<enc>/<PARENT_SESSION_ID>/subagents/agent-<id>.jsonl
+ *   Workflow:    <...>/projects/<enc>/<PARENT_SESSION_ID>/subagents/workflows/wf_<runId>/agent-<id>.jsonl
+ * In both layouts the parent session id is the path segment immediately before `subagents/`. This is
+ * the deterministic, redaction-surviving link (the Workflow tool emits no toolUseResult.agentId, so
+ * the tool_calls.spawned_session_id path never fires for workflow fan-out). Returns null for a main
+ * session (no `subagents/` segment).
+ */
+export function parentSessionFromPath(path: string): string | null {
+  const parts = path.split("/");
+  const i = parts.indexOf("subagents");
+  return i > 0 ? parts[i - 1] : null;
+}
+
+/**
+ * For a Workflow-tool subagent, the run id from its path. Workflow fan-out nests under
+ * `…/subagents/workflows/<runId>/agent-<id>.jsonl`, so the run id is the segment after `workflows/`
+ * (e.g. `wf_ab787f1c-ff7`). Returns null for Task/Agent subagents (no `workflows/` segment) and main
+ * sessions. The same id appears in the launching Workflow tool_call's result (toolUseResult.runId),
+ * which is how a run's agents group and link back to the turn that started them.
+ */
+export function workflowRunFromPath(path: string): string | null {
+  const parts = path.split("/");
+  const i = parts.indexOf("workflows");
+  return i >= 0 && i + 1 < parts.length ? parts[i + 1] : null;
+}
+
 function recurseJsonl(dir: string, out: string[]): void {
   let entries;
   try {
@@ -81,7 +110,15 @@ export class ClaudeCodeAdapter implements SourceAdapter {
         const parts = path.split("/");
         const sessionId = basename(path, ".jsonl");
         const encodedDir = parts[parts.length - 2] ?? "";
-        files.push({ path, sessionId, encodedDir, isVersion, sourceId });
+        files.push({
+          path,
+          sessionId,
+          encodedDir,
+          isVersion,
+          sourceId,
+          parentSessionId: parentSessionFromPath(path),
+          workflowRunId: workflowRunFromPath(path),
+        });
       }
     };
 
@@ -181,6 +218,8 @@ export class ClaudeCodeAdapter implements SourceAdapter {
             agent_type:
               name === "Task" || name === "Agent" ? asString(input.subagent_type) : null,
             spawned_session_id: null, // patched in once the tool_result carries toolUseResult.agentId
+            workflow_run_id: null, // patched in from the Workflow tool_result's runId
+            workflow_name: name === "Workflow" ? asString(input.name) : null, // refined from the result
             resolved_model: null,
             status: null,
             total_duration_ms: null,
@@ -200,6 +239,10 @@ export class ClaudeCodeAdapter implements SourceAdapter {
                   // Deterministic link: a Task/Agent subagent's transcript is keyed off its agentId
                   // ('agent-'||agentId is the session id assigned by discover()'s filename stem).
                   spawned_session_id: asString(tur.agentId) ? `agent-${tur.agentId}` : null,
+                  // Workflow fan-out: the result carries the run id (wf_<id>) + workflow name; this is
+                  // how a run's subagents (nested under subagents/workflows/<runId>/) link to this turn.
+                  workflow_run_id: asString(tur.runId),
+                  workflow_name: asString(tur.workflowName),
                   resolved_model: asString(tur.resolvedModel),
                   total_duration_ms: typeof tur.totalDurationMs === "number" ? tur.totalDurationMs : null,
                   total_tokens: typeof tur.totalTokens === "number" ? tur.totalTokens : null,

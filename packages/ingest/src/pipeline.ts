@@ -162,6 +162,15 @@ export function rebuildDerived(db: DB, dirty?: Set<string> | null): Set<string> 
         UNION
         SELECT session_id FROM tool_calls
           WHERE spawned_session_id IN (SELECT id FROM _dirty)
+        UNION
+        -- structural (path-based) workflow linkage: a dirty parent pulls in its subagent children,
+        -- and a dirty child pulls in its structural parent, so the fallback link stays correct when
+        -- parent and child transcripts arrive in different runs (ADR-010).
+        SELECT id FROM sessions
+          WHERE spawn_parent_id IN (SELECT id FROM _dirty)
+        UNION
+        SELECT spawn_parent_id FROM sessions
+          WHERE id IN (SELECT id FROM _dirty) AND spawn_parent_id IS NOT NULL
     `);
     const count = db.prepare("SELECT COUNT(*) n FROM _dirty");
     let prev = -1;
@@ -212,6 +221,30 @@ export function rebuildDerived(db: DB, dirty?: Set<string> | null): Set<string> 
       parent_session_id = (SELECT tc.session_id FROM tool_calls tc WHERE tc.spawned_session_id = sessions.id),
       parent_turn_id    = (SELECT tc.turn_id    FROM tool_calls tc WHERE tc.spawned_session_id = sessions.id)
     WHERE EXISTS (SELECT 1 FROM tool_calls tc WHERE tc.spawned_session_id = sessions.id)${andSelfId}
+  `);
+
+  // Workflow fan-out carries no toolUseResult.agentId, so the link above never fires for it
+  // (finding #1). But the launching Workflow tool_call's result DOES carry a run id (wf_<id>), and the
+  // run's subagents nest under …/subagents/workflows/<runId>/ — so sessions.workflow_run_id matches
+  // tool_calls.workflow_run_id. That gives workflow agents BOTH their parent session and the exact
+  // launching turn. (LIMIT 1: a run id maps to a single Workflow tool_call.)
+  db.exec(`
+    UPDATE sessions SET
+      parent_session_id = COALESCE(parent_session_id, (SELECT tc.session_id FROM tool_calls tc WHERE tc.workflow_run_id = sessions.workflow_run_id LIMIT 1)),
+      parent_turn_id    = COALESCE(parent_turn_id,    (SELECT tc.turn_id    FROM tool_calls tc WHERE tc.workflow_run_id = sessions.workflow_run_id LIMIT 1))
+    WHERE sessions.workflow_run_id IS NOT NULL
+      AND EXISTS (SELECT 1 FROM tool_calls tc WHERE tc.workflow_run_id = sessions.workflow_run_id)${andSelfId}
+  `);
+
+  // Final fallback for any sidechain still unlinked (e.g. its Workflow tool_call/runId wasn't
+  // captured, or a non-workflow nested agent): attribute to the structural parent captured at ingest
+  // from the transcript's directory location (<parent>/subagents/…) — the deterministic,
+  // redaction-surviving signal. parent_turn_id stays NULL here. Tokens stay siloed → no double-count.
+  db.exec(`
+    UPDATE sessions SET parent_session_id = spawn_parent_id
+    WHERE parent_session_id IS NULL
+      AND spawn_parent_id IS NOT NULL
+      AND spawn_parent_id IN (SELECT id FROM sessions)${andSelfId}
   `);
 
   // Recompute session aggregates from events/turns.
@@ -292,8 +325,8 @@ export function prepareStatements(db: DB): IngestStatements {
        ON CONFLICT DO NOTHING`,
     ),
     insTool: db.prepare(
-      `INSERT INTO tool_calls (id, event_uuid, session_id, turn_id, tool_name, caller, skill_name, agent_type, spawned_session_id, resolved_model, status, total_duration_ms, total_tokens, total_tool_use_count, input_json, result_summary)
-       VALUES (@id, @event_uuid, @session_id, @turn_id, @tool_name, @caller, @skill_name, @agent_type, @spawned_session_id, @resolved_model, @status, @total_duration_ms, @total_tokens, @total_tool_use_count, @input_json, @result_summary)
+      `INSERT INTO tool_calls (id, event_uuid, session_id, turn_id, tool_name, caller, skill_name, agent_type, spawned_session_id, workflow_run_id, workflow_name, resolved_model, status, total_duration_ms, total_tokens, total_tool_use_count, input_json, result_summary)
+       VALUES (@id, @event_uuid, @session_id, @turn_id, @tool_name, @caller, @skill_name, @agent_type, @spawned_session_id, @workflow_run_id, @workflow_name, @resolved_model, @status, @total_duration_ms, @total_tokens, @total_tool_use_count, @input_json, @result_summary)
        ON CONFLICT(id) DO NOTHING`,
     ),
     patchTool: db.prepare(
@@ -301,6 +334,8 @@ export function prepareStatements(db: DB): IngestStatements {
          status = COALESCE(@status, status),
          agent_type = COALESCE(@agent_type, agent_type),
          spawned_session_id = COALESCE(@spawned_session_id, spawned_session_id),
+         workflow_run_id = COALESCE(@workflow_run_id, workflow_run_id),
+         workflow_name = COALESCE(@workflow_name, workflow_name),
          resolved_model = COALESCE(@resolved_model, resolved_model),
          total_duration_ms = COALESCE(@total_duration_ms, total_duration_ms),
          total_tokens = COALESCE(@total_tokens, total_tokens),
@@ -315,8 +350,8 @@ export function prepareStatements(db: DB): IngestStatements {
     ),
     insSessionStub: db.prepare("INSERT OR IGNORE INTO sessions (id, agent_id, source_id) VALUES (?, ?, ?)"),
     upsertSession: db.prepare(
-      `INSERT INTO sessions (id, agent_id, source_id, project_id, slug, ai_title, cli_version, entrypoint, git_branch)
-       VALUES (@id, @agent_id, @source_id, @project_id, @slug, @ai_title, @cli_version, @entrypoint, @git_branch)
+      `INSERT INTO sessions (id, agent_id, source_id, project_id, slug, ai_title, cli_version, entrypoint, git_branch, spawn_parent_id, workflow_run_id)
+       VALUES (@id, @agent_id, @source_id, @project_id, @slug, @ai_title, @cli_version, @entrypoint, @git_branch, @spawn_parent_id, @workflow_run_id)
        ON CONFLICT(id) DO UPDATE SET
          source_id = COALESCE(excluded.source_id, source_id),
          project_id = COALESCE(excluded.project_id, project_id),
@@ -324,7 +359,9 @@ export function prepareStatements(db: DB): IngestStatements {
          ai_title = COALESCE(excluded.ai_title, ai_title),
          cli_version = COALESCE(excluded.cli_version, cli_version),
          entrypoint = COALESCE(excluded.entrypoint, entrypoint),
-         git_branch = COALESCE(excluded.git_branch, git_branch)`,
+         git_branch = COALESCE(excluded.git_branch, git_branch),
+         spawn_parent_id = COALESCE(excluded.spawn_parent_id, spawn_parent_id),
+         workflow_run_id = COALESCE(excluded.workflow_run_id, workflow_run_id)`,
     ),
   };
 }
@@ -383,6 +420,8 @@ export function ingestFile(
             status: tr.status ?? null,
             agent_type: tr.agent_type ?? null,
             spawned_session_id: tr.spawned_session_id ?? null,
+            workflow_run_id: tr.workflow_run_id ?? null,
+            workflow_name: tr.workflow_name ?? null,
             resolved_model: tr.resolved_model ?? null,
             total_duration_ms: tr.total_duration_ms ?? null,
             total_tokens: tr.total_tokens ?? null,
@@ -413,6 +452,8 @@ export function ingestFile(
       cli_version: sessionMeta.cli_version ?? null,
       entrypoint: sessionMeta.entrypoint ?? null,
       git_branch: sessionMeta.git_branch ?? null,
+      spawn_parent_id: file.parentSessionId ?? null,
+      workflow_run_id: file.workflowRunId ?? null,
     });
 
     stmts.setState.run({

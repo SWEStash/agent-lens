@@ -90,15 +90,19 @@ line("[4] Linkage integrity");
   hard("linked subagent.parent_turn_id resolves within parent_session", badParentTurn === 0, `${badParentTurn} broken`);
 }
 
-// 5) Orphan accounting — report only (this is the workflow-subagent finding).
+// 5) Orphan accounting — report only. Subagents link either via a Task/Agent tool_use
+//    (toolUseResult.agentId) or structurally via their <parent>/subagents/ directory (covers
+//    Workflow fan-out). Any remaining orphan is genuinely path-less — e.g. its parent transcript
+//    was never collected, or the DB predates SCHEMA_VERSION 6 and needs an `ingest --full`.
 line("[5] Subagent linkage (report only)");
 {
   const linked = q1("SELECT COUNT(*) n FROM sessions WHERE is_sidechain = 1 AND parent_session_id IS NOT NULL").n;
   const orphan = q1("SELECT COUNT(*) n FROM sessions WHERE is_sidechain = 1 AND parent_session_id IS NULL").n;
+  const viaPath = q1("SELECT COUNT(*) n FROM sessions WHERE is_sidechain = 1 AND parent_session_id IS NOT NULL AND parent_turn_id IS NULL").n;
   const spawns = q1("SELECT COUNT(*) n FROM tool_calls WHERE tool_name IN ('Agent','Task')").n;
-  soft("sidechain sessions", `${linked} linked, ${orphan} orphan (no parent_session_id)`);
+  soft("sidechain sessions", `${linked} linked (${viaPath} via subagents/ path), ${orphan} orphan (no parent_session_id)`);
   soft("Agent/Task spawns in transcripts", `${spawns}`);
-  if (orphan > 0) soft("→ orphans are likely Workflow-tool agents linked via a journal, not a tool_use", "see docs/VALIDATION.md");
+  if (orphan > 0) soft("→ remaining orphans are path-less (parent transcript not collected, or DB predates SCHEMA_VERSION 6 — run `ingest --full`)", "see docs/VALIDATION.md");
 }
 
 // 6) Aggregate recompute — materialized session aggregates must equal a fresh recount.

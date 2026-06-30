@@ -1,0 +1,4 @@
+{"type":"started","agentId":"wf01","key":"migrate:users"}
+{"type":"result","agentId":"wf01","key":"migrate:users","result":"ok"}
+{"type":"started","agentId":"wf02","key":"migrate:orders"}
+{"type":"result","agentId":"wf02","key":"migrate:orders","result":"ok"}

@@ -5,7 +5,8 @@
 # env-isolated temp dir — never touches your real data/ or DB. The corpus carries three sources
 # (team-a, team-b = redacted real; scenarios = synthetic) covering every pipeline scenario, and this
 # script asserts each one end-to-end: multi-source, plain, subagents (no double-count), workflow
-# fan-out (orphans), compaction, dedup, cache tokens, and malformed handling.
+# fan-out (linked to orchestrator via the subagents/ path), compaction, dedup, cache tokens, and
+# malformed handling.
 #
 # Usage: bash scripts/sandbox.sh   (requires `pnpm build` to have produced the dist/ outputs)
 set -euo pipefail
@@ -46,11 +47,15 @@ echo "=== scenario assertions (DB) ==="
 ok 1 "$(echo "$INGEST" | grep -oE 'malformed=[0-9]+' | cut -d= -f2)" "malformed line counted"
 # multi-source: three labeled sources, no cross-source bleed.
 ok 3 "$(q "SELECT COUNT(DISTINCT source_id) FROM sessions;")" "multi-source (3 sources)"
-ok 12 "$(q "SELECT COUNT(*) FROM sessions;")" "total sessions"
-ok 7 "$(q "SELECT COUNT(*) FROM sessions WHERE is_sidechain=0;")" "main sessions"
-# subagents: Task-spawned child links to parent; workflow agents are orphans (finding #1).
-ok 3 "$(q "SELECT COUNT(*) FROM sessions WHERE is_sidechain=1 AND parent_session_id IS NOT NULL;")" "linked subagents"
-ok 2 "$(q "SELECT COUNT(*) FROM sessions WHERE is_sidechain=1 AND parent_session_id IS NULL;")" "orphan workflow agents"
+ok 13 "$(q "SELECT COUNT(*) FROM sessions;")" "total sessions"
+ok 8 "$(q "SELECT COUNT(*) FROM sessions WHERE is_sidechain=0;")" "main sessions"
+# subagents: all 5 link to a parent — 3 Task (toolUseResult.agentId) + 2 workflow (run id).
+ok 5 "$(q "SELECT COUNT(*) FROM sessions WHERE is_sidechain=1 AND parent_session_id IS NOT NULL;")" "linked subagents"
+ok 0 "$(q "SELECT COUNT(*) FROM sessions WHERE is_sidechain=1 AND parent_session_id IS NULL;")" "no orphan subagents"
+ok 2 "$(q "SELECT COUNT(*) FROM sessions WHERE parent_session_id='sc-workflow-0003';")" "workflow fan-out linked to orchestrator"
+# workflow run is captured + tied to the launching turn (run grouping in the UI).
+ok 2 "$(q "SELECT COUNT(*) FROM sessions WHERE workflow_run_id='wf_demo000abc' AND parent_turn_id IS NOT NULL;")" "workflow agents linked to launching turn"
+ok migrate-db "$(q "SELECT workflow_name FROM tool_calls WHERE workflow_run_id='wf_demo000abc';")" "Workflow tool_call carries run name"
 # no double-count: the child's tokens live in the child session, not folded into the parent.
 ok 1500 "$(q "SELECT SUM(input_tokens) FROM token_usage WHERE session_id='agent-c0ffee01';")" "child tokens attributed to child"
 ok 1300 "$(q "SELECT SUM(input_tokens) FROM token_usage WHERE session_id='sc-sub-parent-0002';")" "parent tokens exclude child"
@@ -70,7 +75,7 @@ BD="$(curl -sf "http://127.0.0.1:$PORT/api/dashboard/breakdowns")"
 node -e '
   const ov = JSON.parse(process.argv[1]), bd = JSON.parse(process.argv[2]);
   let bad = 0; const ok = (c, n) => { console.log(`  ${c ? "PASS" : "FAIL"}  ${n}`); if (!c) bad++; };
-  ok(ov.sessions === 12, "overview serves 12 sessions");
+  ok(ov.sessions === 13, "overview serves 13 sessions");
   ok(bd.by_source.length === 3, "breakdowns: 3 sources");
   ok(ov.cost > 0 && ov.tokens.cache_read > 0, "overview: cost + cache_read > 0");
   ok(bd.subagent_fanout.total_spawns >= 1, "breakdowns: subagent fan-out present");

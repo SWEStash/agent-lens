@@ -17,7 +17,7 @@
  * (Phase 2). Bump SCHEMA_VERSION on any DDL change.
  */
 
-export const SCHEMA_VERSION = 5;
+export const SCHEMA_VERSION = 7;
 
 export const SCHEMA_SQL = /* sql */ `
 PRAGMA journal_mode = WAL;
@@ -68,7 +68,9 @@ CREATE TABLE IF NOT EXISTS sessions (
   entrypoint        TEXT,
   git_branch        TEXT,
   is_sidechain      INTEGER NOT NULL DEFAULT 0,  -- 1 = subagent thread
-  parent_session_id TEXT REFERENCES sessions(id), -- spawning session (subagents only)
+  spawn_parent_id   TEXT,                          -- structural parent from path (<parent>/subagents/…); raw link hint, set at ingest
+  workflow_run_id   TEXT,                           -- for a Workflow-tool subagent: its run id (wf_<id>) from the path; groups fan-out by run
+  parent_session_id TEXT REFERENCES sessions(id), -- spawning session (subagents only); derived in rebuildDerived
   parent_turn_id    TEXT REFERENCES turns(id),     -- the turn that spawned this subagent
   started_at        TEXT,               -- ISO8601 of first event
   ended_at          TEXT,               -- ISO8601 of last event
@@ -80,6 +82,7 @@ CREATE INDEX IF NOT EXISTS idx_sessions_project ON sessions(project_id);
 CREATE INDEX IF NOT EXISTS idx_sessions_source ON sessions(source_id);
 CREATE INDEX IF NOT EXISTS idx_sessions_started ON sessions(started_at);
 CREATE INDEX IF NOT EXISTS idx_sessions_parent_session ON sessions(parent_session_id);
+CREATE INDEX IF NOT EXISTS idx_sessions_workflow_run ON sessions(workflow_run_id);
 CREATE INDEX IF NOT EXISTS idx_sessions_parent_turn ON sessions(parent_turn_id);
 
 -- A turn = user prompt -> assistant completion within a session. ------------
@@ -130,6 +133,8 @@ CREATE TABLE IF NOT EXISTS tool_calls (
   skill_name          TEXT,              -- when tool_name = Skill
   agent_type          TEXT,              -- subagent type (toolUseResult.agentType)
   spawned_session_id  TEXT,              -- for Task/Agent: the subagent session id ('agent-'||agentId)
+  workflow_run_id     TEXT,              -- for Workflow: the run id (toolUseResult.runId, e.g. wf_<id>) — ties the run to its subagents
+  workflow_name       TEXT,              -- for Workflow: the workflow name (toolUseResult.workflowName)
   resolved_model      TEXT,
   status              TEXT,              -- success | error | ...
   total_duration_ms   INTEGER,
@@ -142,6 +147,7 @@ CREATE INDEX IF NOT EXISTS idx_tool_calls_session ON tool_calls(session_id);
 CREATE INDEX IF NOT EXISTS idx_tool_calls_tool ON tool_calls(tool_name);
 CREATE INDEX IF NOT EXISTS idx_tool_calls_skill ON tool_calls(skill_name);
 CREATE INDEX IF NOT EXISTS idx_tool_calls_spawned ON tool_calls(spawned_session_id);
+CREATE INDEX IF NOT EXISTS idx_tool_calls_workflow_run ON tool_calls(workflow_run_id);
 
 -- Token usage at the assistant-response grain. Cost derived later from model. --
 -- One API response is logged across multiple JSONL lines (one per content block: text + each

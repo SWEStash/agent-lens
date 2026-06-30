@@ -17,7 +17,7 @@ import { unpackRaw } from "@agent-lens/core";
 import { openDb } from "../dist/db.js";
 import { prepareStatements, ingestFile, rebuildDerived, newStats } from "../dist/pipeline.js";
 import { classify } from "../dist/classify.js";
-import { ClaudeCodeAdapter } from "../dist/adapters/claude-code.js";
+import { ClaudeCodeAdapter, parentSessionFromPath, workflowRunFromPath } from "../dist/adapters/claude-code.js";
 import { sha256, sha256File, streamLines } from "../dist/fileread.js";
 
 const SOURCE = "test";
@@ -31,6 +31,25 @@ function jsonl(...lines: unknown[]): string {
 function file(sessionId: string, content: string): { file: SourceFile; content: string } {
   return {
     file: { path: `/fixtures/${sessionId}.jsonl`, sessionId, encodedDir: "-fixtures", isVersion: false, sourceId: SOURCE },
+    content,
+  };
+}
+
+// Build a SourceFile from a realistic on-disk path, deriving sessionId/parentSessionId exactly as
+// the adapter's discover() does — so tests exercise the real path-based parent linkage.
+function fileAt(path: string, content: string): { file: SourceFile; content: string } {
+  const parts = path.split("/");
+  const sessionId = parts[parts.length - 1].replace(/\.jsonl$/, "");
+  return {
+    file: {
+      path,
+      sessionId,
+      encodedDir: parts[parts.length - 2] ?? "",
+      isVersion: false,
+      sourceId: SOURCE,
+      parentSessionId: parentSessionFromPath(path),
+      workflowRunId: workflowRunFromPath(path),
+    },
     content,
   };
 }
@@ -415,9 +434,10 @@ describe("validation scenarios: malformed / meta / cross-file dedup / orphan sub
     expect((d.prepare("SELECT COUNT(*) n FROM events WHERE uuid = 'dup1'").get() as any).n).toBe(1);
   });
 
-  it("ingests an orphan (workflow) subagent as a sidechain with no parent linkage", () => {
+  it("ingests a path-less sidechain (no <parent>/subagents/ dir) as an orphan — parent stays NULL", () => {
     const { d, stmts, adapter } = freshIngestDb();
-    // A subagent transcript whose agentId is never referenced by any parent Agent/Task tool_use.
+    // A subagent transcript that is NOT under any session's subagents/ dir and is never referenced by
+    // a Task/Agent tool_use → there is no structural parent to attribute it to.
     const orphan = file(
       "agent-orphan99",
       jsonl(
@@ -429,10 +449,55 @@ describe("validation scenarios: malformed / meta / cross-file dedup / orphan sub
     rebuildDerived(d);
     const s = d.prepare("SELECT is_sidechain, parent_session_id, parent_turn_id FROM sessions WHERE id = 'agent-orphan99'").get() as any;
     expect(s.is_sidechain).toBe(1);
-    expect(s.parent_session_id).toBeNull(); // no spawning tool_use → orphan (current behavior)
+    expect(s.parent_session_id).toBeNull(); // no structural parent dir, no spawning tool_use → orphan
     expect(s.parent_turn_id).toBeNull();
     // Its tokens are still recorded and attributable to the subagent session.
     expect((d.prepare("SELECT SUM(input_tokens) i FROM token_usage WHERE session_id = 'agent-orphan99'").get() as any).i).toBe(10);
+  });
+
+  it("links a workflow subagent to its parent + launching turn via the run id (wf_<id>)", () => {
+    const { d, stmts, adapter } = freshIngestDb();
+    // Parent main session that invokes the Workflow tool. Workflows emit no toolUseResult.agentId, but
+    // the result DOES carry runId + workflowName — which ties the run (and its fan-out) to this turn.
+    const parent = fileAt(
+      "/r/projects/-demo/wfpar-1.jsonl",
+      jsonl(
+        { uuid: "p1", type: "user", timestamp: T(1), cwd: "/demo", gitBranch: "main", message: { role: "user", content: "Run the migration workflow" } },
+        { uuid: "p2", type: "assistant", timestamp: T(2), message: { role: "assistant", model: "claude-opus-4-8", content: [{ type: "tool_use", id: "tu_wf", name: "Workflow", input: { name: "migrate" } }], usage: { input_tokens: 100, output_tokens: 10, cache_creation_input_tokens: 0, cache_read_input_tokens: 0 } } },
+        { uuid: "p2r", type: "user", timestamp: T(3), message: { role: "user", content: [{ type: "tool_result", tool_use_id: "tu_wf", content: "launched" }] }, toolUseResult: { status: "async_launched", runId: "wf_demo000abc", workflowName: "migrate-db" } },
+        { uuid: "p3", type: "assistant", timestamp: T(4), message: { role: "assistant", model: "claude-opus-4-8", content: [{ type: "text", text: "Done." }], usage: { input_tokens: 30, output_tokens: 5, cache_creation_input_tokens: 0, cache_read_input_tokens: 0 } } },
+      ),
+    );
+    // Workflow subagent transcript nested under <parent>/subagents/workflows/wf_demo000abc/.
+    const agent = fileAt(
+      "/r/projects/-demo/wfpar-1/subagents/workflows/wf_demo000abc/agent-wfA.jsonl",
+      jsonl(
+        { uuid: "a1", type: "user", timestamp: T(4), isSidechain: true, agentId: "wfA", message: { role: "user", content: "migrate users table" } },
+        { uuid: "a2", type: "assistant", timestamp: T(5), isSidechain: true, agentId: "wfA", message: { role: "assistant", model: "claude-haiku-4-5-20251001", content: [{ type: "text", text: "migrated" }], usage: { input_tokens: 1000, output_tokens: 120, cache_creation_input_tokens: 0, cache_read_input_tokens: 0 } } },
+      ),
+    );
+    for (const f of [parent, agent]) {
+      ingestFile(d, stmts, adapter, f.file, f.content.split("\n"), { size: f.content.length, mtimeMs: 0, hash: f.file.sessionId }, now, stats0());
+    }
+    rebuildDerived(d);
+    const s = d.prepare("SELECT is_sidechain, parent_session_id, parent_turn_id, workflow_run_id FROM sessions WHERE id = 'agent-wfA'").get() as any;
+    expect(s.is_sidechain).toBe(1);
+    expect(s.parent_session_id).toBe("wfpar-1"); // linked to the orchestrator
+    expect(s.workflow_run_id).toBe("wf_demo000abc"); // run id captured from the path
+    expect(s.parent_turn_id).toBe("wfpar-1:0"); // the turn holding the Workflow tool_use
+    // The launching Workflow tool_call captured the run id + name from its result.
+    const tc = d.prepare("SELECT workflow_run_id, workflow_name FROM tool_calls WHERE id = 'tu_wf'").get() as any;
+    expect(tc.workflow_run_id).toBe("wf_demo000abc");
+    expect(tc.workflow_name).toBe("migrate-db");
+    // No double-count: child tokens attributed to the child, parent unchanged.
+    expect((d.prepare("SELECT SUM(input_tokens) i FROM token_usage WHERE session_id = 'agent-wfA'").get() as any).i).toBe(1000);
+    expect((d.prepare("SELECT SUM(input_tokens) i FROM token_usage WHERE session_id = 'wfpar-1'").get() as any).i).toBe(130);
+  });
+
+  it("derives the parent session id from the path segment before /subagents/", () => {
+    expect(parentSessionFromPath("/r/projects/-d/PARENT/subagents/agent-x.jsonl")).toBe("PARENT");
+    expect(parentSessionFromPath("/r/projects/-d/PARENT/subagents/workflows/wf_1/agent-x.jsonl")).toBe("PARENT");
+    expect(parentSessionFromPath("/r/projects/-d/PARENT.jsonl")).toBeNull(); // a main session, no parent
   });
 });
 

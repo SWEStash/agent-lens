@@ -86,6 +86,11 @@ token rows):** all hard invariants PASS.
 report: cache_read_ratio = 95.7% · 239 linked + 249 orphan subagents · 0 unattributed token rows · all models priced
 ```
 
+> The `249 orphan subagents` line above is the pre-fix snapshot. After finding #1
+> was fixed (structural `subagents/`-path linkage) those workflow agents attribute
+> to their orchestrator; re-run `ingest --full` then `pnpm validate` to see the
+> orphan count drop to the genuinely path-less remainder.
+
 **Layer 4 — oracle (raw subset vs redacted corpus):** every metric identical —
 sessions/turns/events/tool_calls, token split, cost ($0.632179), subagent
 linkage, complexity scores. The redacted real sources (team-a/team-b) are
@@ -106,7 +111,8 @@ sandbox/API):
 |----------|----------------------|-----------------|
 | Plain session — turns + token accounting | `ingest.test.ts` | `sc-plain-0001` |
 | Subagents — child tokens not double-counted | `ingest.test.ts`, `redact.test.ts` | `sc-sub-parent-0002` + `agent-c0ffee01` (child=1500, parent=1300) |
-| Workflow fan-out — orphan agents | `ingest.test.ts` (orphan) | `sc-workflow-0003` + 2 orphan agents |
+| Workflow fan-out — agents grouped by run + linked to the launching turn (run id) | `ingest.test.ts` (workflow run-link + path-less orphan), `api.test.ts` (run grouping) | `sc-workflow-0003` (Workflow result carries `runId`/`workflowName`) + 2 agents under `subagents/workflows/wf_*/` |
+| Slash command — `/cmd` invocation + local output, no assistant turn | `corpus-scenarios.test.ts` | `sc-command-0006` (`/plugin` + `<local-command-stdout>`) |
 | Multi-source — no cross-source bleed | `dashboard.test.ts` | 3 sources (team-a/team-b/scenarios) |
 | Compaction / meta — no spurious turn | `ingest.test.ts` | `sc-plain-0001` (turn_count=2) |
 | Sidechain / resumed — dup-uuid dedup | `ingest.test.ts` (cross-file) | `sc-resumed-0005` (mirror + .versions → 3 events) |
@@ -125,7 +131,7 @@ hand-computed expecteds. Three things to be aware of:
 
 | # | Finding | Evidence | Impact | Recommendation |
 |---|---------|----------|--------|----------------|
-| 1 | **Workflow subagents are unlinked.** 249 of 488 subagent sessions have `parent_session_id = NULL`; only 239 link, matching the 251 `Agent`/`Task` tool spawns. | `validate.mjs` [5]; `ingest.test.ts` "orphan subagent" | Subagent **tokens/cost are counted** (separate sidechain sessions, no double-count), but workflow agents don't roll up to a parent turn, so per-session fan-out under-reports them and they can't be navigated from their spawning turn. | Decide intended semantics. If workflow agents should attribute to their orchestrator, add a journal-based linkage pass (the journal carries the parent relation that the tool_use path does not). Tracked as follow-up. |
+| 1 | **Workflow subagents now link to their orchestrator (resolved).** Was: 249 of 488 subagent sessions had `parent_session_id = NULL` because the Workflow tool emits no `toolUseResult.agentId`, so the `tool_calls.spawned_session_id` link only covered `Agent`/`Task` spawns. | `validate.mjs` [5]; `ingest.test.ts` "workflow-linkage" + "path-less orphan"; `corpus-scenarios.test.ts` | Fan-out now rolls up workflow agents to their spawning session. | **Fixed:** the launching Workflow tool_call's result carries a run id (`wf_<id>`) + name, and the run's subagents nest under `…/subagents/workflows/<runId>/` — so `sessions.workflow_run_id` matches `tool_calls.workflow_run_id`, giving each workflow agent **both** its parent session **and** the exact launching turn (`parent_turn_id`). A path-based parent (`spawn_parent_id`) is the final fallback. The session view groups the fan-out by run (named, counted, linked to its turn). Tokens stay siloed → no double-count. Re-ingest with `ingest --full` to apply on an existing DB (SCHEMA_VERSION 7). |
 | 2 | **Cost is cache-dominated.** cache_read = 2.33T tokens = **95.7%** of all tokens; total derived cost $1,912.90. | `validate.mjs` [2]/[3] | Cost correctness rides almost entirely on the cache-read rate, not input/output. | Already handled correctly (separate `cacheRead` rate per model; cache_read excluded from "work" tokens). Keep the pricing table current — a wrong cache-read rate would dominate the error. |
 | 3 | **`<synthetic>` model carries 0 tokens.** It appears on 149 rows but sums to 0 tokens, so it never affects cost (hence "all models priced"). | `validate.mjs` [8]; direct query | None today. | No action; documented so a future non-zero `<synthetic>` (which *would* be unpriced) is expected to surface in `validate.mjs` [8]. |
 
@@ -148,5 +154,6 @@ breakdowns intentionally cover main sessions only.
 
 ## Out of scope (follow-up)
 
-Fixing finding #1 (workflow subagent attribution). This effort validates and
-reports; the fix is a separate, approved change.
+None outstanding from the original validation: finding #1 (workflow subagent
+attribution) has since been fixed via the structural (`subagents/`-path) linkage
+pass; re-run `ingest --full` to apply it on an existing DB.

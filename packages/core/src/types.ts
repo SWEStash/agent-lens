@@ -91,6 +91,8 @@ export interface ToolCallRow {
   skill_name: string | null;
   agent_type: string | null;
   spawned_session_id: string | null;
+  workflow_run_id: string | null;
+  workflow_name: string | null;
   resolved_model: string | null;
   status: string | null;
   total_duration_ms: number | null;
@@ -122,6 +124,9 @@ export interface ToolResultPatch {
   agent_type?: string | null;
   /** for Task/Agent results: the spawned subagent session id, 'agent-'||toolUseResult.agentId */
   spawned_session_id?: string | null;
+  /** for Workflow results: the run id (toolUseResult.runId) and workflow name, used to group + link fan-out */
+  workflow_run_id?: string | null;
+  workflow_name?: string | null;
   resolved_model?: string | null;
   total_duration_ms?: number | null;
   total_tokens?: number | null;
@@ -158,6 +163,18 @@ export interface SourceFile {
   isVersion: boolean;
   /** the configured source (label) this file belongs to; set by the ingester */
   sourceId: string;
+  /**
+   * For a subagent transcript, the parent session id derived from its directory location
+   * (the segment before `subagents/`); null for a main session. The deterministic structural
+   * link used to attribute workflow fan-out (which carries no toolUseResult.agentId).
+   */
+  parentSessionId?: string | null;
+  /**
+   * For a Workflow-tool subagent, the run id from its path (`subagents/workflows/<runId>/…`,
+   * e.g. `wf_ab787f1c-ff7`); null otherwise. Groups a run's fan-out and ties it to the launching
+   * Workflow tool_call (whose result carries the same runId).
+   */
+  workflowRunId?: string | null;
 }
 
 /**

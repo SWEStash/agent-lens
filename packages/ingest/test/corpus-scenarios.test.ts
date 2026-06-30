@@ -13,7 +13,7 @@ import type { SourceFile } from "@agent-lens/core";
 import { openDb } from "../dist/db.js";
 import { prepareStatements, ingestFile, rebuildDerived, newStats } from "../dist/pipeline.js";
 import { classify } from "../dist/classify.js";
-import { ClaudeCodeAdapter } from "../dist/adapters/claude-code.js";
+import { ClaudeCodeAdapter, parentSessionFromPath, workflowRunFromPath } from "../dist/adapters/claude-code.js";
 
 const CORPUS = join(dirname(fileURLToPath(import.meta.url)), "../../../test/fixtures/corpus");
 
@@ -43,7 +43,7 @@ beforeAll(() => {
       stmts.insSource.run({ id: label, label, agent_id: "claude-code", config_dir: null });
       labels.add(label);
     }
-    const sf: SourceFile = { path: file, sessionId: basename(file, ".jsonl"), encodedDir: basename(dirname(file)), isVersion: file.includes("/.versions/"), sourceId: label };
+    const sf: SourceFile = { path: file, sessionId: basename(file, ".jsonl"), encodedDir: basename(dirname(file)), isVersion: file.includes("/.versions/"), sourceId: label, parentSessionId: parentSessionFromPath(file), workflowRunId: workflowRunFromPath(file) };
     const content = readFileSync(file, "utf8");
     ingestFile(db, stmts, adapter, sf, content.split("\n"), { size: statSync(file).size, mtimeMs: 0, hash: file }, "2026-01-01T00:00:00.000Z", stats);
   }
@@ -61,15 +61,33 @@ describe("committed corpus represents every pipeline scenario", () => {
     expect(one("SELECT COUNT(*) n FROM sessions WHERE source_id NOT IN ('team-a','team-b','scenarios')").n).toBe(0);
   });
 
-  it("session counts: 12 total, 7 main, 5 subagent", () => {
-    expect(one("SELECT COUNT(*) n FROM sessions").n).toBe(12);
-    expect(one("SELECT COUNT(*) n FROM sessions WHERE is_sidechain=0").n).toBe(7);
+  it("session counts: 13 total, 8 main, 5 subagent", () => {
+    expect(one("SELECT COUNT(*) n FROM sessions").n).toBe(13);
+    expect(one("SELECT COUNT(*) n FROM sessions WHERE is_sidechain=0").n).toBe(8);
     expect(one("SELECT COUNT(*) n FROM sessions WHERE is_sidechain=1").n).toBe(5);
   });
 
-  it("subagents: 3 linked (Task), 2 orphan (workflow fan-out)", () => {
-    expect(one("SELECT COUNT(*) n FROM sessions WHERE is_sidechain=1 AND parent_session_id IS NOT NULL").n).toBe(3);
-    expect(one("SELECT COUNT(*) n FROM sessions WHERE is_sidechain=1 AND parent_session_id IS NULL").n).toBe(2);
+  it("subagents: all 5 link to a parent (3 Task via toolUseResult, 2 workflow via run id)", () => {
+    expect(one("SELECT COUNT(*) n FROM sessions WHERE is_sidechain=1 AND parent_session_id IS NOT NULL").n).toBe(5);
+    expect(one("SELECT COUNT(*) n FROM sessions WHERE is_sidechain=1 AND parent_session_id IS NULL").n).toBe(0);
+    expect(one("SELECT COUNT(*) n FROM sessions WHERE parent_session_id='sc-workflow-0003'").n).toBe(2);
+  });
+
+  it("workflow run: agents carry the run id and link to the launching turn", () => {
+    // Both wf agents share the run id captured from their path...
+    expect(one("SELECT COUNT(*) n FROM sessions WHERE workflow_run_id='wf_demo000abc'").n).toBe(2);
+    // ...and the launching Workflow tool_call captured the same run id + name from its result, so the
+    // agents now resolve a parent_turn_id (not just a parent_session_id).
+    const tc = one("SELECT workflow_run_id, workflow_name FROM tool_calls WHERE session_id='sc-workflow-0003' AND tool_name='Workflow'");
+    expect(tc.workflow_run_id).toBe("wf_demo000abc");
+    expect(tc.workflow_name).toBe("migrate-db");
+    expect(one("SELECT COUNT(*) n FROM sessions WHERE workflow_run_id='wf_demo000abc' AND parent_turn_id IS NOT NULL").n).toBe(2);
+  });
+
+  it("slash command: a /plugin-only session ingests as user turns with no assistant output", () => {
+    expect(one("SELECT turn_count n FROM sessions WHERE id='sc-command-0006'").n).toBe(2);
+    expect(one("SELECT COUNT(*) n FROM events WHERE session_id='sc-command-0006' AND role='assistant'").n).toBe(0);
+    expect(one("SELECT COUNT(*) n FROM events WHERE session_id='sc-command-0006' AND text LIKE '%<command-name>/plugin%'").n).toBe(1);
   });
 
   it("no double-count: a Task child's tokens stay in the child session", () => {
