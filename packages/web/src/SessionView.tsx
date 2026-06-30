@@ -2,7 +2,7 @@ import { createContext, useContext, useEffect, useId, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { api, type Classification, type ClassificationSignals, type EventNode, type SessionDetail, type ToolCall } from "./api";
+import { api, exportUrl, type Classification, type ClassificationSignals, type EventNode, type SessionChild, type SessionDetail, type ToolCall } from "./api";
 import { fmtCost, fmtDate, fmtDuration, fmtTokens, shortModel, tokenSplitTitle } from "./format";
 
 /** How message bodies render: "markdown" (formatted, the default) or "raw" (verbatim text).
@@ -191,7 +191,13 @@ function SignalsPanel({ id, s, category }: { id: string; s: ClassificationSignal
 function ToolChip({ t }: { t: ToolCall }) {
   const [open, setOpen] = useState(false);
   const bodyId = useId();
-  const label = t.skill_name ? `Skill · ${t.skill_name}` : t.agent_type ? `${t.tool_name} → ${t.agent_type}` : t.tool_name;
+  const label = t.skill_name
+    ? `Skill · ${t.skill_name}`
+    : t.tool_name === "Workflow" && t.workflow_name
+      ? `Workflow · ${t.workflow_name}`
+      : t.agent_type
+        ? `${t.tool_name} → ${t.agent_type}`
+        : t.tool_name;
   return (
     <div className={"tool " + (t.status === "error" ? "tool-err" : "")}>
       <button className="tool-head" aria-expanded={open} aria-controls={bodyId} onClick={() => setOpen((o) => !o)}>
@@ -205,6 +211,11 @@ function ToolChip({ t }: { t: ToolCall }) {
           view subagent transcript →
         </Link>
       )}
+      {t.workflow_run_id && (
+        <div className="subagent-link small muted">
+          🔀 launched {t.workflow_agent_count ?? 0} agent{t.workflow_agent_count === 1 ? "" : "s"} · <code>{t.workflow_run_id}</code>
+        </div>
+      )}
       {open && (
         <div className="tool-body" id={bodyId}>
           {t.input_json && t.input_json !== "{}" && (
@@ -215,6 +226,45 @@ function ToolChip({ t }: { t: ToolCall }) {
       )}
     </div>
   );
+}
+
+/** Claude Code wraps slash-command invocations and their local output in markup tags inside a
+ * user message (e.g. `<command-name>/plugin</command-name>`, `<local-command-stdout>…`). Rendered
+ * verbatim that looks like noise, so we detect and render it as a distinct command element. */
+type ParsedCommand =
+  | { kind: "invocation"; name: string; args: string }
+  | { kind: "output"; stdout: string }
+  | { kind: "caveat" };
+
+function parseCommand(text: string): ParsedCommand | null {
+  const name = text.match(/<command-name>([^<]*)<\/command-name>/)?.[1]?.trim();
+  if (name) {
+    const args = text.match(/<command-args>([^<]*)<\/command-args>/)?.[1]?.trim() ?? "";
+    return { kind: "invocation", name: name.startsWith("/") ? name : `/${name}`, args };
+  }
+  const out = text.match(/<(?:local-command-stdout|command-output|local-command-stderr)>([\s\S]*?)<\/(?:local-command-stdout|command-output|local-command-stderr)>/)?.[1];
+  if (out != null) return { kind: "output", stdout: out.trim() };
+  if (/<local-command-caveat>/.test(text)) return { kind: "caveat" };
+  return null;
+}
+
+/** Render a slash command as an outlined, monospace chip (the invocation) with its local output as a
+ * muted result block — instead of the raw `<command-*>` markup. */
+function CommandBlock({ cmd }: { cmd: ParsedCommand }) {
+  if (cmd.kind === "invocation")
+    return (
+      <div className="cmd">
+        <span className="cmd-chip" title="Slash command">⌘ {cmd.name}</span>
+        {cmd.args && <code className="cmd-args">{cmd.args}</code>}
+      </div>
+    );
+  if (cmd.kind === "output")
+    return (
+      <div className="cmd-out">
+        {cmd.stdout && cmd.stdout !== "(no content)" ? cmd.stdout : <span className="muted">no output</span>}
+      </div>
+    );
+  return <div className="cmd-note muted small">⌘ local command context</div>;
 }
 
 /** A message body rendered per the active format: GitHub-flavored markdown (default) or the raw
@@ -289,6 +339,16 @@ function groupByTurn(events: EventNode[], turns: any[]): TurnGroup[] {
   return groups;
 }
 
+/** A turn's prompt preview, with slash-command markup collapsed to a readable label so the turn
+ * header doesn't show raw `<command-name>…` tags. */
+function previewLabel(text: string): string {
+  const cmd = parseCommand(text);
+  if (cmd?.kind === "invocation") return `⌘ ${cmd.name}${cmd.args ? " " + cmd.args : ""}`;
+  if (cmd?.kind === "output") return "⌘ command output";
+  if (cmd?.kind === "caveat") return "⌘ local command";
+  return text;
+}
+
 /** A collapsible turn: the header stays visible (turn no., prompt preview, message count, duration)
  * so a long transcript can be scanned and navigated; the messages render only while expanded. */
 function TurnSection({ turn, events, open, onToggle }: { turn: any; events: EventNode[]; open: boolean; onToggle: () => void }) {
@@ -298,7 +358,7 @@ function TurnSection({ turn, events, open, onToggle }: { turn: any; events: Even
       <button className="turn-head" aria-expanded={open} aria-controls={regionId} onClick={onToggle}>
         <span className="chev turn-chev" aria-hidden="true">{open ? "▾" : "▸"}</span>
         <span className="turn-no">turn {turn.seq + 1}</span>
-        {turn.prompt_preview ? <span className="turn-preview">{turn.prompt_preview}</span> : null}
+        {turn.prompt_preview ? <span className="turn-preview">{previewLabel(turn.prompt_preview)}</span> : null}
         <span className="turn-stats muted">
           {events.length} msg{events.length === 1 ? "" : "s"}
           {turn.duration_ms ? " · " + fmtDuration(turn.duration_ms) : ""}
@@ -318,6 +378,7 @@ function EventBlock({ e }: { e: EventNode }) {
   const icon = who === "user" ? "👤" : who === "assistant" ? "🤖" : "⚙️";
   const hasBody = e.text || e.thinking || e.toolCalls.length;
   if (!hasBody) return null;
+  const cmd = e.text ? parseCommand(e.text) : null;
   return (
     <div className={"event ev-" + who}>
       <div className="ev-meta">
@@ -336,10 +397,64 @@ function EventBlock({ e }: { e: EventNode }) {
           {showThinking && <pre id={thinkId} className="thinking-body">{e.thinking}</pre>}
         </div>
       )}
-      {e.text && <CollapsibleText text={e.text} />}
+      {e.text && (cmd ? <CommandBlock cmd={cmd} /> : <CollapsibleText text={e.text} />)}
       {e.toolCalls.map((t, i) => (
         <ToolChip key={i} t={t} />
       ))}
+    </div>
+  );
+}
+
+/** One spawned-subagent row. */
+function SubagentItem({ c }: { c: SessionChild }) {
+  return (
+    <li>
+      <Link to={`/session/${c.id}`}>{c.title || c.id.slice(0, 12)}</Link>
+      <span className="muted">
+        {" "}· {(c.models ?? "").split(",").filter(Boolean).map(shortModel).join(", ")} ·{" "}
+        {fmtTokens(c.tokens)} tok · {fmtCost(c.cost)}
+      </span>
+    </li>
+  );
+}
+
+/** Spawned subagents grouped by what launched them: one collapsible group per Workflow run (named,
+ * counted, linked to the launching turn) and one for Task/Agent spawns — instead of one flat,
+ * unattributed list. A run can fan out to dozens of agents, so groups are collapsed by default. */
+function SubagentPanel({ d }: { d: SessionDetail }) {
+  const runs = d.workflow_runs ?? [];
+  const direct = d.children.filter((c) => !c.workflow_run_id);
+  const grouped = runs.length > 0;
+  return (
+    <div className="subagents">
+      <h2>Spawned subagents ({d.children.length})</h2>
+      {runs.map((run) => {
+        const kids = d.children.filter((c) => c.workflow_run_id === run.run_id);
+        return (
+          <details key={run.run_id} className="wf-run">
+            <summary>
+              <span className="wf-run-name">🔀 {run.name || "workflow"}</span>
+              <span className="muted small">
+                {kids.length} agent{kids.length === 1 ? "" : "s"}
+                {run.turn_seq != null ? ` · turn ${run.turn_seq + 1}` : ""} · <code>{run.run_id}</code>
+              </span>
+            </summary>
+            <ul>{kids.map((c) => <SubagentItem key={c.id} c={c} />)}</ul>
+          </details>
+        );
+      })}
+      {direct.length > 0 &&
+        (grouped ? (
+          <details className="wf-run" open>
+            <summary>
+              <span className="wf-run-name">Task / Agent</span>
+              <span className="muted small">{direct.length} subagent{direct.length === 1 ? "" : "s"}</span>
+            </summary>
+            <ul>{direct.map((c) => <SubagentItem key={c.id} c={c} />)}</ul>
+          </details>
+        ) : (
+          <ul>{direct.map((c) => <SubagentItem key={c.id} c={c} />)}</ul>
+        ))}
     </div>
   );
 }
@@ -415,29 +530,14 @@ export default function SessionView() {
           <span title="Estimated at API list prices (cache-aware)">{fmtCost(s.cost)}</span>
           <span>{fmtDuration(s.duration_ms)}</span>
           <span className="muted">{fmtDate(s.started_at)}</span>
-          <a className="export" href={`/api/sessions/${s.id}/export.md`}>
+          <a className="export" href={exportUrl(s.id)}>
             ⬇ Export Markdown
           </a>
         </div>
         {d.classification && <ClassificationBadge c={d.classification} />}
       </div>
 
-      {d.children && d.children.length > 0 && (
-        <div className="subagents">
-          <h2>Spawned subagents ({d.children.length})</h2>
-          <ul>
-            {d.children.map((c) => (
-              <li key={c.id}>
-                <Link to={`/session/${c.id}`}>{c.title || c.id.slice(0, 12)}</Link>
-                <span className="muted">
-                  {" "}· {(c.models ?? "").split(",").filter(Boolean).map(shortModel).join(", ")} ·{" "}
-                  {fmtTokens(c.tokens)} tok · {fmtCost(c.cost)}
-                </span>
-              </li>
-            ))}
-          </ul>
-        </div>
-      )}
+      {d.children && d.children.length > 0 && <SubagentPanel d={d} />}
 
       <div className="transcript-tools">
         {collapsibleIds.length > 1 && (

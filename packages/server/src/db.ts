@@ -75,6 +75,23 @@ export function listModels(db: DB) {
     .map((r: any) => r.model);
 }
 
+/**
+ * Turn a user's search box input into a safe FTS5 MATCH expression. The raw string is otherwise
+ * parsed as FTS5 *query syntax*, so a hyphen, colon (column filter), or bareword operator throws
+ * (e.g. "swe-workflow" → `SQLITE_ERROR: no such column: workflow`). We treat the input as literal
+ * terms: split on whitespace and wrap each token in double quotes (doubling embedded quotes per
+ * FTS5 escaping), joined by space (implicit AND). Phrasing also lets the tokenizer split intra-token
+ * punctuation, so "swe-workflow" matches the adjacent tokens "swe workflow". Returns "" for input
+ * with no usable tokens (caller guards on a non-empty trimmed query). */
+function toFtsQuery(raw: string): string {
+  return raw
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean)
+    .map((t) => `"${t.replace(/"/g, '""')}"`)
+    .join(" ");
+}
+
 export function listSessions(db: DB, f: SessionFilters) {
   const where: string[] = [];
   const params: any[] = [];
@@ -92,7 +109,7 @@ export function listSessions(db: DB, f: SessionFilters) {
     where.push(
       "s.id IN (SELECT DISTINCT e.session_id FROM events e JOIN events_fts f ON f.rowid = e.rowid WHERE events_fts MATCH ?)",
     );
-    params.push(f.q.trim());
+    params.push(toFtsQuery(f.q));
   }
   const whereSql = where.length ? `WHERE ${where.join(" AND ")}` : "";
 
@@ -169,8 +186,10 @@ export function getSession(db: DB, id: string) {
     .all(id) as any[];
   const toolRows = db
     .prepare(
-      `SELECT event_uuid, tool_name, skill_name, agent_type, spawned_session_id, status,
-              total_duration_ms, total_tokens, input_json, result_summary
+      `SELECT event_uuid, tool_name, skill_name, agent_type, spawned_session_id,
+              workflow_run_id, workflow_name, status,
+              total_duration_ms, total_tokens, input_json, result_summary,
+              (SELECT COUNT(*) FROM sessions s WHERE s.workflow_run_id = tool_calls.workflow_run_id) AS workflow_agent_count
        FROM tool_calls WHERE session_id = ?`,
     )
     .all(id) as any[];
@@ -269,7 +288,7 @@ export function getSession(db: DB, id: string) {
   // one row with N children, not N+1 sibling rows sharing the same slug.
   const children = db
     .prepare(
-      `SELECT s.id, s.ai_title, s.slug, s.turn_count, s.started_at,
+      `SELECT s.id, s.ai_title, s.slug, s.turn_count, s.started_at, s.workflow_run_id,
               (SELECT GROUP_CONCAT(DISTINCT model) FROM token_usage t WHERE t.session_id = s.id) AS models
        FROM sessions s WHERE s.parent_session_id = ? ORDER BY s.started_at`,
     )
@@ -289,5 +308,18 @@ export function getSession(db: DB, id: string) {
     );
   }
 
-  return { session, turns, events, classification, parent, children };
+  // Workflow runs launched from THIS session: each Workflow tool_call carries a run id + name and sits
+  // on a turn. This lets the UI group the spawned subagents by run and link each group back to the
+  // exact launching turn (turn_seq) — instead of one flat, unattributed fan-out list.
+  const workflow_runs = db
+    .prepare(
+      `SELECT tc.workflow_run_id AS run_id, tc.workflow_name AS name, t.seq AS turn_seq,
+              (SELECT COUNT(*) FROM sessions s WHERE s.workflow_run_id = tc.workflow_run_id) AS agent_count
+       FROM tool_calls tc LEFT JOIN turns t ON t.id = tc.turn_id
+       WHERE tc.session_id = ? AND tc.workflow_run_id IS NOT NULL
+       ORDER BY t.seq`,
+    )
+    .all(id) as any[];
+
+  return { session, turns, events, classification, parent, children, workflow_runs };
 }

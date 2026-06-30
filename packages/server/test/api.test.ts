@@ -73,6 +73,27 @@ describe("server API smoke", () => {
     expect(r.statusCode).toBe(404);
   });
 
+  it("GET /api/sessions?q= → plain term matches", async () => {
+    const r = await app.inject({ method: "GET", url: "/api/sessions?q=hello" });
+    expect(r.statusCode).toBe(200);
+    expect(r.json().sessions[0].id).toBe("sess1");
+  });
+
+  it("GET /api/sessions?q=<hyphenated> → 200, input is literal (regression: was SQLITE_ERROR)", async () => {
+    // A hyphen/colon was parsed as FTS5 query syntax → `no such column`. Now quoted as a phrase, so
+    // "hello-world" matches the adjacent tokens "hello world".
+    const r = await app.inject({ method: "GET", url: "/api/sessions?q=" + encodeURIComponent("hello-world") });
+    expect(r.statusCode).toBe(200);
+    expect(r.json().sessions[0].id).toBe("sess1");
+  });
+
+  it("GET /api/sessions?q=<colon/operators> → 200, no FTS syntax error", async () => {
+    for (const q of ["foo:bar", "swe-workflow", "a OR b", "-x"]) {
+      const r = await app.inject({ method: "GET", url: "/api/sessions?q=" + encodeURIComponent(q) });
+      expect(r.statusCode).toBe(200); // literal terms; no match, but never a 500
+    }
+  });
+
   it("GET /api/dashboard/overview → aggregates", async () => {
     const r = await app.inject({ method: "GET", url: "/api/dashboard/overview" });
     expect(r.statusCode).toBe(200);
@@ -86,6 +107,45 @@ describe("server API smoke", () => {
     expect(r.statusCode).toBe(200);
     const body = r.json();
     expect(body.skills.some((s: any) => s.name === "test-suite-design")).toBe(true);
+  });
+});
+
+// Session detail groups workflow fan-out by run: each Workflow tool_call carries a run id + name and
+// sits on a turn, and the spawned agents (sessions.workflow_run_id) attribute to it — so the UI can
+// show "🔀 <name> · N agents · turn X" instead of one flat, unattributed list.
+describe("session detail exposes workflow run grouping", () => {
+  it("GET /api/sessions/:id → workflow_runs + children carry workflow_run_id", async () => {
+    const db = new Database(":memory:");
+    db.pragma("foreign_keys = ON");
+    db.exec(SCHEMA_SQL);
+    db.exec(`
+      INSERT INTO agents (id, name, kind) VALUES ('claude-code', 'Claude Code CLI', 'cli');
+      INSERT INTO sources (id, label, agent_id, config_dir) VALUES ('test', 'test', 'claude-code', NULL);
+      INSERT INTO sessions (id, agent_id, source_id, is_sidechain, event_count, turn_count) VALUES
+        ('orch', 'claude-code', 'test', 0, 2, 1);
+      INSERT INTO turns (id, session_id, seq, user_event_uuid, prompt_preview, started_at, ended_at, duration_ms)
+        VALUES ('orch:0', 'orch', 0, 'oe1', 'run it', '2026-01-01T00:00:00Z', '2026-01-01T00:01:00Z', 60000);
+      INSERT INTO events (uuid, session_id, turn_id, seq, type, role, timestamp, is_sidechain, is_meta, text, raw_json)
+        VALUES ('oe1', 'orch', 'orch:0', 0, 'user', 'user', '2026-01-01T00:00:00Z', 0, 0, 'run it', '{"message":{"content":"run it"}}'),
+               ('oe2', 'orch', 'orch:0', 1, 'assistant', 'assistant', '2026-01-01T00:00:30Z', 0, 0, NULL, '{"message":{"content":[]}}');
+      INSERT INTO tool_calls (id, event_uuid, session_id, turn_id, tool_name, workflow_run_id, workflow_name)
+        VALUES ('tu_wf', 'oe2', 'orch', 'orch:0', 'Workflow', 'wf_run1', 'my-flow');
+      INSERT INTO sessions (id, agent_id, source_id, is_sidechain, workflow_run_id, parent_session_id, parent_turn_id, event_count, turn_count) VALUES
+        ('agent-x', 'claude-code', 'test', 1, 'wf_run1', 'orch', 'orch:0', 1, 1),
+        ('agent-y', 'claude-code', 'test', 1, 'wf_run1', 'orch', 'orch:0', 1, 1);
+    `);
+    const app2 = await createApp(db);
+    await app2.ready();
+    const body = (await app2.inject({ method: "GET", url: "/api/sessions/orch" })).json();
+    expect(body.workflow_runs).toHaveLength(1);
+    expect(body.workflow_runs[0]).toMatchObject({ run_id: "wf_run1", name: "my-flow", turn_seq: 0, agent_count: 2 });
+    expect(body.children).toHaveLength(2);
+    expect(body.children.every((c: any) => c.workflow_run_id === "wf_run1")).toBe(true);
+    // The launching Workflow tool_call exposes its run for the transcript block.
+    const wfTool = body.events.flatMap((e: any) => e.toolCalls).find((t: any) => t.tool_name === "Workflow");
+    expect(wfTool.workflow_name).toBe("my-flow");
+    expect(wfTool.workflow_agent_count).toBe(2);
+    await app2.close();
   });
 });
 

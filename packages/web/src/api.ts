@@ -1,5 +1,24 @@
+// Snapshot mode: when built with VITE_SNAPSHOT=1 the SPA is a static, read-only bundle (e.g. GitHub
+// Pages) with no live API — each endpoint's default response was pre-exported to
+// `<base>/snapshot/<path>.json` by scripts/export-snapshot.mjs. Query params (filters, pagination)
+// are stripped, so the snapshot always serves the default unfiltered view.
+const SNAPSHOT = (import.meta as any).env?.VITE_SNAPSHOT === "1";
+const BASE = (import.meta as any).env?.BASE_URL ?? "/";
+
+function resolveUrl(path: string): string {
+  if (!SNAPSHOT) return "/api" + path;
+  const clean = path.split("?")[0].replace(/^\//, ""); // drop query + leading slash → snapshot key
+  return `${BASE}snapshot/${clean}.json`;
+}
+
+/** URL for a session's Markdown export — the live API route, or the pre-rendered static file in
+ * snapshot mode. */
+export function exportUrl(id: string): string {
+  return SNAPSHOT ? `${BASE}snapshot/sessions/${id}.export.md` : `/api/sessions/${id}/export.md`;
+}
+
 export async function api<T = any>(path: string): Promise<T> {
-  const r = await fetch("/api" + path);
+  const r = await fetch(resolveUrl(path));
   if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
   return r.json() as Promise<T>;
 }
@@ -26,6 +45,9 @@ export interface ToolCall {
   skill_name: string | null;
   agent_type: string | null;
   spawned_session_id: string | null;
+  workflow_run_id: string | null;
+  workflow_name: string | null;
+  workflow_agent_count: number | null;
   status: string | null;
   total_duration_ms: number | null;
   input_json: string | null;
@@ -89,6 +111,16 @@ export interface SessionChild {
   models: string | null;
   tokens: number;
   cost: number;
+  workflow_run_id: string | null;
+}
+
+/** A Workflow-tool run launched from a session: its id, name, the turn that started it, and how many
+ * subagents it fanned out to. Lets the UI group the fan-out by run instead of one flat list. */
+export interface WorkflowRun {
+  run_id: string;
+  name: string | null;
+  turn_seq: number | null;
+  agent_count: number;
 }
 
 export interface SessionDetail {
@@ -98,6 +130,7 @@ export interface SessionDetail {
   classification: Classification | null;
   parent: SessionParent | null;
   children: SessionChild[];
+  workflow_runs: WorkflowRun[];
 }
 
 export interface TokenSplit {

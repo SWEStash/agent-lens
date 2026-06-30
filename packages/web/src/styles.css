@@ -139,6 +139,28 @@ table.sessions { width: 100%; border-collapse: collapse; }
 .subagents ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
 .subagents li { font-size: 13px; }
 
+/* Workflow-run group: one collapsible block per run, grouping its fan-out under a named header. */
+.wf-run { border: 1px solid var(--border); border-radius: 6px; margin-top: 8px; background: var(--panel2); }
+.wf-run > summary { cursor: pointer; padding: 7px 10px; display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; list-style: none; }
+.wf-run > summary::-webkit-details-marker { display: none; }
+.wf-run > summary::before { content: "▸"; color: var(--muted); font-size: 11px; }
+.wf-run[open] > summary::before { content: "▾"; }
+.wf-run-name { font-weight: 600; font-size: 13px; }
+.wf-run > ul { padding: 0 10px 10px 24px; }
+.wf-run code { font-size: 11px; color: var(--muted); }
+
+/* Slash command: an outlined, monospace chip for the invocation + a muted block for its output. */
+.cmd { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; margin: 4px 0; }
+.cmd-chip {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 13px; font-weight: 600;
+  color: var(--accent); border: 1px solid var(--accent); border-radius: 6px; padding: 2px 9px;
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+}
+.cmd-args { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; color: var(--muted); }
+.cmd-out { margin: 4px 0 0; padding: 6px 10px; border-left: 2px solid var(--border); color: var(--muted);
+  font-size: 12px; white-space: pre-wrap; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+.cmd-note { margin: 2px 0; }
+
 .transcript { display: flex; flex-direction: column; gap: 10px; }
 .transcript-tools { display: flex; align-items: center; gap: 12px; margin-bottom: 2px; }
 .unturned { display: flex; flex-direction: column; gap: 10px; }
