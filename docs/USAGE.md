@@ -180,8 +180,11 @@ is **not** auto-restarted on crash — it returns on the next logon.
 > **Tip:** `agent-lens service install` with no target installs the collector **and** the server at
 > once — the one-command "make it work after reboot" setup.
 
-Open the URL. The app has two views (nav tabs): **Sessions** (browse) and **Dashboard** (analytics),
-and a **light/dark theme toggle** in the top bar (dark by default; your choice is remembered).
+Open the URL. The app has three views (nav tabs): **Sessions** (browse), **Skills**, and
+**Dashboard** (analytics). The top bar also shows **when data was last ingested** ("updated Xm ago"),
+a **Refresh** button that runs collect+ingest on the host on demand (`POST /api/refresh` — the one
+write-action on the otherwise read-only server; loopback-only + CSRF-guarded, see ADR-015), and a
+**light/dark theme toggle** (dark by default; your choice is remembered).
 A live, corpus-only demo of these views (no real data) is published at
 <https://swestash.github.io/agent-lens/>; the screenshots below are generated from the committed
 corpus by `node scripts/screenshots.mjs`.

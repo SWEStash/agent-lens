@@ -53,6 +53,16 @@ describe("server API smoke", () => {
     expect(body.last_ingested === null || typeof body.last_ingested === "string").toBe(true);
   });
 
+  it("POST /api/refresh → blocks a cross-site Origin (CSRF guard) before doing any work", async () => {
+    const r = await app.inject({
+      method: "POST",
+      url: "/api/refresh",
+      headers: { origin: "https://evil.example" },
+    });
+    expect(r.statusCode).toBe(403);
+    expect(r.json().error.code).toBe("FORBIDDEN_ORIGIN");
+  });
+
   it("GET /api/sessions → paginated list", async () => {
     const r = await app.inject({ method: "GET", url: "/api/sessions" });
     expect(r.statusCode).toBe(200);

@@ -10,6 +10,7 @@ import fastifyStatic from "@fastify/static";
 import { sessionToMarkdown, type MarkdownEvent } from "@agent-lens/core";
 import { type DB, lastIngested, listSources, listProjects, listModels, listSessions, getSession, getWorkflow, listSkills, getSkill } from "./db.js";
 import { dashboardOverview, dashboardTimeseries, dashboardBreakdowns, type DashFilters } from "./dashboard.js";
+import { originAllowed, runRefresh } from "./refresh.js";
 
 export interface CreateAppOpts {
   /** Absolute path to the built web SPA; when present it is served with a history fallback. */
@@ -20,6 +21,25 @@ export async function createApp(db: DB, opts: CreateAppOpts = {}): Promise<Fasti
   const app = Fastify({ logger: false });
 
   app.get("/api/health", async () => ({ ok: true, last_ingested: lastIngested(db) }));
+
+  // The one write-action on this read-only server: run a collect + ingest pass on the host so the UI
+  // can pull in new transcripts on demand (ADR-015). Guarded against cross-site CSRF (Origin) and
+  // concurrent runs (single-instance lock → 409). See refresh.ts.
+  app.post("/api/refresh", async (req, reply) => {
+    if (!originAllowed(req.headers.origin)) {
+      return reply.code(403).send({ error: { code: "FORBIDDEN_ORIGIN", message: "cross-origin refresh blocked" } });
+    }
+    let result;
+    try {
+      result = runRefresh();
+    } catch (e: any) {
+      return reply.code(500).send({ error: { code: "REFRESH_FAILED", message: String(e?.message ?? e) } });
+    }
+    if (!result) {
+      return reply.code(409).send({ error: { code: "REFRESH_IN_PROGRESS", message: "a collect/ingest run is already in progress" } });
+    }
+    return { ok: true, collected: result.collected, last_ingested: lastIngested(db) };
+  });
   app.get("/api/sources", async () => listSources(db));
   app.get("/api/projects", async () => listProjects(db));
   app.get("/api/models", async () => listModels(db));

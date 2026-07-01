@@ -112,6 +112,8 @@ complexity, tool, skill, and subagent fan-out:
   full-text search. The archive is the source of truth; the DB is a rebuildable projection.
 - **Transcript viewer** — turn-segmented sessions, collapsible thinking, expandable tool calls,
   one-click **Markdown export**, and a **light/dark theme toggle** (dark by default).
+- **Freshness + one-click refresh** — the header shows when data was last ingested and a **Refresh**
+  button runs collect+ingest on the host on demand (loopback-only, CSRF-guarded; ADR-015).
 - **Analytics dashboards** — tokens / cost / activity over time (adaptive day/week/month bucketing)
   and breakdowns by model, task category, complexity, tool, skill, and subagent type.
 - **Heuristic classification** — deterministic, **no-AI** task category + complexity per session,

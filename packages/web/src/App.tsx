@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { Link, NavLink, Outlet, useLocation } from "react-router-dom";
 import logoUrl from "./assets/logo.png";
-import { api } from "./api";
+import { api, apiPost, SNAPSHOT } from "./api";
 import { useTheme } from "./theme";
 
 /** Compact "3m ago" style label for an ISO8601 instant. */
@@ -31,6 +31,22 @@ export default function App() {
     const id = setInterval(refreshStatus, 60_000);
     return () => clearInterval(id);
   }, [refreshStatus]);
+
+  // Manual "refresh data": run collect + ingest on the host, then reload so every view shows the new
+  // data. Disabled while running; surfaces "busy" (409) and errors in the button title.
+  const [refreshing, setRefreshing] = useState(false);
+  const [refreshErr, setRefreshErr] = useState<string | null>(null);
+  const doRefresh = useCallback(async () => {
+    setRefreshing(true);
+    setRefreshErr(null);
+    try {
+      await apiPost("/refresh");
+      window.location.reload();
+    } catch (e: any) {
+      setRefreshErr(String(e?.message ?? e).slice(0, 200));
+      setRefreshing(false);
+    }
+  }, []);
   // Most pages are reading surfaces (transcript, sessions list) and keep a centered, readable column.
   // Layout-heavy pages — the dashboard's chart grid and a skill's body+sessions two-column — opt into
   // a wider container instead (note: "/skills" list stays narrow; only "/skill/<name>" detail widens).
@@ -63,16 +79,37 @@ export default function App() {
         ) : (
           <span className="tagline">local agent session explorer</span>
         )}
-        <button
-          type="button"
-          className="ghost theme-toggle"
-          onClick={toggle}
-          aria-label="Toggle light or dark theme"
-          aria-pressed={theme === "light"}
-          title={theme === "dark" ? "Switch to light theme" : "Switch to dark theme"}
-        >
-          {theme === "dark" ? "☀" : "☾"}
-        </button>
+        <div className="topbar-actions">
+          {!SNAPSHOT && (
+            <button
+              type="button"
+              className="ghost refresh-btn"
+              onClick={doRefresh}
+              disabled={refreshing}
+              aria-label="Refresh data — collect new transcripts and rebuild"
+              title={
+                refreshErr
+                  ? `Refresh failed: ${refreshErr}`
+                  : "Collect new transcripts and rebuild the data (runs on the host)"
+              }
+            >
+              <span className={refreshing ? "refresh-icon spinning" : "refresh-icon"} aria-hidden="true">
+                ⟳
+              </span>{" "}
+              {refreshing ? "Refreshing…" : refreshErr ? "Retry" : "Refresh"}
+            </button>
+          )}
+          <button
+            type="button"
+            className="ghost theme-toggle"
+            onClick={toggle}
+            aria-label="Toggle light or dark theme"
+            aria-pressed={theme === "light"}
+            title={theme === "dark" ? "Switch to light theme" : "Switch to dark theme"}
+          >
+            {theme === "dark" ? "☀" : "☾"}
+          </button>
+        </div>
       </header>
       <main className={"content" + (wide ? " wide" : "")} id="main" tabIndex={-1}>
         <Outlet />

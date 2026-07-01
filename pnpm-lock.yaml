@@ -78,6 +78,9 @@ importers:
       '@agent-lens/core':
         specifier: workspace:*
         version: link:../core
+      '@agent-lens/ingest':
+        specifier: workspace:*
+        version: link:../ingest
       '@fastify/static':
         specifier: ^8.0.0
         version: 8.3.0

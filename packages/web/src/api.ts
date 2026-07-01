@@ -2,7 +2,7 @@
 // Pages) with no live API — each endpoint's default response was pre-exported to
 // `<base>/snapshot/<path>.json` by scripts/export-snapshot.mjs. Query params (filters, pagination)
 // are stripped, so the snapshot always serves the default unfiltered view.
-const SNAPSHOT = (import.meta as any).env?.VITE_SNAPSHOT === "1";
+export const SNAPSHOT = (import.meta as any).env?.VITE_SNAPSHOT === "1";
 const BASE = (import.meta as any).env?.BASE_URL ?? "/";
 
 function resolveUrl(path: string): string {
@@ -19,6 +19,14 @@ export function exportUrl(id: string): string {
 
 export async function api<T = any>(path: string): Promise<T> {
   const r = await fetch(resolveUrl(path));
+  if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
+  return r.json() as Promise<T>;
+}
+
+/** POST to a live API route (never used in snapshot mode — there is no backend). Same-origin, so the
+ * browser sends the Origin header the server's CSRF guard checks; no custom header (avoids preflight). */
+export async function apiPost<T = any>(path: string): Promise<T> {
+  const r = await fetch("/api" + path, { method: "POST" });
   if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
   return r.json() as Promise<T>;
 }
