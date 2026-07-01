@@ -4,6 +4,10 @@
 - Date: 2026-06-25
 - Deciders: project owner
 
+> **Update (2026-07-01):** a fifth package, `packages/cli`, is now the published entry point (a single
+> bundled `agent-lens` binary), and Stage 1 collection is portable Node rather than POSIX shell + rsync.
+> See [ADR-012](ADR-012-single-cli-distribution.md) and [ADR-013](ADR-013-portable-collection-scheduling.md).
+
 ## Context
 
 The tool is a local single-user app: parse JSONL → store → browse + dashboards on localhost. We want

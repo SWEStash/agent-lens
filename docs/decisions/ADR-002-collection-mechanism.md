@@ -1,8 +1,12 @@
 # ADR-002 — Collection mechanism: rsync --append-verify + backup-dir via user systemd timer
 
-- Status: Accepted
+- Status: Accepted — mechanism superseded by [ADR-013](ADR-013-portable-collection-scheduling.md)
 - Date: 2026-06-25
 - Deciders: project owner
+
+> **Update (2026-07-01):** the *semantics* below are unchanged, but the implementation is now a
+> portable Node collector (`agent-lens collect`) rather than bash + rsync, and scheduling is
+> cross-platform. See [ADR-013](ADR-013-portable-collection-scheduling.md). The bash path still ships.
 
 ## Context
 

@@ -1,10 +1,13 @@
-# 🔎 Agent Lens
+<div align="center">
+  <img src="assets/brand/logo-transparent.png" alt="Agent Lens" width="96">
+  <h1>Agent Lens</h1>
+</div>
 
 > Passively collect, browse, and analyze your Claude Code CLI session traces — **100% local**.
 
 ![License: MIT](https://img.shields.io/badge/license-MIT-blue)
 ![Node](https://img.shields.io/badge/node-%E2%89%A524-brightgreen)
-![Platform: Linux](https://img.shields.io/badge/platform-Linux-lightgrey)
+![Platform: Linux · macOS · Windows](https://img.shields.io/badge/platform-Linux%20%C2%B7%20macOS%20%C2%B7%20Windows-lightgrey)
 ![Privacy: local-only](https://img.shields.io/badge/privacy-local--only-success)
 
 Claude Code records rich per-session telemetry under `~/.claude/`, but prunes it on a rolling
@@ -52,7 +55,7 @@ agent-lens-ingest: files=312 skipped=298 new_events=1840 malformed=0
 **3 · Browse** — a local dashboard + transcript browser on `127.0.0.1`:
 
 ```text
- 🔎 Agent Lens          Sessions · Dashboard            local agent session explorer
+ ◐ Agent Lens          Sessions · Dashboard            local agent session explorer
  ┌ tokens ──────┐ ┌ est. cost ───┐ ┌ sessions ────┐ ┌ cache read ──┐
  │ 128.5 M      │ │ $842.17      │ │ 312          │ │ 92.6 %       │
  └──────────────┘ └──────────────┘ └──────────────┘ └──────────────┘
@@ -95,12 +98,19 @@ complexity, tool, skill, and subagent fan-out:
 
 ## Features
 
-- **Passive collection** — a user `systemd` timer `rsync`s each account's transcripts into a local
-  archive before Claude Code's 30-day prune. Never deletes, never copies secrets.
+- **Passive collection** — copies each account's transcripts into a local archive before Claude
+  Code's 30-day prune, on a schedule or on file change. Never deletes, never copies secrets. Runs as
+  portable Node (`agent-lens collect`) — no `rsync`/bash required.
+- **One cross-platform CLI** — `agent-lens <collect | ingest | serve | watch | schedule>`, a single
+  bundled binary that runs on Linux, macOS, and Windows (you already have Node from the Claude Code CLI).
+- **Cross-platform scheduling** — `agent-lens schedule install` registers the periodic collect+ingest
+  job with the OS scheduler (systemd on Linux, launchd on macOS, Task Scheduler on Windows), and a
+  single-instance lock keeps overlapping runs from piling up.
+- **Live `watch` mode** — `agent-lens watch` collects + ingests whenever a source changes (debounced).
 - **Normalized store** — sessions / turns / events / tool-calls / token-usage in SQLite with **FTS5**
   full-text search. The archive is the source of truth; the DB is a rebuildable projection.
-- **Transcript viewer** — turn-segmented sessions, collapsible thinking, expandable tool calls, and
-  one-click **Markdown export**.
+- **Transcript viewer** — turn-segmented sessions, collapsible thinking, expandable tool calls,
+  one-click **Markdown export**, and a **light/dark theme toggle** (dark by default).
 - **Analytics dashboards** — tokens / cost / activity over time (adaptive day/week/month bucketing)
   and breakdowns by model, task category, complexity, tool, skill, and subagent type.
 - **Heuristic classification** — deterministic, **no-AI** task category + complexity per session,
@@ -121,7 +131,7 @@ flowchart LR
     A2["~/.config/claude-work"]
     A3["…"]
   end
-  SRC -->|"Stage 1 · collect<br/>rsync · systemd timer"| ARCH["data/archive/"]
+  SRC -->|"Stage 1 · collect<br/>agent-lens collect (Node)"| ARCH["data/archive/"]
   ARCH -->|"Stage 2 · ingest<br/>+ classify"| DB[("SQLite + FTS5")]
   DB -->|"Stage 3 · serve · 127.0.0.1"| WEB["Browse · search · dashboards<br/>Markdown export"]
 ```
@@ -130,40 +140,54 @@ flowchart LR
   excludes secrets, and keeps the longest-seen version of each transcript plus divergence backups.
 - **Stage 2 — ingest** is idempotent and re-runnable: it dedupes events by `uuid` and rebuilds the
   normalized store. Because the raw archive is the source of truth, a parser change never loses data
-  (`pnpm ingest --full` re-derives everything).
+  (`agent-lens ingest --full` re-derives everything).
 - **Stage 3 — browse** is a read-only API + SPA bound to `127.0.0.1` only.
 
 Design decisions are recorded as ADRs in [`docs/decisions/`](docs/decisions/).
 
 ## Requirements
 
-- Linux (developed against Ubuntu 24.04 LTS+)
-- [`rsync`](https://rsync.samba.org/) 3.x · `systemd` (user instance) · [Node.js](https://nodejs.org/) ≥ 24 · [pnpm](https://pnpm.io/)
+- [Node.js](https://nodejs.org/) ≥ 24 — the only hard requirement (you already have it from the Claude Code CLI). Linux, macOS, or Windows.
+- Optional (developer / from-source only): [pnpm](https://pnpm.io/). The legacy bash collector additionally uses [`rsync`](https://rsync.samba.org/) + `systemd`, but the Node CLI needs neither.
 
 ## Quick start
+
+Agent Lens ships as a single `agent-lens` CLI. Configure your accounts, then run the pipeline —
+`collect → ingest → serve`:
+
+```bash
+# Install (published with the first release):
+npm install -g agent-lens          # or run ad-hoc with:  npx agent-lens <command>
+
+# Configure which accounts to collect (defaults to one: ~/.claude). See Configuration below.
+#   → agent-lens.config.json next to your data dir, or set AGENT_LENS_CONFIG
+
+agent-lens collect --then-ingest   # Stages 1–2: copy transcripts to the archive, then build the DB
+agent-lens serve                   # Stage 3: browse → http://127.0.0.1:4477
+
+# Keep it fresh automatically — pick one:
+agent-lens schedule install        # periodic collect+ingest via the OS scheduler (a few times a day)
+agent-lens watch                   # or a resident process that collects+ingests on file change
+```
+
+`agent-lens schedule install` is cross-platform: a **systemd** user timer on Linux, a **launchd**
+agent on macOS, **Task Scheduler** tasks on Windows. Override the cadence with `--times 8,12,18`.
+
+> [!NOTE]
+> Everything is local-only and idempotent; the server is read-only and refuses to bind a non-loopback
+> host. A single-instance lock ensures scheduled and `watch` runs never overlap.
+
+**From source (development, or before the npm release):**
 
 ```bash
 git clone <your-fork-url> agent-lens && cd agent-lens
 pnpm install && pnpm -r build
-
-# Configure which accounts to collect (defaults to one: personal -> ~/.claude)
-cp agent-lens.config.example.json agent-lens.config.json   # then edit
-
-# One-off run of the whole pipeline:
-scripts/collect.sh         # Stage 1 — copy transcripts into data/archive/
-pnpm ingest                # Stage 2 — build data/agent-lens.db (incremental; --full rebuilds)
-pnpm serve                 # Stage 3 — browse → http://127.0.0.1:4477
-
-# …or automate it with user systemd units (run even while logged out):
-scripts/setup-systemd.sh install            # all (default): collect+ingest timer AND the web server
-scripts/setup-systemd.sh install data-load  # only the collect+ingest timer (Stages 1–2)
-scripts/setup-systemd.sh install web-ui     # only the web UI + API server (Stage 3)
+node packages/cli/dist/agent-lens.js collect --then-ingest   # the built CLI
+node packages/cli/dist/agent-lens.js serve
 ```
 
-> [!NOTE]
-> Collection and ingest are local-only and idempotent; the server is read-only and refuses to bind a
-> non-loopback host. The `data-load` timer runs collection **and** ingest in the background, so day
-> to day you only need the server — `pnpm serve`, or install it once with `setup-systemd.sh install web-ui`.
+The legacy Linux-only bash flow (`scripts/collect.sh`, `scripts/setup-systemd.sh`) still works and is
+documented in [USAGE.md](docs/USAGE.md).
 
 ## Configuration
 
@@ -179,9 +203,11 @@ A **source** is a labeled agent account — a `label` plus its `configDir` — d
 }
 ```
 
-The same resolver (`scripts/sources.mjs`) feeds both collection and ingest, so sessions are tagged
-with their source and you can filter/compare across accounts. Runtime knobs (ports, paths, retention
-window) are environment variables — see the [environment table in USAGE.md](docs/USAGE.md#reference).
+A single resolver in `@agent-lens/core` feeds both collection and ingest (the `scripts/sources.mjs`
+shim just exposes it to the shell), so sessions are tagged with their source and you can
+filter/compare across accounts. Config is looked up as `AGENT_LENS_CONFIG` → `<dataDir>/agent-lens.config.json`
+→ the repo's `agent-lens.config.json`. Runtime knobs (ports, paths, retention window) are environment
+variables — see the [environment table in USAGE.md](docs/USAGE.md#reference).
 
 **Excluding projects.** Add real project paths to an optional `exclude` array (or set
 `AGENT_LENS_EXCLUDE`, comma-separated) to keep playgrounds, throwaway tests, or private work out of
@@ -221,13 +247,16 @@ This is the whole point of the tool, so it's a hard constraint, not a feature fl
 ## Project layout
 
 ```
-packages/core     shared types + SQLite schema (agent-agnostic)
+packages/core     shared types + SQLite schema, path/source resolution, the Node collector,
+                  the single-instance lock, and cross-platform scheduling (agent-agnostic)
 packages/ingest   Stage-2 parser + heuristic classifier; ClaudeCodeAdapter (extensible)
 packages/server   Stage-3 read-only localhost API over the store
-packages/web      Vite + React SPA (browse + dashboards)
-scripts/          collect.sh · ingest.sh · serve.sh · prune.sh · setup-systemd.sh · sources.mjs
-                  validate.mjs · oracle.mjs · build-corpus.sh · build-scenarios.mjs · sandbox.sh
-systemd/          user service + timer units
+packages/web      Vite + React SPA (browse + dashboards; light/dark theme)
+packages/cli      the published `agent-lens` binary — bundles the above into one CLI (tsup)
+scripts/          sources.mjs (core shim) · legacy bash flow: collect.sh · ingest.sh · serve.sh ·
+                  setup-systemd.sh · prune.sh · plus validate.mjs · oracle.mjs · build-corpus.sh ·
+                  build-scenarios.mjs · sandbox.sh · smoke-tarball.mjs · gen-logo.mjs
+systemd/          legacy user service + timer templates (superseded by `agent-lens schedule`)
 docs/             ARCHITECTURE.md · USAGE.md · INGEST-RUNBOOK.md · VALIDATION.md · decisions/ (ADRs)
 test/fixtures/    committed redacted + synthetic validation corpus (no real data)
 data/             archive/<label>/ + agent-lens.db  (contents gitignored)

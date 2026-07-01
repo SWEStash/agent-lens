@@ -40,7 +40,7 @@ carry no Claude-Code-specific columns; agent-specific fields are either nullable
 **Recipe to add an agent (no DDL):**
 
 1. Add `packages/ingest/src/adapters/<agent>.ts` implementing `SourceAdapter`.
-2. Register it: add `new <Agent>Adapter()` to `adapterList` in `packages/ingest/src/index.ts`
+2. Register it: add `new <Agent>Adapter()` to `adapterList` in `packages/ingest/src/run.ts`
    (the only wiring point — adapters are resolved by `agentId` against each source's `agent` value).
 3. Add a source with the matching `agent` to `agent-lens.config.json` (ADR-007).
 
@@ -55,10 +55,11 @@ is the proof the seam admits a divergent agent. It is intentionally **not** regi
 - The extension point is now exercised and documented; a future agent is a new file + one registration
   line + one config entry.
 - Adapters own all format quirks; the schema stays clean (ADR-003 upheld).
-- **Collection is not covered by this seam.** As ADR-007 already noted, `scripts/collect.sh` assumes
-  the Claude-Code layout (`projects/**.jsonl`, `history.jsonl`, `settings`). An agent whose traces
-  live elsewhere also needs per-agent **collection** logic — a separate change from adding an adapter.
-  This remains a documented limitation, not solved here.
+- **Collection is not covered by this seam.** As ADR-007 already noted, the collector (now the portable
+  Node `collectAll` in `packages/core/src/collect.ts` — see [ADR-013](ADR-013-portable-collection-scheduling.md)
+  — and the legacy `scripts/collect.sh`) assumes the Claude-Code layout (`projects/**.jsonl`,
+  `history.jsonl`, `settings`). An agent whose traces live elsewhere also needs per-agent **collection**
+  logic — a separate change from adding an adapter. This remains a documented limitation, not solved here.
 - The stub is dead code carried for documentation/regression value; it costs a few KB and one extra
   file the type-checker compiles.
 

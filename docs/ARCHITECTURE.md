@@ -19,9 +19,9 @@ flowchart LR
   subgraph Sources["Agent config dirs (per account)"]
     CC["~/.claude/projects/**.jsonl<br/>(rolling ~30-day window)"]
   end
-  CC -->|"Stage 1 · collect.sh<br/>rsync --append-verify + .versions"| AR[("data/archive/&lt;label&gt;/")]
-  AR -->|"Stage 2 · ingest (+ classify)<br/>dedupe by uuid, derive"| DB[("data/agent-lens.db<br/>SQLite + FTS5")]
-  DB -->|"Stage 3 · server (read-only)"| WEB["Web UI · search · dashboards<br/>127.0.0.1"]
+  CC -->|"Stage 1 · agent-lens collect<br/>append-verify + .versions (Node)"| AR[("data/archive/&lt;label&gt;/")]
+  AR -->|"Stage 2 · agent-lens ingest (+ classify)<br/>dedupe by uuid, derive"| DB[("data/agent-lens.db<br/>SQLite + FTS5")]
+  DB -->|"Stage 3 · agent-lens serve (read-only)"| WEB["Web UI · search · dashboards<br/>127.0.0.1"]
 ```
 
 ## 2. Containers
@@ -30,17 +30,21 @@ flowchart LR
 flowchart TB
   subgraph repo["agent-lens (pnpm monorepo)"]
     CORE["packages/core<br/>schema (DDL) · types · pricing · markdown<br/>raw_json codec (packRaw/unpackRaw)"]
-    INGEST["packages/ingest<br/>CLI + engine · ClaudeCodeAdapter<br/>heuristic classifier"]
+    INGEST["packages/ingest<br/>parser + engine · ClaudeCodeAdapter<br/>heuristic classifier"]
     SERVER["packages/server<br/>Fastify read-only API"]
-    WEB["packages/web<br/>Vite + React SPA"]
+    WEB["packages/web<br/>Vite + React SPA (light/dark)"]
+    CLI["packages/cli<br/>bundled `agent-lens` binary (tsup)"]
   end
   ARCHIVE[("data/archive/")]
   DB[("data/agent-lens.db (WAL)")]
-  SYS["systemd user units<br/>collect.timer → collect.service"]
+  SCHED["OS scheduler<br/>systemd / launchd / schtasks"]
 
   CORE --> INGEST
   CORE --> SERVER
-  SYS -->|"oneshot: collect.sh then ingest.sh"| ARCHIVE
+  CORE --> CLI
+  INGEST --> CLI
+  SERVER --> CLI
+  SCHED -->|"agent-lens collect --then-ingest"| ARCHIVE
   ARCHIVE --> INGEST
   INGEST -->|"writes"| DB
   DB -->|"reads (readonly, query_only)"| SERVER
@@ -128,3 +132,5 @@ erDiagram
 | [009](decisions/ADR-009-retention-and-at-rest.md) | Retention window and at-rest stance |
 | [010](decisions/ADR-010-incremental-scalable-ingest.md) | Incremental, volume-scalable ingest |
 | [011](decisions/ADR-011-compressed-raw-json.md) | Compressed `raw_json` at rest (gzip BLOB) |
+| [012](decisions/ADR-012-single-cli-distribution.md) | Single bundled `agent-lens` CLI (npm distribution) |
+| [013](decisions/ADR-013-portable-collection-scheduling.md) | Portable Node collection + cross-platform scheduling |

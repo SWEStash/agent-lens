@@ -10,23 +10,32 @@ flowchart LR
     A1["personal · ~/.claude"]
     A2["work · ~/.config/claude-work"]
   end
-  SRC -->|"Stage 1 · collect.sh<br/>rsync · systemd timer"| ARCH["data/archive/"]
-  ARCH -->|"Stage 2 · ingest<br/>+ classify"| DB[("SQLite + FTS5")]
-  DB -->|"Stage 3 · serve · 127.0.0.1"| WEB["Browse · search · export<br/>analytics dashboard"]
+  SRC -->|"Stage 1 · agent-lens collect"| ARCH["data/archive/"]
+  ARCH -->|"Stage 2 · agent-lens ingest<br/>+ classify"| DB[("SQLite + FTS5")]
+  DB -->|"Stage 3 · agent-lens serve · 127.0.0.1"| WEB["Browse · search · export<br/>analytics dashboard"]
 ```
 
 ## Requirements
 
-- Linux (developed on Ubuntu 24.04 LTS+)
-- `rsync` 3.x, `systemd` (user instance), `node` >= 24, `pnpm`
+- `node` >= 24 — the only hard requirement (Linux, macOS, or Windows). You already have it from the Claude Code CLI.
+- Optional, from-source/developer only: `pnpm`. The legacy bash collector also uses `rsync` 3.x + `systemd` (Linux); the Node CLI needs neither.
 
 ## Install
 
+Agent Lens is one `agent-lens` CLI. Two ways to get it:
+
 ```bash
-cd /home/m4pre/git-projects/swestash/agent-lens
-pnpm install
-pnpm -r build
+# End users (published with the first release):
+npm install -g agent-lens        # then run `agent-lens <command>`
+#   or, ad-hoc, without installing:  npx agent-lens <command>
+
+# From source (development, or before the npm release):
+cd /path/to/agent-lens
+pnpm install && pnpm -r build
+node packages/cli/dist/agent-lens.js <command>   # the built CLI
 ```
+
+Below, `agent-lens <command>` means either the installed binary or `node packages/cli/dist/agent-lens.js <command>` from a source build. The subcommands are `collect`, `ingest`, `serve`, `watch`, `metrics`, and `schedule`.
 
 ## Configure sources (which agent accounts to collect)
 
@@ -51,10 +60,12 @@ cp agent-lens.config.example.json agent-lens.config.json   # if not already pres
 - `configDir` accepts `~` and `$HOME`.
 - `agent` is `claude-code` (the only shipped adapter today; see *Adding another agent* below).
 
-Verify what will be collected:
+The config file is resolved in this order: `AGENT_LENS_CONFIG` → `<dataDir>/agent-lens.config.json`
+→ the repo's `agent-lens.config.json` → the built-in default (`~/.claude`). Verify what will be
+collected with the resolver shim (a thin wrapper over `@agent-lens/core`):
 
 ```bash
-node scripts/sources.mjs        # prints: label <TAB> agent <TAB> configDir
+node scripts/sources.mjs        # prints: label <TAB> agent <TAB> configDir  (from-source debug tool)
 ```
 
 ## Exclude projects (playgrounds, throwaway, private)
@@ -84,58 +95,49 @@ anything under it, including its subagent transcripts. Paths accept `~` and `$HO
 
 ```bash
 node scripts/sources.mjs --excludes     # prints the resolved exclude paths, one per line
-AGENT_LENS_EXCLUDE="$HOME/scratch" pnpm ingest    # one-off, additive to the config list
+AGENT_LENS_EXCLUDE="$HOME/scratch" agent-lens ingest    # one-off, additive to the config list
 ```
 
 ## Stage 1 — Collect
 
 Copies each source's transcripts into `data/archive/<label>/` before Claude Code prunes them
 (rolling 30-day window). Never deletes, never copies secrets, keeps divergence/compaction backups
-in `.versions/`.
+in `.versions/`. Portable Node (no `rsync`/bash), same append-verify semantics.
 
 ```bash
-scripts/collect.sh              # run one pass now
+agent-lens collect                 # run one pass now
+agent-lens collect --then-ingest   # collect, then immediately ingest (Stage 1 → Stage 2)
 ```
 
-Run it automatically with **user systemd units** (a few times a day, even when logged out). The
-timer fires a oneshot that runs collection (Stage 1) **and then ingest (Stage 2)**, so the DB stays
-current with no manual runs. `install` takes a target:
+Keep it current automatically — two options:
+
+**Scheduled (survives reboot).** `agent-lens schedule` registers a periodic `collect --then-ingest`
+job with the OS scheduler — **systemd** user timer on Linux, **launchd** agent on macOS, **Task
+Scheduler** on Windows:
 
 ```bash
-scripts/setup-systemd.sh install            # all (default): the collect+ingest timer AND the web server
-scripts/setup-systemd.sh install data-load  # only the collect+ingest timer (Stages 1–2)
-scripts/setup-systemd.sh install web-ui     # only the web UI + API server (Stage 3)
-scripts/setup-systemd.sh status             # timer schedule + service status
-scripts/setup-systemd.sh uninstall          # stop & remove ALL units (linger/archive untouched)
+agent-lens schedule install                 # default cadence: 09,13,17,21
+agent-lens schedule install --times 8,12,18 # custom hours (0–23, comma-separated)
+agent-lens schedule status                  # show the registered job / next run
+agent-lens schedule uninstall               # remove it (archive untouched)
 ```
 
-Each `install` enables linger and starts the chosen units. The units are
-`agent-lens-collect.{service,timer}` (data-load) and `agent-lens-server.service` (web-ui); the
-collect schedule (09:00/13:00/17:00/21:00, with catch-up) lives in `systemd/agent-lens-collect.timer`.
-
-### Changing the collection schedule
-
-The default cadence is four runs a day (`OnCalendar=*-*-* 09,13,17,21:00`), with `Persistent=true`
-(runs a missed job once the machine is back on) and `RandomizedDelaySec=300` (≤5 min jitter). Two
-ways to change it:
+**Resident (`watch`).** A foreground process that collects+ingests whenever a source changes
+(debounced), optionally also on a fixed interval:
 
 ```bash
-# A) Drop-in override (survives re-installs — recommended). Opens an editor; add only what changes:
-systemctl --user edit agent-lens-collect.timer
-#   [Timer]
-#   OnCalendar=                 # blank line first clears the inherited value…
-#   OnCalendar=hourly           # …then set your own (e.g. hourly, or *-*-* 08,20:00)
-systemctl --user restart agent-lens-collect.timer
-
-# B) Edit the source unit, then re-render + restart via install:
-$EDITOR systemd/agent-lens-collect.timer    # change OnCalendar / RandomizedDelaySec / Persistent
-scripts/setup-systemd.sh install data-load  # re-renders the unit and reloads systemd
+agent-lens watch                  # collect+ingest on file change
+agent-lens watch --interval 900   # ...and at least every 15 min
+agent-lens watch --poll           # polling fallback for network filesystems
 ```
 
-`OnCalendar` uses systemd calendar syntax — verify any expression with
-`systemd-analyze calendar 'your-expression'`. Re-running `install` (option B) overwrites the rendered
-unit, so a source edit is the durable choice if you don't want a separate drop-in; check the next run
-with `scripts/setup-systemd.sh status` (or `systemctl --user list-timers`).
+A cross-platform single-instance lock (`<dataDir>/.agent-lens.lock`) ensures a scheduled run and a
+`watch` cycle never overlap, so a short cadence can't pile up lagged collectors.
+
+> **Legacy Linux flow.** The original bash path still works: `scripts/collect.sh` for a one-off, and
+> `scripts/setup-systemd.sh install [all|data-load|web-ui]` to install the hand-written systemd units
+> (which run `collect.sh` + `ingest.sh`). `agent-lens schedule` supersedes it for the data-load job
+> and is cross-platform; the `web-ui` server unit still comes from `setup-systemd.sh` (see Stage 3).
 
 ## Stage 2 — Ingest
 
@@ -143,8 +145,8 @@ Parses the archive (mirror **and** `.versions/` backups, deduped by event `uuid`
 `data/agent-lens.db`.
 
 ```bash
-pnpm ingest            # incremental — only changed files; rebuilds only touched sessions
-pnpm ingest --full     # drop, recreate, and re-derive everything from the archive
+agent-lens ingest            # incremental — only changed files; rebuilds only touched sessions
+agent-lens ingest --full     # drop, recreate, and re-derive everything from the archive
 ```
 
 Incremental runs skip unchanged files by `size`+`mtime` (no re-read) and rebuild derived tables only for
@@ -163,14 +165,17 @@ It prints a summary: `files / skipped / new_events / malformed`, then
 ## Stage 3 — Browse
 
 ```bash
-pnpm serve             # → http://127.0.0.1:4477   (read-only, loopback only)
+agent-lens serve       # → http://127.0.0.1:4477   (read-only, loopback only)
 ```
 
-To keep it running in the background (restart on failure, start at boot), install it as a service
-instead: `scripts/setup-systemd.sh install web-ui` (binds `127.0.0.1`; override via
-`AGENT_LENS_PORT` / `AGENT_LENS_HOST`).
+To keep it running in the background on Linux (restart on failure, start at boot), install it as a
+service: `scripts/setup-systemd.sh install web-ui` (binds `127.0.0.1`; override via
+`AGENT_LENS_PORT` / `AGENT_LENS_HOST`). On macOS/Windows, run `agent-lens serve` under your process
+manager of choice (the cross-platform `agent-lens schedule` covers the periodic collect job, not the
+long-running server).
 
-Open the URL. The app has two views (nav tabs): **Sessions** (browse) and **Dashboard** (analytics).
+Open the URL. The app has two views (nav tabs): **Sessions** (browse) and **Dashboard** (analytics),
+and a **light/dark theme toggle** in the top bar (dark by default; your choice is remembered).
 A live, corpus-only demo of these views (no real data) is published at
 <https://swestash.github.io/agent-lens/>; the screenshots below are generated from the committed
 corpus by `node scripts/screenshots.mjs`.
@@ -224,19 +229,19 @@ re-run the above — no re-ingest needed. After changing *parser* logic instead,
 
 ## Typical daily loop
 
-With the `data-load` timer installed, collection **and** ingest run in the background, so the DB is
-already current — just open the UI (or leave the `web-ui` service running):
+With `agent-lens schedule install` (or `agent-lens watch`) running, collection **and** ingest happen
+in the background, so the DB is already current — just open the UI:
 
 ```bash
-pnpm serve                                  # or: scripts/setup-systemd.sh install web-ui  (once)
+agent-lens serve
 ```
 
-Collecting manually instead? Run the full refresh: `scripts/collect.sh && pnpm ingest && pnpm serve`.
+Collecting manually instead? Run the full refresh: `agent-lens collect --then-ingest && agent-lens serve`.
 
 ## Adding another account
 
 1. Add an entry to `agent-lens.config.json` (`label` + `configDir`).
-2. `scripts/collect.sh && pnpm ingest`.
+2. `agent-lens collect --then-ingest`.
 3. It appears as a new **source** filter in the UI.
 
 ## Adding another agent (type)
@@ -247,11 +252,12 @@ Claude account) takes three steps and **no schema change**:
 1. Implement `packages/ingest/src/adapters/<agent>.ts` (the `SourceAdapter` interface:
    `discover()` finds the agent's transcript files; `parseLine()` maps each line to the normalized
    rows). See `packages/ingest/src/adapters/example-stub.ts` for a worked, compile-checked template.
-2. Register it in `adapterList` (`packages/ingest/src/index.ts`) — the only wiring point.
+2. Register it in `adapterList` (`packages/ingest/src/run.ts`) — the only wiring point.
 3. Add a source with the matching `agent` value to `agent-lens.config.json`.
 
-**Caveat (ADR-007/008):** this covers *ingest/parse* only. Collection (`scripts/collect.sh`) assumes
-the Claude-Code layout (`projects/**.jsonl`, `history.jsonl`, `settings`). An agent whose traces live
+**Caveat (ADR-007/008):** this covers *ingest/parse* only. Collection (the Node collector in
+`packages/core/src/collect.ts`, and the legacy `scripts/collect.sh`) assumes the Claude-Code layout
+(`projects/**.jsonl`, `history.jsonl`, `settings`). An agent whose traces live
 elsewhere also needs per-agent **collection** logic.
 
 ## Retention
@@ -268,7 +274,7 @@ scripts/prune.sh --days 30 --apply   # narrower window
 ```
 
 The DB is a derived projection — if a prune ever changes what's available, rebuild it with
-`pnpm ingest --full`. Pruning is manual (run it occasionally); `.versions/` is typically empty.
+`agent-lens ingest --full`. Pruning is manual (run it occasionally); `.versions/` is typically empty.
 
 **At-rest encryption (ADR-009):** Agent Lens does not encrypt the store itself — the `data/` dir is
 as sensitive as the originals. Place it on an encrypted volume (LUKS/dm-crypt on Linux, FileVault on
@@ -323,12 +329,12 @@ macOS) if you need at-rest protection. See `docs/decisions/ADR-009-retention-and
 
 ## Troubleshooting
 
-- **`ingest` says "archive not found"** — run `scripts/collect.sh` first (or check
+- **`ingest` says "archive not found"** — run `agent-lens collect` first (or check
   `AGENT_LENS_DATA`).
-- **`serve` says "db not found"** — run `pnpm ingest` first.
-- **Timer not firing while logged out** — confirm linger: `loginctl show-user $USER -p Linger`
+- **`serve` says "db not found"** — run `agent-lens ingest` first.
+- **Timer not firing while logged out (Linux)** — confirm linger: `loginctl show-user $USER -p Linger`
   should print `Linger=yes`; if not, `loginctl enable-linger $USER`.
-- **Re-ingest didn't pick up a parser change** — use `pnpm ingest --full`.
+- **Re-ingest didn't pick up a parser change** — use `agent-lens ingest --full`.
 - **A source shows nothing** — check `node scripts/sources.mjs` resolves its `configDir`, and that
   `data/archive/<label>/projects/` has files.
 

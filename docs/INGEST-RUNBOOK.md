@@ -6,10 +6,11 @@ the [Operations Guide](USAGE.md). This runbook covers running, migrating, and tr
 
 ## How ingest runs
 
-- **Scheduled.** The `agent-lens-collect.timer` user unit fires a oneshot `agent-lens-collect.service`
-  that runs **`collect.sh` then `ingest.sh`** in sequence (collect must succeed first). Default
-  schedule: `09,13,17,21:00` daily. See [USAGE.md → Stage 1](USAGE.md#stage-1--collect).
-- **Manual.** `pnpm ingest` (incremental) or `pnpm ingest --full` (rebuild). Direct:
+- **Scheduled.** `agent-lens schedule install` registers a periodic **`collect --then-ingest`** job
+  with the OS scheduler (systemd/launchd/schtasks); collect must succeed before ingest runs. Default
+  schedule: `09,13,17,21`. (The legacy systemd units run `collect.sh` then `ingest.sh`.) See
+  [USAGE.md → Stage 1](USAGE.md#stage-1--collect).
+- **Manual.** `agent-lens ingest` (incremental) or `agent-lens ingest --full` (rebuild). Direct:
   `node packages/ingest/dist/index.js [--full] [--db <path>] [--archive <path>]`.
 - **Inputs.** Reads `data/archive/` (the mirror + `.versions/` snapshots), writes `data/agent-lens.db`.
   Overridable via `AGENT_LENS_DATA`, `AGENT_LENS_ARCHIVE`, `AGENT_LENS_DB`
@@ -45,8 +46,8 @@ to reflect changed parser/classifier *logic* — use `--full` for that.
 upgrading to `SCHEMA_VERSION ≥ 5`, run once:
 
 ```bash
-pnpm build
-pnpm ingest --full     # drops, recreates with BLOB column, re-reads archive, compresses raw_json
+pnpm -r build
+agent-lens ingest --full     # drops, recreates with BLOB column, re-reads archive, compresses raw_json
 ```
 
 A not-yet-migrated DB keeps working (the reader decodes legacy plain rows via `unpackRaw`), but stays
@@ -67,19 +68,19 @@ uncompressed until `--full` runs. Expect a sizeable DB shrink (~40% on a typical
 
 ## Troubleshooting
 
-- **`archive not found`** — Stage 1 hasn't run. Run `pnpm collect` (or the systemd unit) first.
+- **`archive not found`** — Stage 1 hasn't run. Run `agent-lens collect` (or the scheduled unit) first.
 - **`malformed=N` in the report** — N JSONL lines failed to parse and were skipped; the rest ingested.
   A handful is normal (partial last lines). A spike suggests a corrupt archive file — inspect it; the
   archive can be re-synced from source since collection is append-only.
 - **A "phantom" empty session appears** — non-transcript `.jsonl` files under `projects/` (e.g. a
   Workflow `journal.jsonl`, whose lines carry no `uuid`) create a zero-event stub; `rebuildDerived`
-  prunes any session with `event_count = 0`. If one persists, run `pnpm ingest --full`.
+  prunes any session with `event_count = 0`. If one persists, run `agent-lens ingest --full`.
 - **Subagent shows no parent (stale linkage)** — can happen transiently if a parent and its child
   transcript arrive in different runs; the dirty-set linkage expansion (ADR-010) fixes it on the run that
-  ingests the second half. To force resolution now, run `pnpm ingest --full`.
+  ingests the second half. To force resolution now, run `agent-lens ingest --full`.
 - **`database is locked` / `SQLITE_BUSY`** — a checkpoint contended with the long-lived server reader.
-  Rare with WAL and short incremental transactions; retry, or stop the server (`serve.sh`) during a
+  Rare with WAL and short incremental transactions; retry, or stop the server (`agent-lens serve`) during a
   `--full` rebuild.
-- **Re-ingest didn't pick up a parser/classifier change** — expected; use `pnpm ingest --full`.
-- **Recover from anything** — delete `data/agent-lens.db*` and run `pnpm ingest --full`; the archive
+- **Re-ingest didn't pick up a parser/classifier change** — expected; use `agent-lens ingest --full`.
+- **Recover from anything** — delete `data/agent-lens.db*` and run `agent-lens ingest --full`; the archive
   rebuilds the DB completely.
