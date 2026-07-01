@@ -3,6 +3,7 @@ import { createRoot } from "react-dom/client";
 import { BrowserRouter, Routes, Route } from "react-router-dom";
 import App from "./App";
 import SessionsView from "./SessionsView";
+import { ThemeProvider } from "./theme";
 import "./styles.css";
 
 // Lazy-load the heavier routes so the initial bundle stays small: Dashboard pulls in Recharts
@@ -25,8 +26,9 @@ const basename = ((import.meta as any).env?.BASE_URL ?? "/").replace(/\/$/, "");
 
 createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
-    <BrowserRouter basename={basename}>
-      <Routes>
+    <ThemeProvider>
+      <BrowserRouter basename={basename}>
+        <Routes>
         <Route path="/" element={<App />}>
           <Route index element={<SessionsView />} />
           <Route
@@ -70,7 +72,8 @@ createRoot(document.getElementById("root")!).render(
             }
           />
         </Route>
-      </Routes>
-    </BrowserRouter>
+        </Routes>
+      </BrowserRouter>
+    </ThemeProvider>
   </React.StrictMode>,
 );

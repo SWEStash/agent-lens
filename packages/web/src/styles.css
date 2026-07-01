@@ -10,6 +10,31 @@
   --assistant: #6ea8fe;
   --tag: #2a2f3a;
   --err: #ff6b6b;
+  --ok: #7ee0a0;
+  /* Chart-only accents (consumed by charts/theme.tsx via getComputedStyle). */
+  --gold: #e0b85a;
+  --violet: #b98cff;
+  --teal: #4fd1c5;
+  --code-bg: var(--bg);
+}
+/* Light theme: same tokens, WCAG-AA palette. Applied via <html data-theme="light">. */
+:root[data-theme="light"] {
+  --bg: #ffffff;
+  --panel: #f6f7f9;
+  --panel2: #eceef2;
+  --border: #d5d9e0;
+  --text: #1b1f27;
+  --muted: #5b6472;
+  --accent: #2563eb;
+  --user: #0f9d58;
+  --assistant: #2563eb;
+  --tag: #e4e7ec;
+  --err: #d32f2f;
+  --ok: #15803d;
+  --gold: #b7791f;
+  --violet: #7c3aed;
+  --teal: #0d9488;
+  --code-bg: #eef1f5;
 }
 * { box-sizing: border-box; }
 body {
@@ -87,8 +112,11 @@ select:focus-visible,
   top: 0;
   z-index: 5;
 }
-.brand { font-weight: 700; font-size: 16px; color: var(--text); }
+.brand { font-weight: 700; font-size: 16px; color: var(--text); display: inline-flex; align-items: center; gap: 8px; }
+.brand-logo { height: 22px; width: auto; display: block; }
 .tagline { color: var(--muted); font-size: 12px; }
+/* Theme toggle sits at the far right of the top bar. */
+.theme-toggle { margin-left: auto; align-self: center; font-size: 15px; line-height: 1; padding: 5px 9px; }
 .content { max-width: 1100px; margin: 0 auto; padding: 20px; }
 /* Layout-heavy pages (dashboard grid, skill body+sessions) get more room; text pages stay readable. */
 .content.wide { max-width: min(1600px, 94vw); }
@@ -301,13 +329,13 @@ table.sessions { width: 100%; border-collapse: collapse; }
 .md code {
   font-family: ui-monospace, "SF Mono", Menlo, monospace;
   font-size: 0.88em;
-  background: var(--bg);
+  background: var(--code-bg);
   border: 1px solid var(--border);
   border-radius: 4px;
   padding: 0.1em 0.35em;
 }
 .md pre {
-  background: var(--bg);
+  background: var(--code-bg);
   border: 1px solid var(--border);
   border-radius: 6px;
   padding: 10px;
@@ -356,7 +384,7 @@ table.sessions { width: 100%; border-collapse: collapse; }
 .code, .result {
   white-space: pre-wrap;
   word-break: break-word;
-  background: var(--bg);
+  background: var(--code-bg);
   border-radius: 6px;
   padding: 10px;
   font-family: ui-monospace, "SF Mono", Menlo, monospace;
@@ -447,7 +475,7 @@ button.small { padding: 2px 8px; font-size: 12px; }
   font-size: 12px;
 }
 .sig-bar-label { color: var(--text); text-transform: capitalize; }
-.sig-bar { height: 8px; background: var(--bg); border-radius: 4px; overflow: hidden; }
+.sig-bar { height: 8px; background: var(--code-bg); border-radius: 4px; overflow: hidden; }
 .sig-bar-fill { display: block; height: 100%; background: var(--accent); border-radius: 4px; min-width: 2px; }
 .sig-bar-val { color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
 .sig-bar-sub { grid-column: 2 / -1; font-size: 11px; margin-top: -2px; }
@@ -474,3 +502,17 @@ button.small { padding: 2px 8px; font-size: 12px; }
 .skill-body { max-height: 70vh; overflow: auto; }
 .skill-body-card, .skill-sessions-card { min-width: 0; }
 .skill-sessions-card table { width: 100%; }
+
+/* --- Light-theme overrides for chips/values that hardcode dark-palette hex --- */
+/* The mint logo is near-white; darken + saturate it so it reads on the light background. */
+:root[data-theme="light"] .brand-logo { filter: brightness(0.5) saturate(1.8); }
+:root[data-theme="light"] .tag.subagent { background: #f6e6c8; color: #8a6d1f; }
+:root[data-theme="light"] .tag.complexity { background: #ece4fb; color: #6d28d9; }
+:root[data-theme="light"] .tag.cat { background: #dff0e6; color: #10633a; }
+:root[data-theme="light"] .tag.cat-feature { background: #d8f3e3; color: #0f7a44; }
+:root[data-theme="light"] .tag.cat-bugfix { background: #fbe0e0; color: #b12626; }
+:root[data-theme="light"] .tag.cat-refactor { background: #dbe8fb; color: #1d4ed8; }
+:root[data-theme="light"] .tag.cat-docs { background: #f6ecd0; color: #8a6d1f; }
+:root[data-theme="light"] .tag.cat-ops { background: #dceaf8; color: #1a5fa8; }
+:root[data-theme="light"] .tag.cat-review { background: #ece4fb; color: #6d28d9; }
+:root[data-theme="light"] .json-number { color: #b45309; }

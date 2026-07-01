@@ -1,6 +1,9 @@
 import { Link, NavLink, Outlet, useLocation } from "react-router-dom";
+import logoUrl from "./assets/logo.png";
+import { useTheme } from "./theme";
 
 export default function App() {
+  const { theme, toggle } = useTheme();
   // Most pages are reading surfaces (transcript, sessions list) and keep a centered, readable column.
   // Layout-heavy pages — the dashboard's chart grid and a skill's body+sessions two-column — opt into
   // a wider container instead (note: "/skills" list stays narrow; only "/skill/<name>" detail widens).
@@ -13,7 +16,7 @@ export default function App() {
       </a>
       <header className="topbar">
         <Link to="/" className="brand">
-          🔎 Agent Lens
+          <img src={logoUrl} alt="" className="brand-logo" /> Agent Lens
         </Link>
         <nav className="nav">
           <NavLink to="/" end className={({ isActive }) => (isActive ? "nav-link active" : "nav-link")}>
@@ -27,6 +30,16 @@ export default function App() {
           </NavLink>
         </nav>
         <span className="tagline">local agent session explorer</span>
+        <button
+          type="button"
+          className="ghost theme-toggle"
+          onClick={toggle}
+          aria-label="Toggle light or dark theme"
+          aria-pressed={theme === "light"}
+          title={theme === "dark" ? "Switch to light theme" : "Switch to dark theme"}
+        >
+          {theme === "dark" ? "☀" : "☾"}
+        </button>
       </header>
       <main className={"content" + (wide ? " wide" : "")} id="main" tabIndex={-1}>
         <Outlet />

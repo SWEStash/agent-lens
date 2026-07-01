@@ -17,11 +17,12 @@ import {
 } from "recharts";
 import { api, type DashOverview, type DashTimeseries, type DashBreakdowns, type TokenSplit } from "./api";
 import { fmtCost, fmtTokens, fmtDuration, shortModel } from "./format";
-import { ChartCard, Kpi, TOKEN_COLORS, PALETTE, C, axisProps, gridProps, tooltipStyle } from "./charts/theme";
+import { ChartCard, Kpi, useChartTokens } from "./charts/theme";
 
 /** The four token components as a compact, color-keyed breakdown that complements the "Total tokens"
  * KPI and the "Tokens over time" chart — same colors, exact totals + share at a glance. */
 function TokenBreakdownKpi({ t }: { t: TokenSplit }) {
+  const { TOKEN_COLORS } = useChartTokens();
   const total = t.input + t.output + t.cache_creation + t.cache_read;
   const rows: Array<{ name: string; v: number; c: string }> = [
     { name: "Input", v: t.input, c: TOKEN_COLORS.input },
@@ -60,6 +61,7 @@ type SkillVersionRow = DashBreakdowns["skill_versions"][number];
  * (Recharts tooltips aren't interactive, so the per-version links live on the skill page; click the
  * bar to go there.) */
 function SkillTooltip({ active, payload, versionsByName }: any) {
+  const { C, tooltipStyle } = useChartTokens();
   if (!active || !payload?.length) return null;
   const name: string = payload[0]?.payload?.name;
   const total: number = payload[0]?.payload?.n ?? 0;
@@ -80,6 +82,7 @@ function SkillTooltip({ active, payload, versionsByName }: any) {
 }
 
 export default function Dashboard() {
+  const { C, TOKEN_COLORS, PALETTE, axisProps, gridProps, tooltipStyle } = useChartTokens();
   const [params, setParams] = useSearchParams();
   const navigate = useNavigate();
   const [sources, setSources] = useState<Source[]>([]);
