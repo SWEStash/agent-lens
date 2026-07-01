@@ -1,13 +1,13 @@
 /**
  * `agent-lens` — the unified CLI. One binary dispatching the pipeline: collect → ingest → serve,
- * plus watch (resident collect+ingest). Bundled into a single file by tsup so it installs as one
- * npm package (ADR-010). Schedule (OS-level periodic install) lands in a later step.
+ * plus watch (resident collect+ingest) and service (install collect+ingest and/or serve as OS
+ * services). Bundled into a single file by tsup so it installs as one npm package (ADR-010).
  */
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { cac } from "cac";
-import { acquireLock, collectAll, findRepoRoot, parseHours, resolveDataDir, runSchedule } from "@agent-lens/core";
+import { acquireLock, collectAll, findRepoRoot, parseHours, parseTargets, resolveDataDir, runService } from "@agent-lens/core";
 import { runIngest, runMetrics } from "@agent-lens/ingest";
 import { startServer } from "@agent-lens/server";
 import { runWatch } from "./watch.js";
@@ -87,12 +87,16 @@ cli
   });
 
 cli
-  .command("schedule <action>", "Install/uninstall/status periodic collect+ingest (install | uninstall | status)")
-  .option("--times <hours>", "Comma-separated hours 0-23 to run at (default: 9,13,17,21)")
-  .action((action: string, opts: { times?: string }) => {
+  .command(
+    "service <action> [target]",
+    "Install/uninstall/status OS services — action: install|uninstall|status; target: collector|server|all (default all)",
+  )
+  .option("--times <hours>", "Collector cadence: comma-separated hours 0-23 (default: 9,13,17,21)")
+  .action((action: string, target: string | undefined, opts: { times?: string }) => {
+    const targets = parseTargets(target);
     const hours = action === "install" ? parseHours(opts.times) : undefined;
-    // The bundled CLI file is this module; bake its absolute path + node into the scheduler entry.
-    runSchedule(action, { cliEntry: fileURLToPath(import.meta.url), hours });
+    // The bundled CLI file is this module; bake its absolute path + node into every unit/plist/task.
+    runService(action, { cliEntry: fileURLToPath(import.meta.url), hours, targets });
   });
 
 cli.help();

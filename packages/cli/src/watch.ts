@@ -1,7 +1,7 @@
 /**
  * `agent-lens watch` — a resident process that collects + ingests whenever a source's transcripts
  * change (debounced), and optionally on a fixed interval. This is the Node-native periodic option;
- * `agent-lens schedule` layers OS-level persistence (reboot survival) on top.
+ * `agent-lens service install collector` layers OS-level persistence (reboot survival) on top.
  *
  * Overlap safety: an in-process guard collapses a burst of file events into one cycle and never runs
  * two cycles at once; the shared single-instance lock additionally guards against a scheduled run
