@@ -10,6 +10,16 @@ export function openReadonly(file: string): DB {
 }
 
 /**
+ * Wall-clock time of the most recent ingest run that wrote anything, as an ISO8601 string (or null on
+ * a never-ingested DB). Every archive file touched by a run gets the same `ingested_at` stamp, so the
+ * max across `ingest_state` is exactly "data last refreshed at". Powers the header freshness readout.
+ */
+export function lastIngested(db: DB): string | null {
+  const row = db.prepare("SELECT MAX(ingested_at) AS last FROM ingest_state").get() as { last: string | null };
+  return row?.last ?? null;
+}
+
+/**
  * Split a raw transcript line's message content into natural text vs thinking. Accepts the stored
  * `events.raw_json` value, which is a gzip BLOB (Buffer) post-ADR-011 but may be a legacy plain string;
  * `unpackRaw` normalizes both.

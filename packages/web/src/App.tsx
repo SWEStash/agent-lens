@@ -1,9 +1,36 @@
+import { useCallback, useEffect, useState } from "react";
 import { Link, NavLink, Outlet, useLocation } from "react-router-dom";
 import logoUrl from "./assets/logo.png";
+import { api } from "./api";
 import { useTheme } from "./theme";
+
+/** Compact "3m ago" style label for an ISO8601 instant. */
+function relativeTime(iso: string): string {
+  const secs = Math.round((Date.now() - new Date(iso).getTime()) / 1000);
+  if (secs < 45) return "just now";
+  const mins = Math.round(secs / 60);
+  if (mins < 60) return `${mins}m ago`;
+  const hrs = Math.round(mins / 60);
+  if (hrs < 24) return `${hrs}h ago`;
+  return `${Math.round(hrs / 24)}d ago`;
+}
 
 export default function App() {
   const { theme, toggle } = useTheme();
+
+  // Header freshness readout: when the data was last ingested. Polled so the label (and any
+  // background collector run) stays current without a manual reload.
+  const [lastIngested, setLastIngested] = useState<string | null>(null);
+  const refreshStatus = useCallback(() => {
+    api<{ last_ingested?: string | null }>("/health")
+      .then((h) => setLastIngested(h.last_ingested ?? null))
+      .catch(() => {});
+  }, []);
+  useEffect(() => {
+    refreshStatus();
+    const id = setInterval(refreshStatus, 60_000);
+    return () => clearInterval(id);
+  }, [refreshStatus]);
   // Most pages are reading surfaces (transcript, sessions list) and keep a centered, readable column.
   // Layout-heavy pages — the dashboard's chart grid and a skill's body+sessions two-column — opt into
   // a wider container instead (note: "/skills" list stays narrow; only "/skill/<name>" detail widens).
@@ -29,7 +56,13 @@ export default function App() {
             Dashboard
           </NavLink>
         </nav>
-        <span className="tagline">local agent session explorer</span>
+        {lastIngested ? (
+          <span className="tagline" title={`Data last ingested ${new Date(lastIngested).toLocaleString()}`}>
+            updated {relativeTime(lastIngested)}
+          </span>
+        ) : (
+          <span className="tagline">local agent session explorer</span>
+        )}
         <button
           type="button"
           className="ghost theme-toggle"

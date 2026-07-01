@@ -8,7 +8,7 @@ import { existsSync } from "node:fs";
 import Fastify, { type FastifyInstance } from "fastify";
 import fastifyStatic from "@fastify/static";
 import { sessionToMarkdown, type MarkdownEvent } from "@agent-lens/core";
-import { type DB, listSources, listProjects, listModels, listSessions, getSession, getWorkflow, listSkills, getSkill } from "./db.js";
+import { type DB, lastIngested, listSources, listProjects, listModels, listSessions, getSession, getWorkflow, listSkills, getSkill } from "./db.js";
 import { dashboardOverview, dashboardTimeseries, dashboardBreakdowns, type DashFilters } from "./dashboard.js";
 
 export interface CreateAppOpts {
@@ -19,7 +19,7 @@ export interface CreateAppOpts {
 export async function createApp(db: DB, opts: CreateAppOpts = {}): Promise<FastifyInstance> {
   const app = Fastify({ logger: false });
 
-  app.get("/api/health", async () => ({ ok: true }));
+  app.get("/api/health", async () => ({ ok: true, last_ingested: lastIngested(db) }));
   app.get("/api/sources", async () => listSources(db));
   app.get("/api/projects", async () => listProjects(db));
   app.get("/api/models", async () => listModels(db));

@@ -43,10 +43,14 @@ beforeAll(async () => {
 });
 
 describe("server API smoke", () => {
-  it("GET /api/health → ok", async () => {
+  it("GET /api/health → ok + last_ingested", async () => {
     const r = await app.inject({ method: "GET", url: "/api/health" });
     expect(r.statusCode).toBe(200);
-    expect(r.json()).toEqual({ ok: true });
+    const body = r.json();
+    expect(body.ok).toBe(true);
+    // last_ingested is MAX(ingest_state.ingested_at): an ISO string once ingested, null otherwise.
+    expect(body).toHaveProperty("last_ingested");
+    expect(body.last_ingested === null || typeof body.last_ingested === "string").toBe(true);
   });
 
   it("GET /api/sessions → paginated list", async () => {
