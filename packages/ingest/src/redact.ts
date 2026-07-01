@@ -190,14 +190,9 @@ export class Redactor {
   }
 }
 
-/**
- * Encode a real project path the way Claude Code names its `projects/<encodedDir>` folder: every
- * `/` and `.` becomes `-` (e.g. `/home/u/git/agent-lens` → `-home-u-git-agent-lens`). Trailing
- * separators are dropped so a path with or without a trailing slash encodes identically.
- */
-export function encodeProjectPath(p: string): string {
-  return p.replace(/[/.]/g, "-").replace(/-+$/, "");
-}
+// Canonical Claude Code project-dir encoder now lives in core so collect + ingest agree exactly.
+export { encodeProjectPath } from "@agent-lens/core";
+import { encodeProjectPath } from "@agent-lens/core";
 
 /** Parse the AGENT_LENS_REDACT_EXCLUDE CSV of real project paths into encoded-dir prefixes. */
 export function parseExcludes(csv: string | undefined | null): string[] {

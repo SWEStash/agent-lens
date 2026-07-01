@@ -3,7 +3,13 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
-  "main": "./dist/index.js",
+  "main": "./dist/run.js",
+  "exports": {
+    ".": {
+      "types": "./dist/run.d.ts",
+      "default": "./dist/run.js"
+    }
+  },
   "bin": {
     "agent-lens-server": "./dist/index.js"
   },
