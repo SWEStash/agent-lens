@@ -101,11 +101,12 @@ complexity, tool, skill, and subagent fan-out:
 - **Passive collection** — copies each account's transcripts into a local archive before Claude
   Code's 30-day prune, on a schedule or on file change. Never deletes, never copies secrets. Runs as
   portable Node (`agent-lens collect`) — no `rsync`/bash required.
-- **One cross-platform CLI** — `agent-lens <collect | ingest | serve | watch | schedule>`, a single
+- **One cross-platform CLI** — `agent-lens <collect | ingest | serve | watch | service>`, a single
   bundled binary that runs on Linux, macOS, and Windows (you already have Node from the Claude Code CLI).
-- **Cross-platform scheduling** — `agent-lens schedule install` registers the periodic collect+ingest
-  job with the OS scheduler (systemd on Linux, launchd on macOS, Task Scheduler on Windows), and a
-  single-instance lock keeps overlapping runs from piling up.
+- **One-command install as OS services** — `agent-lens service install` registers both the periodic
+  collect+ingest job **and** the always-on web UI with the OS service manager (systemd on Linux,
+  launchd on macOS, Task Scheduler on Windows), so Agent Lens keeps working after a reboot. A
+  single-instance lock keeps overlapping collect runs from piling up.
 - **Live `watch` mode** — `agent-lens watch` collects + ingests whenever a source changes (debounced).
 - **Normalized store** — sessions / turns / events / tool-calls / token-usage in SQLite with **FTS5**
   full-text search. The archive is the source of truth; the DB is a rebuildable projection.
@@ -148,7 +149,7 @@ Design decisions are recorded as ADRs in [`docs/decisions/`](docs/decisions/).
 ## Requirements
 
 - [Node.js](https://nodejs.org/) ≥ 24 — the only hard requirement (you already have it from the Claude Code CLI). Linux, macOS, or Windows.
-- Optional (developer / from-source only): [pnpm](https://pnpm.io/). The legacy bash collector additionally uses [`rsync`](https://rsync.samba.org/) + `systemd`, but the Node CLI needs neither.
+- Optional (developer / from-source only): [pnpm](https://pnpm.io/). No `rsync`, `systemd`, or bash required — the CLI is portable Node.
 
 ## Quick start
 
@@ -165,13 +166,16 @@ npm install -g agent-lens          # or run ad-hoc with:  npx agent-lens <comman
 agent-lens collect --then-ingest   # Stages 1–2: copy transcripts to the archive, then build the DB
 agent-lens serve                   # Stage 3: browse → http://127.0.0.1:4477
 
-# Keep it fresh automatically — pick one:
-agent-lens schedule install        # periodic collect+ingest via the OS scheduler (a few times a day)
-agent-lens watch                   # or a resident process that collects+ingests on file change
+# Make it permanent — install as OS services (survives reboot):
+agent-lens service install         # periodic collect+ingest AND the always-on UI
+# ...or keep it fresh in the foreground instead:
+agent-lens watch                   # a resident process that collects+ingests on file change
 ```
 
-`agent-lens schedule install` is cross-platform: a **systemd** user timer on Linux, a **launchd**
-agent on macOS, **Task Scheduler** tasks on Windows. Override the cadence with `--times 8,12,18`.
+`agent-lens service install` is cross-platform: on Linux a **systemd** user timer + service, on
+macOS **launchd** agents, on Windows **Task Scheduler** tasks. It installs both the periodic
+collector and the long-running server by default; scope it with `agent-lens service install
+collector` or `... server`, and override the collector cadence with `--times 8,12,18`.
 
 > [!NOTE]
 > Everything is local-only and idempotent; the server is read-only and refuses to bind a non-loopback
@@ -186,8 +190,7 @@ node packages/cli/dist/agent-lens.js collect --then-ingest   # the built CLI
 node packages/cli/dist/agent-lens.js serve
 ```
 
-The legacy Linux-only bash flow (`scripts/collect.sh`, `scripts/setup-systemd.sh`) still works and is
-documented in [USAGE.md](docs/USAGE.md).
+See [USAGE.md](docs/USAGE.md) for the full command reference.
 
 ## Configuration
 
@@ -247,16 +250,15 @@ This is the whole point of the tool, so it's a hard constraint, not a feature fl
 ## Project layout
 
 ```
-packages/core     shared types + SQLite schema, path/source resolution, the Node collector,
-                  the single-instance lock, and cross-platform scheduling (agent-agnostic)
+packages/core     shared types + SQLite schema, path/source resolution, the Node collector, the
+                  single-instance lock, and cross-platform OS-service install (agent-agnostic)
 packages/ingest   Stage-2 parser + heuristic classifier; ClaudeCodeAdapter (extensible)
 packages/server   Stage-3 read-only localhost API over the store
 packages/web      Vite + React SPA (browse + dashboards; light/dark theme)
 packages/cli      the published `agent-lens` binary — bundles the above into one CLI (tsup)
-scripts/          sources.mjs (core shim) · legacy bash flow: collect.sh · ingest.sh · serve.sh ·
-                  setup-systemd.sh · prune.sh · plus validate.mjs · oracle.mjs · build-corpus.sh ·
-                  build-scenarios.mjs · sandbox.sh · smoke-tarball.mjs · gen-logo.mjs
-systemd/          legacy user service + timer templates (superseded by `agent-lens schedule`)
+scripts/          dev + maintenance helpers: sources.mjs (core shim) · prune.sh (retention) ·
+                  validate.mjs · oracle.mjs · build-corpus.sh · build-scenarios.mjs · sandbox.sh ·
+                  smoke-tarball.mjs · gen-logo.mjs · export-snapshot.mjs · screenshots.mjs
 docs/             ARCHITECTURE.md · USAGE.md · INGEST-RUNBOOK.md · VALIDATION.md · decisions/ (ADRs)
 test/fixtures/    committed redacted + synthetic validation corpus (no real data)
 data/             archive/<label>/ + agent-lens.db  (contents gitignored)

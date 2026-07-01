@@ -35,7 +35,7 @@ pnpm install && pnpm -r build
 node packages/cli/dist/agent-lens.js <command>   # the built CLI
 ```
 
-Below, `agent-lens <command>` means either the installed binary or `node packages/cli/dist/agent-lens.js <command>` from a source build. The subcommands are `collect`, `ingest`, `serve`, `watch`, `metrics`, and `schedule`.
+Below, `agent-lens <command>` means either the installed binary or `node packages/cli/dist/agent-lens.js <command>` from a source build. The subcommands are `collect`, `ingest`, `serve`, `watch`, `metrics`, and `service`.
 
 ## Configure sources (which agent accounts to collect)
 
@@ -111,15 +111,16 @@ agent-lens collect --then-ingest   # collect, then immediately ingest (Stage 1 �
 
 Keep it current automatically — two options:
 
-**Scheduled (survives reboot).** `agent-lens schedule` registers a periodic `collect --then-ingest`
-job with the OS scheduler — **systemd** user timer on Linux, **launchd** agent on macOS, **Task
-Scheduler** on Windows:
+**Installed as an OS service (survives reboot).** `agent-lens service` registers the periodic
+`collect --then-ingest` **collector** with the OS service manager — a **systemd** user timer on
+Linux, a **launchd** agent on macOS, **Task Scheduler** tasks on Windows. (The same command also
+installs the long-running server; see [Stage 3](#stage-3--browse).)
 
 ```bash
-agent-lens schedule install                 # default cadence: 09,13,17,21
-agent-lens schedule install --times 8,12,18 # custom hours (0–23, comma-separated)
-agent-lens schedule status                  # show the registered job / next run
-agent-lens schedule uninstall               # remove it (archive untouched)
+agent-lens service install collector                 # default cadence: 09,13,17,21
+agent-lens service install collector --times 8,12,18 # custom hours (0–23, comma-separated)
+agent-lens service status collector                  # show the registered job / next run
+agent-lens service uninstall collector               # remove it (archive untouched)
 ```
 
 **Resident (`watch`).** A foreground process that collects+ingests whenever a source changes
@@ -133,11 +134,6 @@ agent-lens watch --poll           # polling fallback for network filesystems
 
 A cross-platform single-instance lock (`<dataDir>/.agent-lens.lock`) ensures a scheduled run and a
 `watch` cycle never overlap, so a short cadence can't pile up lagged collectors.
-
-> **Legacy Linux flow.** The original bash path still works: `scripts/collect.sh` for a one-off, and
-> `scripts/setup-systemd.sh install [all|data-load|web-ui]` to install the hand-written systemd units
-> (which run `collect.sh` + `ingest.sh`). `agent-lens schedule` supersedes it for the data-load job
-> and is cross-platform; the `web-ui` server unit still comes from `setup-systemd.sh` (see Stage 3).
 
 ## Stage 2 — Ingest
 
@@ -165,14 +161,24 @@ It prints a summary: `files / skipped / new_events / malformed`, then
 ## Stage 3 — Browse
 
 ```bash
-agent-lens serve       # → http://127.0.0.1:4477   (read-only, loopback only)
+agent-lens serve       # → http://127.0.0.1:4477   (read-only, loopback only; foreground)
 ```
 
-To keep it running in the background on Linux (restart on failure, start at boot), install it as a
-service: `scripts/setup-systemd.sh install web-ui` (binds `127.0.0.1`; override via
-`AGENT_LENS_PORT` / `AGENT_LENS_HOST`). On macOS/Windows, run `agent-lens serve` under your process
-manager of choice (the cross-platform `agent-lens schedule` covers the periodic collect job, not the
-long-running server).
+To keep it running in the background (restart on failure/logout, start at boot), install it as a
+service on any platform:
+
+```bash
+agent-lens service install server     # systemd (Linux) / launchd (macOS) / Task Scheduler (Windows)
+agent-lens service status server
+agent-lens service uninstall server
+```
+
+It binds `127.0.0.1:4477`; set `AGENT_LENS_PORT` / `AGENT_LENS_HOST` before installing and they're
+baked into the service (Linux/macOS). On Windows the task starts at logon and, unlike systemd/launchd,
+is **not** auto-restarted on crash — it returns on the next logon.
+
+> **Tip:** `agent-lens service install` with no target installs the collector **and** the server at
+> once — the one-command "make it work after reboot" setup.
 
 Open the URL. The app has two views (nav tabs): **Sessions** (browse) and **Dashboard** (analytics),
 and a **light/dark theme toggle** in the top bar (dark by default; your choice is remembered).
@@ -229,7 +235,7 @@ re-run the above — no re-ingest needed. After changing *parser* logic instead,
 
 ## Typical daily loop
 
-With `agent-lens schedule install` (or `agent-lens watch`) running, collection **and** ingest happen
+With `agent-lens service install` (or `agent-lens watch`) running, collection **and** ingest happen
 in the background, so the DB is already current — just open the UI:
 
 ```bash
@@ -256,9 +262,9 @@ Claude account) takes three steps and **no schema change**:
 3. Add a source with the matching `agent` value to `agent-lens.config.json`.
 
 **Caveat (ADR-007/008):** this covers *ingest/parse* only. Collection (the Node collector in
-`packages/core/src/collect.ts`, and the legacy `scripts/collect.sh`) assumes the Claude-Code layout
-(`projects/**.jsonl`, `history.jsonl`, `settings`). An agent whose traces live
-elsewhere also needs per-agent **collection** logic.
+`packages/core/src/collect.ts`) assumes the Claude-Code layout (`projects/**.jsonl`,
+`history.jsonl`, `settings`). An agent whose traces live elsewhere also needs per-agent
+**collection** logic.
 
 ## Retention
 

@@ -6,9 +6,9 @@ the [Operations Guide](USAGE.md). This runbook covers running, migrating, and tr
 
 ## How ingest runs
 
-- **Scheduled.** `agent-lens schedule install` registers a periodic **`collect --then-ingest`** job
-  with the OS scheduler (systemd/launchd/schtasks); collect must succeed before ingest runs. Default
-  schedule: `09,13,17,21`. (The legacy systemd units run `collect.sh` then `ingest.sh`.) See
+- **Scheduled.** `agent-lens service install collector` registers a periodic
+  **`collect --then-ingest`** job with the OS service manager (systemd/launchd/schtasks); collect must
+  succeed before ingest runs. Default cadence: `09,13,17,21`. See
   [USAGE.md → Stage 1](USAGE.md#stage-1--collect).
 - **Manual.** `agent-lens ingest` (incremental) or `agent-lens ingest --full` (rebuild). Direct:
   `node packages/ingest/dist/index.js [--full] [--db <path>] [--archive <path>]`.

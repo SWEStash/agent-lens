@@ -4,6 +4,9 @@
 - Date: 2026-07-01
 - Deciders: project owner
 - Supersedes the mechanism (not the semantics) of [ADR-002](ADR-002-collection-mechanism.md)
+- Command surface superseded by [ADR-014](ADR-014-unified-service-command.md): `agent-lens schedule`
+  is now `agent-lens service` (collector + server targets); the collection/scheduling *mechanism*
+  below is unchanged.
 
 ## Context
 
@@ -33,17 +36,20 @@ Reimplement collection and scheduling in portable Node, shipped in the `agent-le
   same archive or two writers against the same SQLite DB.
 - **`watch` mode.** A resident process (chokidar) that collects+ingests on file change, debounced, with
   an in-process guard; the Node-native periodic option.
-- **Cross-platform scheduling (`core/schedule.ts`, `agent-lens schedule`).** Node can time work but not
-  survive reboot alone, so register a periodic `collect --then-ingest` with the OS scheduler:
-  **systemd** user timer (Linux, + linger), **launchd** LaunchAgent (macOS), **Task Scheduler**
-  (Windows). Absolute `process.execPath` + CLI path are baked into every unit/plist/task (schedulers
-  don't inherit the interactive PATH). Default cadence `09,13,17,21`; `--times` overrides.
+- **Cross-platform scheduling (`core/service.ts`, `agent-lens service install collector`).** Node can
+  time work but not survive reboot alone, so register a periodic `collect --then-ingest` with the OS
+  scheduler: **systemd** user timer (Linux, + linger), **launchd** LaunchAgent (macOS), **Task
+  Scheduler** (Windows). Absolute `process.execPath` + CLI path are baked into every unit/plist/task
+  (schedulers don't inherit the interactive PATH). Default cadence `09,13,17,21`; `--times` overrides.
+  _(Renamed from `agent-lens schedule` / `core/schedule.ts` by ADR-014.)_
 
 ## Consequences
 
 - Collection and scheduling work on Linux/macOS/Windows with no `rsync`/bash.
-- The legacy `scripts/collect.sh` + `scripts/setup-systemd.sh` + `systemd/` templates remain for the
-  Linux bash flow and the long-running web-ui server unit, but are superseded for the data-load job.
+- ~~The legacy `scripts/collect.sh` + `scripts/setup-systemd.sh` + `systemd/` templates remain for the
+  Linux bash flow and the long-running web-ui server unit, but are superseded for the data-load job.~~
+  _Superseded by ADR-014: the deployment bash and `systemd/` templates were removed once
+  `agent-lens service` also covered the long-running server._
 - Generated systemd units pass `systemd-analyze verify`; the generators are unit-tested; collector
   semantics are covered by unit tests (append/compaction/divergence/secret exclusion/skip).
 
