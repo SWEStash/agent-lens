@@ -12,43 +12,22 @@
  * Usage: agent-lens-ingest [--full] [--db <path>] [--archive <path>]
  *   --full   ignore ingest_state and re-read every file
  */
-import { execFileSync } from "node:child_process";
 import { readFileSync, statSync, mkdirSync, existsSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
-import { costForUsage, type SourceAdapter } from "@agent-lens/core";
+import { dirname, join } from "node:path";
+import {
+  costForUsage,
+  findRepoRoot,
+  loadExcludes,
+  loadSources,
+  resolveDataDir,
+  type SourceAdapter,
+} from "@agent-lens/core";
 import { openDb, openRaw, resetSchema } from "./db.js";
 import { ClaudeCodeAdapter } from "./adapters/claude-code.js";
 import { classify } from "./classify.js";
 import { ingestFile, newStats, prepareStatements, pruneExcluded, rebuildDerived } from "./pipeline.js";
 import { parseExcludes, isExcludedArchivePath } from "./redact.js";
 import { sha256, sha256File, streamLines, STREAM_THRESHOLD } from "./fileread.js";
-
-const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
-
-interface Source {
-  label: string;
-  agent: string;
-  configDir: string;
-}
-
-/** Resolve configured sources via the canonical resolver (shared with collect.sh). */
-function loadSources(): Source[] {
-  const tsv = execFileSync("node", [join(repoRoot, "scripts/sources.mjs")], { encoding: "utf8" });
-  const out: Source[] = [];
-  for (const line of tsv.split("\n")) {
-    if (!line.trim()) continue;
-    const [label, agent, configDir] = line.split("\t");
-    out.push({ label: label!, agent: agent!, configDir: configDir! });
-  }
-  return out;
-}
-
-/** Real project paths to exclude everywhere (config `exclude` + AGENT_LENS_EXCLUDE), via the resolver. */
-function loadExcludePaths(): string[] {
-  const out = execFileSync("node", [join(repoRoot, "scripts/sources.mjs"), "--excludes"], { encoding: "utf8" });
-  return out.split("\n").map((l) => l.trim()).filter(Boolean);
-}
 
 function parseArgs(argv: string[]) {
   const a = { full: false, db: "", archive: "" };
@@ -62,7 +41,7 @@ function parseArgs(argv: string[]) {
 
 function main() {
   const args = parseArgs(process.argv.slice(2));
-  const dataDir = process.env.AGENT_LENS_DATA || join(repoRoot, "data");
+  const dataDir = resolveDataDir(findRepoRoot());
   const archiveRoot = args.archive || process.env.AGENT_LENS_ARCHIVE || join(dataDir, "archive");
   const dbPath = args.db || process.env.AGENT_LENS_DB || join(dataDir, "agent-lens.db");
 
@@ -86,7 +65,7 @@ function main() {
 
   // Excluded projects (config `exclude` + AGENT_LENS_EXCLUDE): drop any already-ingested ones now
   // (incremental; --full already reset the DB), then filter them out of discovery below.
-  const excludePaths = loadExcludePaths();
+  const excludePaths = loadExcludes();
   const excludedDirs = parseExcludes(excludePaths.join(","));
   const pruned = pruneExcluded(db, excludePaths);
 

@@ -3,3 +3,5 @@ export * from "./types.js";
 export * from "./pricing.js";
 export * from "./markdown.js";
 export * from "./rawjson.js";
+export * from "./paths.js";
+export * from "./sources.js";

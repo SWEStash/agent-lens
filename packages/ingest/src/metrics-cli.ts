@@ -7,12 +7,10 @@
  * Usage: agent-lens-metrics [--db <path>]   (env: AGENT_LENS_DB, AGENT_LENS_DATA)
  */
 import { existsSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { join } from "node:path";
+import { findRepoRoot, resolveDataDir } from "@agent-lens/core";
 import { openDb } from "./db.js";
 import { classify, CLASSIFIER_VERSION } from "./classify.js";
-
-const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
 
 function parseArgs(argv: string[]) {
   const a = { db: "" };
@@ -24,7 +22,7 @@ function parseArgs(argv: string[]) {
 
 function main() {
   const args = parseArgs(process.argv.slice(2));
-  const dataDir = process.env.AGENT_LENS_DATA || join(repoRoot, "data");
+  const dataDir = resolveDataDir(findRepoRoot());
   const dbPath = args.db || process.env.AGENT_LENS_DB || join(dataDir, "agent-lens.db");
 
   if (!existsSync(dbPath)) {
