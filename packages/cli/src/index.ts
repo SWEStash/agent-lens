@@ -7,7 +7,7 @@ import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { cac } from "cac";
-import { acquireLock, collectAll, findRepoRoot, resolveDataDir } from "@agent-lens/core";
+import { acquireLock, collectAll, findRepoRoot, parseHours, resolveDataDir, runSchedule } from "@agent-lens/core";
 import { runIngest, runMetrics } from "@agent-lens/ingest";
 import { startServer } from "@agent-lens/server";
 import { runWatch } from "./watch.js";
@@ -84,6 +84,15 @@ cli
   .option("--db <path>", "SQLite DB path")
   .action((opts: { db?: string }) => {
     runMetrics(opts.db ? ["--db", opts.db] : []);
+  });
+
+cli
+  .command("schedule <action>", "Install/uninstall/status periodic collect+ingest (install | uninstall | status)")
+  .option("--times <hours>", "Comma-separated hours 0-23 to run at (default: 9,13,17,21)")
+  .action((action: string, opts: { times?: string }) => {
+    const hours = action === "install" ? parseHours(opts.times) : undefined;
+    // The bundled CLI file is this module; bake its absolute path + node into the scheduler entry.
+    runSchedule(action, { cliEntry: fileURLToPath(import.meta.url), hours });
   });
 
 cli.help();
