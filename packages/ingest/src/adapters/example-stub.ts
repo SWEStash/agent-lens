@@ -21,7 +21,7 @@ import type {
  * real format, (2) add `new ExampleStubAdapter()` to `adapterList`, (3) add a source with the
  * matching `agent` value to `agent-lens.config.json`. No DDL.
  *
- * CAVEAT (ADR-007): this seam covers ingest/parse only. *Collection* (`scripts/collect.sh`) still
+ * CAVEAT (ADR-007): this seam covers ingest/parse only. *Collection* (`agent-lens collect`) still
  * assumes the Claude-Code layout (`projects/**.jsonl`, `history.jsonl`, `settings`). A real second
  * agent whose files live elsewhere also needs per-agent collection logic — out of scope for the seam.
  *

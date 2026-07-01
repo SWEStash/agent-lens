@@ -57,14 +57,14 @@ ARCHIVE_BASE="${AGENT_LENS_ARCHIVE:-$DATA_DIR/archive}"
 LOG="$ARCHIVE_BASE/.prune.log"
 
 if [[ ! -d "$ARCHIVE_BASE" ]]; then
-  echo "agent-lens: archive not found: $ARCHIVE_BASE (run scripts/collect.sh first)" >&2
+  echo "agent-lens: archive not found: $ARCHIVE_BASE (run \`agent-lens collect\` first)" >&2
   exit 1
 fi
 
 NOW="$(date +%s)"
 CUTOFF=$((NOW - KEEP_DAYS * 86400))
 
-# Resolve a snapshot dir's creation time to an epoch. The dir name is collect.sh's run stamp
+# Resolve a snapshot dir's creation time to an epoch. The dir name is the collector's run stamp
 # (date +%Y%m%dT%H%M%S%3N, e.g. 20260626T120000123); fall back to the dir's mtime if it won't parse.
 ts_epoch() {
   local dir="$1" name d t e

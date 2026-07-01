@@ -1,6 +1,6 @@
 /**
- * Canonical source resolver for Agent Lens (shared by the ingester, server, CLI, and the
- * scripts/sources.mjs shim used by collect.sh).
+ * Canonical source resolver for Agent Lens (shared by the collector, ingester, server, CLI, and
+ * the dev-only scripts/sources.mjs shim).
  *
  * A "source" is a labeled agent instance: { label, agent, configDir }. Multiple local accounts
  * (each with its own config folder) are each a source — e.g. "personal" → ~/.claude.

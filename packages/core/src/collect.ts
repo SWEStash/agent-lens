@@ -3,7 +3,7 @@
  *
  * Passively copies agent session traces out of each configured source into the local archive before
  * the agent prunes them. Never deletes, never sends data off the machine, never copies secrets. This
- * replaces the bash+rsync collect.sh with the same semantics, minus the Linux-only dependencies.
+ * replaced the former bash+rsync collector with the same semantics, minus the Linux-only dependencies.
  *
  * Per file (mirror of rsync --append-verify + the .versions pre-pass):
  *   - no archive copy yet                         → copy whole

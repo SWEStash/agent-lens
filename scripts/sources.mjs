@@ -1,13 +1,13 @@
 #!/usr/bin/env node
 /**
- * Thin CLI shim over @agent-lens/core's source resolver — the single source of truth now lives in
- * packages/core/src/sources.ts. Kept so the (still-bash) collect.sh and dev scripts can emit the
- * resolved sources as TSV; the Node collector replaces this shim in a later step.
+ * Thin CLI shim over @agent-lens/core's source resolver — the single source of truth lives in
+ * packages/core/src/sources.ts. Kept as a dev/debug helper to emit the resolved sources as TSV
+ * (the `agent-lens` CLI resolves sources in-process; nothing on the runtime path needs this).
  *
  *   node scripts/sources.mjs              # one `label<TAB>agent<TAB>configDir` line per source
  *   node scripts/sources.mjs --excludes   # resolved exclude paths, one per line
  *
- * Requires the workspace to be built (packages/core/dist), same as ingest.sh / serve.sh.
+ * Requires the workspace to be built (packages/core/dist).
  */
 import { existsSync } from "node:fs";
 import { dirname, resolve } from "node:path";
