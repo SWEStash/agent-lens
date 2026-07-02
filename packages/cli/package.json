@@ -1,10 +1,32 @@
 {
   "name": "agent-lens",
-  "version": "0.0.0",
-  "private": true,
+  "version": "0.1.0",
   "type": "module",
   "description": "Local-only tool that passively collects, browses, and analyzes Claude Code CLI session traces.",
   "license": "MIT",
+  "author": "SWEStash",
+  "homepage": "https://github.com/SWEStash/agent-lens#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/SWEStash/agent-lens.git",
+    "directory": "packages/cli"
+  },
+  "bugs": {
+    "url": "https://github.com/SWEStash/agent-lens/issues"
+  },
+  "keywords": [
+    "claude-code",
+    "claude",
+    "anthropic",
+    "agent",
+    "traces",
+    "session",
+    "observability",
+    "analytics",
+    "cli",
+    "local-first",
+    "privacy"
+  ],
   "bin": {
     "agent-lens": "./dist/agent-lens.js"
   },

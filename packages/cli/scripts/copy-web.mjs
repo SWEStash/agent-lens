@@ -15,4 +15,7 @@ if (!existsSync(webDist)) {
 }
 rmSync(dest, { recursive: true, force: true });
 cpSync(webDist, dest, { recursive: true });
+// Drop the static Pages demo snapshot if a local Pages build left it in web/dist — the runtime
+// server serves the live API, never these JSON fixtures, so they're pure weight in the npm tarball.
+rmSync(join(dest, "snapshot"), { recursive: true, force: true });
 console.log(`copy-web: copied web SPA → ${dest}`);
