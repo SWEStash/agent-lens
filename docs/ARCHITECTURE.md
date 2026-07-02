@@ -134,3 +134,6 @@ erDiagram
 | [011](decisions/ADR-011-compressed-raw-json.md) | Compressed `raw_json` at rest (gzip BLOB) |
 | [012](decisions/ADR-012-single-cli-distribution.md) | Single bundled `agent-lens` CLI (npm distribution) |
 | [013](decisions/ADR-013-portable-collection-scheduling.md) | Portable Node collection + cross-platform scheduling |
+| [014](decisions/ADR-014-unified-service-command.md) | Unified `agent-lens service` command (collector timer + server daemon) |
+| [015](decisions/ADR-015-refresh-action-endpoint.md) | Scoped write-action endpoint: `POST /api/refresh` |
+| [016](decisions/ADR-016-npm-release-and-versioning.md) | npm publishing + automated versioning (semantic-release) |

@@ -5,6 +5,8 @@
 
 > Passively collect, browse, and analyze your Claude Code CLI session traces — **100% local**.
 
+[![npm](https://img.shields.io/npm/v/agent-lens)](https://www.npmjs.com/package/agent-lens)
+[![CI](https://github.com/SWEStash/agent-lens/actions/workflows/ci.yml/badge.svg)](https://github.com/SWEStash/agent-lens/actions/workflows/ci.yml)
 ![License: MIT](https://img.shields.io/badge/license-MIT-blue)
 ![Node](https://img.shields.io/badge/node-%E2%89%A524-brightgreen)
 ![Platform: Linux · macOS · Windows](https://img.shields.io/badge/platform-Linux%20%C2%B7%20macOS%20%C2%B7%20Windows-lightgrey)
@@ -159,7 +161,7 @@ Agent Lens ships as a single `agent-lens` CLI. Configure your accounts, then run
 `collect → ingest → serve`:
 
 ```bash
-# Install (published with the first release):
+# Install:
 npm install -g agent-lens          # or run ad-hoc with:  npx agent-lens <command>
 
 # Configure which accounts to collect (defaults to one: ~/.claude). See Configuration below.
@@ -183,7 +185,7 @@ collector` or `... server`, and override the collector cadence with `--times 8,1
 > Everything is local-only and idempotent; the server is read-only and refuses to bind a non-loopback
 > host. A single-instance lock ensures scheduled and `watch` runs never overlap.
 
-**From source (development, or before the npm release):**
+**From source (development):**
 
 ```bash
 git clone <your-fork-url> agent-lens && cd agent-lens
