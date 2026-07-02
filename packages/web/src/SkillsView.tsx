@@ -1,7 +1,19 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { api, type Project, type SkillSummary } from "./api";
 import { fmtDate } from "./format";
+import { FilterSelect } from "./FilterSelect";
+import { Pager } from "./Pager";
+import { SortHeader, sortRows, useSort } from "./sort";
+
+const PAGE = 50;
+
+type SkillSortKey = "name" | "fired" | "last_fired";
+const SKILL_SORT: Record<SkillSortKey, (s: SkillSummary) => string | number | null> = {
+  name: (s) => s.name,
+  fired: (s) => s.call_count,
+  last_fired: (s) => s.last_fired, // ISO 8601 strings sort chronologically as text
+};
 
 interface Source {
   id: string;
@@ -21,6 +33,11 @@ export default function SkillsView() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [qInput, setQInput] = useState(params.get("q") ?? "");
+  // Sorting is client-side: the /skills endpoint returns the whole filtered list, so a sort here spans
+  // every skill, not just a page. Default mirrors the server order (most-fired).
+  const { sort, toggle } = useSort<SkillSortKey>("fired", "desc");
+  // Pagination is client-side too: sort the whole list, then slice the visible page.
+  const [page, setPage] = useState(1);
 
   useEffect(() => {
     api<Source[]>("/sources").then(setSources).catch(() => {});
@@ -54,6 +71,14 @@ export default function SkillsView() {
     setParam("q", qInput.trim());
   }
 
+  // A filter or sort change returns to page 1 (mirrors the sessions list).
+  useEffect(() => setPage(1), [params, sort.key, sort.dir]);
+
+  const sorted = useMemo(() => sortRows(skills, SKILL_SORT[sort.key], sort.dir), [skills, sort.key, sort.dir]);
+  const pages = Math.max(1, Math.ceil(sorted.length / PAGE));
+  const clampedPage = Math.min(page, pages);
+  const pageRows = sorted.slice((clampedPage - 1) * PAGE, clampedPage * PAGE);
+
   return (
     <div>
       <h1 className="sr-only">Skills</h1>
@@ -61,8 +86,8 @@ export default function SkillsView() {
         <form onSubmit={submitSearch} className="search" role="search">
           <input
             type="search"
-            aria-label="Search skills by name"
-            placeholder="Search skill names…"
+            aria-label="Search skills by name and body"
+            placeholder="Search skill names & bodies…"
             value={qInput}
             onChange={(e) => setQInput(e.target.value)}
           />
@@ -84,14 +109,16 @@ export default function SkillsView() {
             </option>
           ))}
         </select>
-        <select aria-label="Filter by project" value={params.get("project") ?? ""} onChange={(e) => setParam("project", e.target.value)}>
-          <option value="">all projects</option>
-          {projects.map((p) => (
-            <option key={p.id} value={p.id}>
-              {p.path.replace(/^.*\//, "")}
-            </option>
-          ))}
-        </select>
+        <FilterSelect
+          ariaLabel="Filter by project"
+          searchPlaceholder="Find project…"
+          value={params.get("project") ?? ""}
+          onChange={(v) => setParam("project", v)}
+          options={[
+            { value: "", label: "all projects" },
+            ...projects.map((p) => ({ value: p.id, label: p.path.replace(/^.*\//, "") })),
+          ]}
+        />
       </div>
 
       {error && <div className="error" role="alert">{error}</div>}
@@ -103,15 +130,15 @@ export default function SkillsView() {
         <table className="sessions">
           <thead>
             <tr>
-              <th>Skill</th>
-              <th className="num">Fired</th>
+              <SortHeader label="Skill" sortKey="name" active={sort.key} dir={sort.dir} onSort={toggle} defaultDir="asc" />
+              <SortHeader label="Fired" sortKey="fired" active={sort.key} dir={sort.dir} onSort={toggle} className="num" />
               <th className="num">Versions</th>
               <th>Sources</th>
-              <th>Last fired</th>
+              <SortHeader label="Last fired" sortKey="last_fired" active={sort.key} dir={sort.dir} onSort={toggle} />
             </tr>
           </thead>
           <tbody>
-            {skills.map((s) => (
+            {pageRows.map((s) => (
               <tr key={s.name}>
                 <td>
                   <Link to={`/skill/${encodeURIComponent(s.name)}`} className="title">
@@ -136,6 +163,10 @@ export default function SkillsView() {
             ))}
           </tbody>
         </table>
+      )}
+
+      {!loading && sorted.length > 0 && (
+        <Pager page={clampedPage} pages={pages} total={sorted.length} unit="skills" onPage={setPage} />
       )}
     </div>
   );

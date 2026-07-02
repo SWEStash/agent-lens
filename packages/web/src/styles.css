@@ -160,6 +160,8 @@ table.sessions { width: 100%; border-collapse: collapse; }
 .tag.subagent { background: #3a2f10; color: #e0b85a; }
 
 .pager { display: flex; align-items: center; gap: 16px; justify-content: center; margin-top: 18px; }
+.page-jump { display: inline-flex; align-items: center; }
+.page-jump select { padding: 6px 8px; font-size: 13px; }
 
 /* detail */
 .detail-head { margin-bottom: 18px; }
@@ -509,6 +511,203 @@ button.small { padding: 2px 8px; font-size: 12px; }
 .skill-body { max-height: 70vh; overflow: auto; }
 .skill-body-card, .skill-sessions-card { min-width: 0; }
 .skill-sessions-card table { width: 100%; }
+
+/* --- Sortable table headers --- */
+/* The header cell holds a button so the whole label is keyboard-activatable; it inherits the muted
+   header look and brightens (with an accent caret) when it's the active sort column. */
+.sessions th .sort-th {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: none;
+  border: none;
+  padding: 0;
+  margin: 0;
+  font: inherit;
+  font-weight: 600;
+  font-size: 12px;
+  color: var(--muted);
+  cursor: pointer;
+}
+.sessions th .sort-th:hover:not(:disabled) {
+  color: var(--text);
+  border: none;
+}
+.sessions th .sort-th.is-active {
+  color: var(--text);
+}
+.sort-ind {
+  font-size: 9px;
+  opacity: 0.6;
+}
+.sessions th .sort-th.is-active .sort-ind {
+  color: var(--accent);
+  opacity: 1;
+}
+
+/* --- Searchable dropdown (FilterSelect) --- */
+.filter-select {
+  position: relative;
+  display: inline-block;
+}
+.filter-select-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 180px;
+  max-width: 280px;
+  text-align: left;
+  padding: 6px 10px;
+}
+.filter-select-value {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.filter-select .chev {
+  color: var(--muted);
+  font-size: 10px;
+}
+.filter-select-pop {
+  position: absolute;
+  z-index: 20;
+  top: calc(100% + 4px);
+  left: 0;
+  min-width: 240px;
+  max-width: 380px;
+  background: var(--panel2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.3);
+  padding: 6px;
+}
+.filter-select-search {
+  width: 100%;
+  margin-bottom: 6px;
+}
+.filter-select-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  max-height: 260px;
+  overflow-y: auto;
+}
+.filter-select-opt {
+  padding: 6px 8px;
+  border-radius: 5px;
+  cursor: pointer;
+  font-size: 13px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.filter-select-opt.is-active {
+  background: var(--panel);
+}
+.filter-select-opt.is-selected {
+  color: var(--accent);
+  font-weight: 600;
+}
+.filter-select-empty {
+  padding: 8px;
+  font-size: 13px;
+}
+
+/* --- Approved plan card (ExitPlanMode) --- */
+.plan-card {
+  margin-top: 6px;
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--accent);
+  border-radius: 6px;
+  background: var(--panel2);
+  padding: 8px 12px;
+}
+.plan-card-head {
+  font-weight: 600;
+  font-size: 13px;
+  margin-bottom: 4px;
+}
+
+/* --- AskUserQuestion Q&A card --- */
+.qa-card {
+  margin-top: 6px;
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--user);
+  border-radius: 6px;
+  background: var(--panel2);
+  padding: 8px 12px;
+}
+.qa-card-head {
+  font-weight: 600;
+  font-size: 13px;
+  margin-bottom: 6px;
+}
+.qa-q {
+  margin: 8px 0;
+}
+.qa-q + .qa-q {
+  border-top: 1px solid var(--border);
+  padding-top: 8px;
+}
+.qa-q-head {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  margin-bottom: 2px;
+}
+.qa-question {
+  font-weight: 600;
+  font-size: 13px;
+  margin-bottom: 6px;
+}
+.qa-options {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.qa-opt {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  padding: 5px 8px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+}
+.qa-opt.is-selected {
+  border-color: var(--ok);
+  background: var(--panel);
+}
+.qa-mark {
+  font-size: 13px;
+  line-height: 1.3;
+}
+.qa-opt.is-selected .qa-mark {
+  color: var(--ok);
+}
+.qa-opt-body {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.qa-opt-label {
+  font-weight: 600;
+  font-size: 13px;
+}
+.qa-opt-desc {
+  font-size: 12px;
+}
+.qa-note {
+  margin-top: 6px;
+  font-size: 13px;
+  color: var(--muted);
+  border-left: 2px solid var(--border);
+  padding-left: 8px;
+}
 
 /* --- Light-theme overrides for chips/values that hardcode dark-palette hex --- */
 /* The mint logo is near-white; darken + saturate it so it reads on the light background. */

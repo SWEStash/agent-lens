@@ -66,6 +66,8 @@ export async function createApp(db: DB, opts: CreateAppOpts = {}): Promise<Fasti
       from: q.from,
       to: q.to,
       kind: q.kind === "main" || q.kind === "subagent" ? q.kind : undefined,
+      sort: (["started", "title", "turns", "tokens", "cost", "duration"] as const).find((s) => s === q.sort),
+      dir: q.dir === "asc" ? "asc" : q.dir === "desc" ? "desc" : undefined,
       limit: Math.min(Number(q.limit) || 50, 200),
       offset: Number(q.offset) || 0,
     });

@@ -2,6 +2,11 @@ import { useEffect, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { api, type Project, type SessionSummary } from "./api";
 import { fmtCost, fmtDate, fmtDuration, fmtTokens, shortModel, tokenSplitTitle } from "./format";
+import { FilterSelect } from "./FilterSelect";
+import { Pager } from "./Pager";
+import { SortHeader, type SortDir } from "./sort";
+
+type SessionSortKey = "title" | "turns" | "tokens" | "cost" | "duration" | "started";
 
 interface Source {
   id: string;
@@ -33,7 +38,7 @@ export default function SessionsView() {
     setLoading(true);
     setError(null);
     const qs = new URLSearchParams();
-    for (const k of ["source", "project", "model", "q"]) {
+    for (const k of ["source", "project", "model", "q", "sort", "dir"]) {
       const v = params.get(k);
       if (v) qs.set(k, v);
     }
@@ -61,6 +66,19 @@ export default function SessionsView() {
   function submitSearch(e: React.FormEvent) {
     e.preventDefault();
     setParam("q", qInput.trim());
+  }
+
+  // Sort is server-side (whole list, not just the page) and lives in the URL. Clicking the active
+  // column flips direction; a new column adopts its default direction. Changing sort resets to page 1.
+  const sortKey = (params.get("sort") ?? "started") as SessionSortKey;
+  const sortDir = (params.get("dir") === "asc" ? "asc" : "desc") as SortDir;
+  function onSort(key: SessionSortKey, defaultDir: SortDir) {
+    const nextDir = sortKey === key ? (sortDir === "asc" ? "desc" : "asc") : defaultDir;
+    const next = new URLSearchParams(params);
+    next.set("sort", key);
+    next.set("dir", nextDir);
+    next.delete("offset");
+    setParams(next);
   }
 
   const page = Math.floor(offset / PAGE) + 1;
@@ -93,14 +111,16 @@ export default function SessionsView() {
             </option>
           ))}
         </select>
-        <select aria-label="Filter by project" value={params.get("project") ?? ""} onChange={(e) => setParam("project", e.target.value)}>
-          <option value="">all projects</option>
-          {projects.map((p) => (
-            <option key={p.id} value={p.id}>
-              {p.path.replace(/^.*\//, "")} ({p.session_count})
-            </option>
-          ))}
-        </select>
+        <FilterSelect
+          ariaLabel="Filter by project"
+          searchPlaceholder="Find project…"
+          value={params.get("project") ?? ""}
+          onChange={(v) => setParam("project", v)}
+          options={[
+            { value: "", label: "all projects" },
+            ...projects.map((p) => ({ value: p.id, label: `${p.path.replace(/^.*\//, "")} (${p.session_count})` })),
+          ]}
+        />
         <select aria-label="Filter by model" value={params.get("model") ?? ""} onChange={(e) => setParam("model", e.target.value)}>
           <option value="">all models</option>
           {models.map((m) => (
@@ -125,14 +145,14 @@ export default function SessionsView() {
         <table className="sessions">
           <thead>
             <tr>
-              <th>Session</th>
+              <SortHeader label="Session" sortKey="title" active={sortKey} dir={sortDir} onSort={onSort} defaultDir="asc" />
               <th>Source</th>
               <th>Project</th>
-              <th className="num">Turns</th>
-              <th className="num">Tokens</th>
-              <th className="num">Cost</th>
-              <th className="num">Duration</th>
-              <th>Started</th>
+              <SortHeader label="Turns" sortKey="turns" active={sortKey} dir={sortDir} onSort={onSort} className="num" />
+              <SortHeader label="Tokens" sortKey="tokens" active={sortKey} dir={sortDir} onSort={onSort} className="num" />
+              <SortHeader label="Cost" sortKey="cost" active={sortKey} dir={sortDir} onSort={onSort} className="num" />
+              <SortHeader label="Duration" sortKey="duration" active={sortKey} dir={sortDir} onSort={onSort} className="num" />
+              <SortHeader label="Started" sortKey="started" active={sortKey} dir={sortDir} onSort={onSort} />
             </tr>
           </thead>
           <tbody>
@@ -164,17 +184,7 @@ export default function SessionsView() {
         </table>
       )}
 
-      <div className="pager">
-        <button disabled={offset <= 0} onClick={() => setParam("offset", String(Math.max(0, offset - PAGE)))}>
-          ← Prev
-        </button>
-        <span className="muted">
-          page {page} / {pages} · {data.total} sessions
-        </span>
-        <button disabled={page >= pages} onClick={() => setParam("offset", String(offset + PAGE))}>
-          Next →
-        </button>
-      </div>
+      <Pager page={page} pages={pages} total={data.total} unit="sessions" onPage={(p) => setParam("offset", String((p - 1) * PAGE))} />
     </div>
   );
 }

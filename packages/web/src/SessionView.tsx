@@ -16,12 +16,26 @@ const FormatContext = createContext<MsgFormat>("markdown");
  * just won't resolve a link. */
 const WorkflowMapContext = createContext<Map<string, string>>(new Map());
 
+/** When true, mechanical tool-call chips (Bash, Edit, Skill, Read, …) are hidden so the transcript
+ * reads as just the human-facing conversation. Plans and AskUserQuestion Q&A are kept regardless —
+ * they're part of that conversation, not tool noise. */
+const HideToolsContext = createContext<boolean>(false);
+
 const FORMAT_KEY = "agentlens.msgFormat";
 function loadFormat(): MsgFormat {
   try {
     return localStorage.getItem(FORMAT_KEY) === "raw" ? "raw" : "markdown";
   } catch {
     return "markdown";
+  }
+}
+
+const HIDE_TOOLS_KEY = "agentlens.hideTools";
+function loadHideTools(): boolean {
+  try {
+    return localStorage.getItem(HIDE_TOOLS_KEY) === "1";
+  } catch {
+    return false;
   }
 }
 
@@ -242,6 +256,153 @@ function ToolChip({ t }: { t: ToolCall }) {
   );
 }
 
+/** Pull the plan markdown out of an ExitPlanMode call's input. Real approvals carry the full plan in
+ * `input.plan`; the plan-file workflow variant sends `{}` (plan lives in a file) → null, and we fall
+ * back to the generic chip. */
+function parsePlan(inputJson: string | null): string | null {
+  if (!inputJson) return null;
+  try {
+    const plan = JSON.parse(inputJson).plan;
+    return typeof plan === "string" && plan.trim() ? plan : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Render an approved plan as its own titled, collapsible card (markdown), instead of a raw JSON tool
+ * chip or an opaque "Plan approved" line. */
+function PlanBlock({ plan }: { plan: string }) {
+  return (
+    <div className="plan-card">
+      <div className="plan-card-head">📋 Approved plan</div>
+      <CollapsibleText text={plan} />
+    </div>
+  );
+}
+
+interface AUQOption {
+  label: string;
+  description?: string;
+}
+interface AUQQuestion {
+  question: string;
+  header?: string;
+  multiSelect?: boolean;
+  options: AUQOption[];
+}
+
+function parseQuestions(inputJson: string | null): AUQQuestion[] {
+  if (!inputJson) return [];
+  try {
+    const q = JSON.parse(inputJson).questions;
+    return Array.isArray(q) ? q : [];
+  } catch {
+    return [];
+  }
+}
+
+/** Answers/notes for an AskUserQuestion, both keyed by question text. Present only for sessions ingested
+ * after answer-capture landed; older rows have a prose summary that won't parse → empty (questions and
+ * options still render, just without the selection marked). */
+function parseAnswers(resultSummary: string | null): {
+  answers: Record<string, string | string[]>;
+  annotations: Record<string, { notes?: string }>;
+} {
+  if (!resultSummary) return { answers: {}, annotations: {} };
+  try {
+    const o = JSON.parse(resultSummary);
+    if (o && typeof o === "object" && o.answers) return { answers: o.answers, annotations: o.annotations ?? {} };
+  } catch {
+    /* pre-capture prose summary — no structured answers */
+  }
+  return { answers: {}, annotations: {} };
+}
+
+/** Render an AskUserQuestion exchange as the questions it posed, each option shown, the user's
+ * selection(s) checked, custom ("Other") answers surfaced, and any written notes — with the raw JSON
+ * one click away for advanced users. Far more legible than the raw tool-input JSON block. */
+function AskUserQuestionBlock({ t }: { t: ToolCall }) {
+  const [raw, setRaw] = useState(false);
+  const rawId = useId();
+  const questions = parseQuestions(t.input_json);
+  const { answers, annotations } = parseAnswers(t.result_summary);
+  if (questions.length === 0) return <ToolChip t={t} />; // no question data → fall back to the chip
+  return (
+    <div className="qa-card">
+      <div className="qa-card-head">🙋 Question{questions.length === 1 ? "" : "s"} for the user</div>
+      {questions.map((q, qi) => {
+        const ans = answers[q.question];
+        const chosen = Array.isArray(ans) ? ans : ans != null ? [ans] : [];
+        const chosenSet = new Set(chosen);
+        const optionLabels = new Set(q.options.map((o) => o.label));
+        const customs = chosen.filter((c) => !optionLabels.has(c));
+        const note = annotations[q.question]?.notes;
+        return (
+          <div key={qi} className="qa-q">
+            <div className="qa-q-head">
+              {q.header && <span className="tag">{q.header}</span>}
+              {q.multiSelect && <span className="muted small">multi-select</span>}
+            </div>
+            <div className="qa-question">{q.question}</div>
+            <ul className="qa-options">
+              {q.options.map((o, oi) => {
+                const sel = chosenSet.has(o.label);
+                return (
+                  <li key={oi} className={"qa-opt" + (sel ? " is-selected" : "")}>
+                    <span className="qa-mark" aria-hidden="true">{sel ? "☑" : "☐"}</span>
+                    <span className="qa-opt-body">
+                      <span className="qa-opt-label">{o.label}</span>
+                      {o.description && <span className="qa-opt-desc muted">{o.description}</span>}
+                    </span>
+                  </li>
+                );
+              })}
+              {customs.map((c, ci) => (
+                <li key={"c" + ci} className="qa-opt is-selected">
+                  <span className="qa-mark" aria-hidden="true">☑</span>
+                  <span className="qa-opt-body">
+                    <span className="qa-opt-label">{c}</span>
+                    <span className="qa-opt-desc muted">custom answer</span>
+                  </span>
+                </li>
+              ))}
+            </ul>
+            {note && <div className="qa-note">📝 {note}</div>}
+          </div>
+        );
+      })}
+      <button className="ghost small" aria-expanded={raw} aria-controls={rawId} onClick={() => setRaw((r) => !r)}>
+        {raw ? "Hide raw JSON ▴" : "View raw JSON ▾"}
+      </button>
+      {raw && (
+        <pre id={rawId} className="code">
+          {prettyJson(t.input_json ?? "{}")}
+          {t.result_summary ? "\n\n" + prettyJson(t.result_summary) : ""}
+        </pre>
+      )}
+    </div>
+  );
+}
+
+/** One tool call, routed to its renderer: approved plans and AskUserQuestion get rich cards (always
+ * shown); every other tool is a generic chip that the "hide tool messages" toggle can suppress. */
+function ToolRender({ t, hideTools }: { t: ToolCall; hideTools: boolean }) {
+  if (t.tool_name === "ExitPlanMode") {
+    const plan = parsePlan(t.input_json);
+    if (plan) return <PlanBlock plan={plan} />;
+  }
+  if (t.tool_name === "AskUserQuestion") return <AskUserQuestionBlock t={t} />;
+  return hideTools ? null : <ToolChip t={t} />;
+}
+
+/** Whether a tool call renders anything under the current toggle — Plans/Q&A always do; generic chips
+ * only when tools aren't hidden. Used so an event with nothing left to show collapses away entirely. */
+function toolVisible(t: ToolCall, hideTools: boolean): boolean {
+  if (t.tool_name === "AskUserQuestion") return true;
+  if (t.tool_name === "ExitPlanMode" && parsePlan(t.input_json)) return true;
+  return !hideTools;
+}
+
 /** Claude Code wraps slash-command invocations and their local output in markup tags inside a
  * user message (e.g. `<command-name>/plugin</command-name>`, `<local-command-stdout>…`). Rendered
  * verbatim that looks like noise, so we detect and render it as a distinct command element. */
@@ -434,9 +595,11 @@ function TurnSection({ turn, events, open, onToggle }: { turn: any; events: Even
 function EventBlock({ e }: { e: EventNode }) {
   const [showThinking, setShowThinking] = useState(false);
   const thinkId = useId();
+  const hideTools = useContext(HideToolsContext);
   const who = e.role || e.type;
   const icon = who === "user" ? "👤" : who === "assistant" ? "🤖" : "⚙️";
-  const hasBody = e.text || e.thinking || e.toolCalls.length;
+  const visibleTools = e.toolCalls.filter((t) => toolVisible(t, hideTools));
+  const hasBody = e.text || e.thinking || visibleTools.length;
   if (!hasBody) return null;
   const cmd = e.text ? parseCommand(e.text) : null;
   const notif = e.text && !cmd ? parseTaskNotification(e.text) : null;
@@ -459,8 +622,8 @@ function EventBlock({ e }: { e: EventNode }) {
         </div>
       )}
       {e.text && (cmd ? <CommandBlock cmd={cmd} /> : notif ? <TaskNotificationBlock n={notif} /> : <CollapsibleText text={e.text} />)}
-      {e.toolCalls.map((t, i) => (
-        <ToolChip key={i} t={t} />
+      {visibleTools.map((t, i) => (
+        <ToolRender key={i} t={t} hideTools={hideTools} />
       ))}
     </div>
   );
@@ -530,6 +693,8 @@ export default function SessionView() {
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
   // How message bodies render. Defaults to markdown; persisted so the choice sticks across sessions.
   const [format, setFormat] = useState<MsgFormat>(loadFormat);
+  // Hide mechanical tool chips to read only the human-facing conversation. Persisted like format.
+  const [hideTools, setHideTools] = useState<boolean>(loadHideTools);
 
   const chooseFormat = (f: MsgFormat) => {
     setFormat(f);
@@ -539,6 +704,17 @@ export default function SessionView() {
       /* ignore unavailable storage */
     }
   };
+
+  const toggleHideTools = () =>
+    setHideTools((h) => {
+      const next = !h;
+      try {
+        localStorage.setItem(HIDE_TOOLS_KEY, next ? "1" : "0");
+      } catch {
+        /* ignore unavailable storage */
+      }
+      return next;
+    });
 
   useEffect(() => {
     setD(null);
@@ -623,6 +799,14 @@ export default function SessionView() {
             </button>
           </>
         )}
+        <button
+          className={"ghost small" + (hideTools ? " is-active" : "")}
+          aria-pressed={hideTools}
+          onClick={toggleHideTools}
+          title="Hide Bash/Edit/Skill and other tool calls — show only assistant answers, plans and questions"
+        >
+          {hideTools ? "☑ " : "☐ "}Hide tool messages
+        </button>
         <div className="format-toggle" role="group" aria-label="Message format">
           <button
             className={"ghost small" + (format === "markdown" ? " is-active" : "")}
@@ -643,6 +827,7 @@ export default function SessionView() {
 
       <WorkflowMapContext.Provider value={wfMap}>
       <FormatContext.Provider value={format}>
+      <HideToolsContext.Provider value={hideTools}>
       <div className="transcript">
         {renderable.length === 0 && (
           <div className="muted pad" role="status">
@@ -667,6 +852,7 @@ export default function SessionView() {
           ),
         )}
       </div>
+      </HideToolsContext.Provider>
       </FormatContext.Provider>
       </WorkflowMapContext.Provider>
     </div>

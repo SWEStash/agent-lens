@@ -51,6 +51,9 @@ export interface SessionFilters {
   from?: string;
   to?: string;
   kind?: "main" | "subagent";
+  /** Column to sort the whole filtered list by (before pagination). Defaults to "started". */
+  sort?: "started" | "title" | "turns" | "tokens" | "cost" | "duration";
+  dir?: "asc" | "desc";
   limit: number;
   offset: number;
 }
@@ -132,24 +135,59 @@ export function listSessions(db: DB, f: SessionFilters) {
 
   const total = (db.prepare(`SELECT COUNT(*) n FROM sessions s ${whereSql}`).get(...params) as any).n;
 
-  const rows = db
-    .prepare(
-      `SELECT s.id, s.ai_title, s.slug, s.source_id, s.is_sidechain, s.started_at, s.ended_at,
+  const baseSelect = `SELECT s.id, s.ai_title, s.slug, s.source_id, s.is_sidechain, s.started_at, s.ended_at,
               s.duration_ms, s.event_count, s.turn_count, p.path AS project_path,
               (SELECT GROUP_CONCAT(DISTINCT model) FROM token_usage t WHERE t.session_id = s.id) AS models
        FROM sessions s LEFT JOIN projects p ON p.id = s.project_id
-       ${whereSql}
-       ORDER BY s.started_at DESC
-       LIMIT ? OFFSET ?`,
-    )
-    .all(...params, f.limit, f.offset) as any[];
+       ${whereSql}`;
 
-  // Cost + tokens per session for this page (grouped by model so rates apply correctly).
-  const ids = rows.map((r) => r.id);
+  // Columns sortable directly in SQL (stable-paginated with an id tiebreak). tokens/cost aren't stored
+  // — they're derived from token_usage with per-model pricing — so those sort over the whole matching
+  // set in JS below.
+  const NATIVE_ORDER: Record<string, string> = {
+    started: "s.started_at",
+    title: "COALESCE(s.ai_title, s.slug)",
+    turns: "s.turn_count",
+    duration: "s.duration_ms",
+  };
+  const sortKey = f.sort ?? "started";
+  const sqlDir = f.dir === "asc" ? "ASC" : "DESC";
+
+  let rows: any[];
+  if (sortKey === "tokens" || sortKey === "cost") {
+    // Whole-list sort by a derived metric: materialize every matching session, cost them all, sort,
+    // then take the page. Heavier than the SQL path but the only way to page a JS-computed column
+    // consistently. Fine at this tool's scale (personal analytics).
+    const all = db.prepare(baseSelect).all(...params) as any[];
+    attachSessionCost(db, all);
+    const sign = f.dir === "asc" ? 1 : -1;
+    all.sort((a, b) => {
+      const c = (sortKey === "tokens" ? a.tokens - b.tokens : a.cost - b.cost) * sign;
+      return c !== 0 ? c : String(a.id).localeCompare(String(b.id));
+    });
+    rows = all.slice(f.offset, f.offset + f.limit);
+  } else {
+    const orderCol = NATIVE_ORDER[sortKey] ?? NATIVE_ORDER.started;
+    rows = db
+      .prepare(`${baseSelect} ORDER BY ${orderCol} ${sqlDir}, s.id ASC LIMIT ? OFFSET ?`)
+      .all(...params, f.limit, f.offset) as any[];
+    attachSessionCost(db, rows);
+  }
+
+  return { total, sessions: rows };
+}
+
+/** Attach per-session `tokens`, `token_split`, `cost` (USD, cache-aware) and `title` in place. Costs
+ * are grouped by model so per-model rates apply. IDs are chunked so the whole-list sort path (which can
+ * pass thousands of sessions) stays under SQLite's bound-parameter limit. */
+function attachSessionCost(db: DB, rows: any[]) {
   type Acc = { tokens: number; cost: number; split: { input: number; output: number; cache_creation: number; cache_read: number } };
   const costBySession = new Map<string, Acc>();
-  if (ids.length) {
-    const ph = ids.map(() => "?").join(",");
+  const ids = rows.map((r) => r.id);
+  const CHUNK = 800;
+  for (let i = 0; i < ids.length; i += CHUNK) {
+    const batch = ids.slice(i, i + CHUNK);
+    const ph = batch.map(() => "?").join(",");
     const usage = db
       .prepare(
         `SELECT session_id, model,
@@ -157,7 +195,7 @@ export function listSessions(db: DB, f: SessionFilters) {
                 SUM(cache_creation_input_tokens) cw, SUM(cache_read_input_tokens) cr
          FROM token_usage WHERE session_id IN (${ph}) GROUP BY session_id, model`,
       )
-      .all(...ids) as any[];
+      .all(...batch) as any[];
     for (const u of usage) {
       const acc = costBySession.get(u.session_id) ?? { tokens: 0, cost: 0, split: { input: 0, output: 0, cache_creation: 0, cache_read: 0 } };
       acc.tokens += u.i + u.o + u.cw + u.cr;
@@ -181,8 +219,6 @@ export function listSessions(db: DB, f: SessionFilters) {
     r.cost = c ? Number(c.cost.toFixed(4)) : 0;
     r.title = r.ai_title || r.slug || null;
   }
-
-  return { total, sessions: rows };
 }
 
 export function getSession(db: DB, id: string) {
@@ -449,7 +485,14 @@ export interface SkillFilters {
 export function listSkills(db: DB, f: SkillFilters = {}) {
   const where = ["tc.tool_name = 'Skill'", "tc.skill_name IS NOT NULL"];
   const params: any[] = [];
-  if (f.q && f.q.trim()) (where.push("tc.skill_name LIKE ?"), params.push(`%${f.q.trim()}%`));
+  // Search matches the skill name OR any captured version body, so a query for a phrase that only
+  // appears inside a SKILL.md still surfaces the skill. (skills.body is the normalized body; joined by
+  // name rather than skill_id so firings with no captured body still match on name.)
+  if (f.q && f.q.trim()) {
+    const like = `%${f.q.trim()}%`;
+    where.push("(tc.skill_name LIKE ? OR EXISTS (SELECT 1 FROM skills sk WHERE sk.name = tc.skill_name AND sk.body LIKE ?))");
+    params.push(like, like);
+  }
   if (f.source) (where.push("s.source_id = ?"), params.push(f.source));
   if (f.project) (where.push("s.project_id = ?"), params.push(f.project));
   const rows = db

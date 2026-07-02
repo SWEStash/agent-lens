@@ -230,9 +230,18 @@ export class ClaudeCodeAdapter implements SourceAdapter {
             result_summary: null,
           });
         } else if (b.type === "tool_result" && asString(b.tool_use_id)) {
+          // AskUserQuestion's result is structured (which option the user picked per question, plus any
+          // free-text notes) and lives on toolUseResult, not in the block content. Capture it verbatim
+          // as JSON so the UI can render the Q&A with the selection marked — the generic 280-char prose
+          // summary would truncate multi-question prompts and drop the notes entirely. The questions +
+          // options themselves are already in the tool_use input_json, so only answers/annotations are
+          // stored here.
+          const isAskUser = tur && tur.questions && tur.answers && typeof tur.answers === "object";
           toolResults.push({
             tool_use_id: b.tool_use_id,
-            result_summary: summarizeResult(b.content),
+            result_summary: isAskUser
+              ? JSON.stringify({ answers: tur!.answers, annotations: tur!.annotations ?? {} })
+              : summarizeResult(b.content),
             ...(tur
               ? {
                   status: asString(tur.status),
