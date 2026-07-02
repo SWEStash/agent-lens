@@ -36,6 +36,9 @@ jobs:
       - run: pnpm build
       - run: pnpm test # builds all packages + vitest (incl. corpus-scenarios, determinism, redaction)
 
+      - name: From-tarball smoke (packs the CLI, runs collect→ingest→serve with no repo present)
+        run: node scripts/smoke-tarball.mjs
+
       - name: sqlite3 CLI (for the sandbox harness)
         run: sudo apt-get update && sudo apt-get install -y sqlite3
 
