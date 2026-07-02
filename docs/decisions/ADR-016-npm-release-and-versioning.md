@@ -8,7 +8,9 @@
 
 ## Context
 
-The `agent-lens` CLI (`packages/cli`) is the single publishable artifact (ADR-012): a tsup bundle of
+The `@swestash/agent-lens` CLI (`packages/cli`; published under the `@swestash` scope after the
+unscoped `agent-lens` name collided with an existing package — the installed command stays
+`agent-lens`) is the single publishable artifact (ADR-012): a tsup bundle of
 the workspace code with only the native/framework runtime deps (`better-sqlite3`, `fastify`,
 `@fastify/static`, `chokidar`) kept external so `npm install` resolves platform-correct binaries.
 It was `private:true` / `0.0.0`, with a from-tarball smoke (`scripts/smoke-tarball.mjs`) but no

@@ -1,6 +1,7 @@
 # Releasing
 
-Agent Lens publishes a single npm package — **`agent-lens`** (`packages/cli`) — with automated,
+Agent Lens publishes a single npm package — **`@swestash/agent-lens`** (`packages/cli`; the installed
+command is `agent-lens`) — with automated,
 conventional-commit-driven releases via [semantic-release](https://semantic-release.gitbook.io/).
 The rationale behind this setup is [ADR-016](decisions/ADR-016-npm-release-and-versioning.md);
 this document is the how-to.

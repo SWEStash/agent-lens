@@ -12,7 +12,7 @@
     "build": "pnpm -r build",
     "typecheck": "pnpm -r typecheck",
     "test": "pnpm -r build && vitest run",
-    "collect": "pnpm --filter agent-lens build && node packages/cli/dist/agent-lens.js collect",
+    "collect": "pnpm --filter @swestash/agent-lens build && node packages/cli/dist/agent-lens.js collect",
     "ingest": "pnpm --filter @agent-lens/ingest start",
     "serve": "pnpm --filter @agent-lens/server start",
     "web:dev": "pnpm --filter @agent-lens/web dev",

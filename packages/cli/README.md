@@ -2,7 +2,7 @@
 
 > Passively collect, browse, and analyze your Claude Code CLI session traces — **100% local**.
 
-[![npm](https://img.shields.io/npm/v/agent-lens)](https://www.npmjs.com/package/agent-lens)
+[![npm](https://img.shields.io/npm/v/@swestash/agent-lens)](https://www.npmjs.com/package/@swestash/agent-lens)
 ![Node](https://img.shields.io/badge/node-%E2%89%A524-brightgreen)
 ![Platform: Linux · macOS · Windows](https://img.shields.io/badge/platform-Linux%20%C2%B7%20macOS%20%C2%B7%20Windows-lightgrey)
 ![License: MIT](https://img.shields.io/badge/license-MIT-blue)
@@ -15,9 +15,10 @@ a queryable SQLite store, and gives you a browsable transcript viewer plus analy
 ## Install
 
 ```bash
-npm install -g agent-lens          # or run ad-hoc:  npx agent-lens <command>
+npm install -g @swestash/agent-lens    # or run ad-hoc:  npx @swestash/agent-lens <command>
 ```
 
+The installed command is **`agent-lens`** (the package is published under the `@swestash` scope).
 Requires **Node.js ≥ 24**. The only native dependency, `better-sqlite3`, installs a prebuilt binary
 for Node 24 across Linux (glibc + musl), macOS, and Windows; if no prebuild matches your platform it
 is compiled from source (needs a C++ toolchain).

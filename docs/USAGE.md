@@ -25,9 +25,9 @@ flowchart LR
 Agent Lens is one `agent-lens` CLI. Two ways to get it:
 
 ```bash
-# End users:
-npm install -g agent-lens        # then run `agent-lens <command>`
-#   or, ad-hoc, without installing:  npx agent-lens <command>
+# End users (published under the @swestash scope; the command stays `agent-lens`):
+npm install -g @swestash/agent-lens    # then run `agent-lens <command>`
+#   or, ad-hoc, without installing:  npx @swestash/agent-lens <command>
 
 # From source (development):
 cd /path/to/agent-lens

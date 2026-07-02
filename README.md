@@ -5,7 +5,7 @@
 
 > Passively collect, browse, and analyze your Claude Code CLI session traces — **100% local**.
 
-[![npm](https://img.shields.io/npm/v/agent-lens)](https://www.npmjs.com/package/agent-lens)
+[![npm](https://img.shields.io/npm/v/@swestash/agent-lens)](https://www.npmjs.com/package/@swestash/agent-lens)
 [![CI](https://github.com/SWEStash/agent-lens/actions/workflows/ci.yml/badge.svg)](https://github.com/SWEStash/agent-lens/actions/workflows/ci.yml)
 ![License: MIT](https://img.shields.io/badge/license-MIT-blue)
 ![Node](https://img.shields.io/badge/node-%E2%89%A524-brightgreen)
@@ -161,8 +161,8 @@ Agent Lens ships as a single `agent-lens` CLI. Configure your accounts, then run
 `collect → ingest → serve`:
 
 ```bash
-# Install:
-npm install -g agent-lens          # or run ad-hoc with:  npx agent-lens <command>
+# Install (published under the @swestash scope; the command is still `agent-lens`):
+npm install -g @swestash/agent-lens    # or run ad-hoc with:  npx @swestash/agent-lens <command>
 
 # Configure which accounts to collect (defaults to one: ~/.claude). See Configuration below.
 #   → agent-lens.config.json next to your data dir, or set AGENT_LENS_CONFIG
