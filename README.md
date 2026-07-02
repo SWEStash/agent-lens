@@ -249,6 +249,8 @@ This is the whole point of the tool, so it's a hard constraint, not a feature fl
   ingest (incremental vs `--full`, the compression migration, recovery).
 - **[docs/VALIDATION.md](docs/VALIDATION.md)** — how metric correctness is verified end to end: the
   five validation layers, the invariant suite, the redaction oracle, and the latest results.
+- **[docs/RELEASING.md](docs/RELEASING.md)** — how versioning and npm releases work: conventional
+  commits, the semantic-release pipeline, and the one-time publish-token setup.
 - **[docs/decisions/](docs/decisions/)** — Architecture Decision Records (tracked in git).
 
 ## Project layout
@@ -263,7 +265,7 @@ packages/cli      the published `agent-lens` binary — bundles the above into o
 scripts/          dev + maintenance helpers: sources.mjs (core shim) · prune.sh (retention) ·
                   validate.mjs · oracle.mjs · build-corpus.sh · build-scenarios.mjs · sandbox.sh ·
                   smoke-tarball.mjs · gen-logo.mjs · export-snapshot.mjs · screenshots.mjs
-docs/             ARCHITECTURE.md · USAGE.md · INGEST-RUNBOOK.md · VALIDATION.md · decisions/ (ADRs)
+docs/             ARCHITECTURE.md · USAGE.md · INGEST-RUNBOOK.md · VALIDATION.md · RELEASING.md · decisions/ (ADRs)
 test/fixtures/    committed redacted + synthetic validation corpus (no real data)
 data/             archive/<label>/ + agent-lens.db  (contents gitignored)
 ```
@@ -306,6 +308,8 @@ This is a personal, local-first tool, but issues and PRs are welcome. Please:
 3. Keep the **local-only** invariant intact — no outbound network calls, no committing `data/` or
    `agent-lens.config.json`.
 4. Record structural/data decisions as a new ADR in `docs/decisions/`.
+5. Use [Conventional Commits](https://www.conventionalcommits.org/) — versioning and npm releases
+   are automated from commit messages. See [docs/RELEASING.md](docs/RELEASING.md).
 
 ## License
 
