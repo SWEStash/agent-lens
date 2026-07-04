@@ -115,6 +115,35 @@ describe("collectAll", () => {
     expect(existsSync(arcProj())).toBe(false);
   });
 
+  it("collects workflow sidecars, agent meta, and tool-results alongside *.jsonl", () => {
+    const sess = join(srcDir, "projects", ENC, "sess");
+    write(join(sess, "workflows", "wf_abc.json"), '{"runId":"wf_abc","status":"completed"}', 1000);
+    write(join(sess, "workflows", "scripts", "run.js"), "export const x = 1;", 1000);
+    write(join(sess, "subagents", "agent-a1.meta.json"), '{"agentType":"Explore"}', 1000);
+    write(join(sess, "tool-results", "toolu_1.txt"), "full untruncated output", 1000);
+    write(join(sess, "subagents", "agent-a1.jsonl"), "line\n", 1000); // the transcript still collected
+    const stats = collect();
+    expect(stats.copied).toBe(5);
+    expect(existsSync(arc(`projects/${ENC}/sess/workflows/wf_abc.json`))).toBe(true);
+    expect(existsSync(arc(`projects/${ENC}/sess/workflows/scripts/run.js`))).toBe(true);
+    expect(existsSync(arc(`projects/${ENC}/sess/subagents/agent-a1.meta.json`))).toBe(true);
+    expect(existsSync(arc(`projects/${ENC}/sess/tool-results/toolu_1.txt`))).toBe(true);
+  });
+
+  it("a rewritten JSON sidecar diverges (snapshot + overwrite), never appends", () => {
+    const rel = `projects/${ENC}/sess/workflows/wf_x.json`;
+    const src = join(srcDir, rel);
+    write(src, '{"status":"running"}', 1000);
+    collect();
+    write(src, '{"status":"running","done":true}', 2000); // grew with same prefix — but NOT append-only
+    const stats = collect();
+    expect(stats.appended).toBe(0);
+    expect(stats.diverged).toBe(1);
+    expect(readFileSync(arc(rel), "utf8")).toBe('{"status":"running","done":true}');
+    const snaps = versionsFor(rel);
+    expect(readFileSync(snaps[0]!, "utf8")).toBe('{"status":"running"}'); // old version preserved
+  });
+
   it("throws when no sources are configured", () => {
     expect(() => collectAll({ archiveBase, sources: [], excludes: [], log: () => {} })).toThrow(/no sources/);
   });

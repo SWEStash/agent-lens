@@ -172,17 +172,34 @@ function snapshot(absPath: string, relParts: string[], versionsDir: string, stat
   stats.snapshots++;
 }
 
-/** Recursively collect *.jsonl files under `dir`. */
-function walkJsonl(dir: string, out: string[]): void {
+/**
+ * Recursively collect the relevant transcript + sidecar files under `dir`:
+ *   - `*.jsonl`                — session/subagent transcripts and journals (the core traces)
+ *   - anything under `workflows/` — the Workflow-tool run result sidecars (wf_<id>.json) + scripts
+ *   - `*.meta.json`            — per-subagent metadata (agentType, description, spawnDepth, toolUseId)
+ *   - anything under `tool-results/` — full un-truncated tool outputs spilled from the transcript
+ * Operational/state files (memory, cache, todos, shell-snapshots, …) are intentionally left behind.
+ * Secrets (.credentials.json, *.lock) are filtered by the caller. `inWorkflows`/`inToolResults` track
+ * whether recursion is inside one of those directories so every file within is captured.
+ */
+function walkCollectable(dir: string, out: string[], inWorkflows = false, inToolResults = false): void {
   for (const e of readdirSync(dir, { withFileTypes: true })) {
     const p = join(dir, e.name);
-    if (e.isDirectory()) walkJsonl(p, out);
-    else if (e.isFile() && e.name.endsWith(".jsonl")) out.push(p);
+    if (e.isDirectory()) {
+      walkCollectable(p, out, inWorkflows || e.name === "workflows", inToolResults || e.name === "tool-results");
+    } else if (
+      e.isFile() &&
+      (e.name.endsWith(".jsonl") || inWorkflows || inToolResults || e.name.endsWith(".meta.json"))
+    ) {
+      out.push(p);
+    }
   }
 }
 
-/** The single-file sync decision (the heart of the append-verify port). */
-function syncFile(src: string, dst: string, relParts: string[], archive: string, versionsDir: string, stats: CollectStats): void {
+/** The single-file sync decision (the heart of the append-verify port). `appendable` is true only for
+ * append-only logs (*.jsonl); for rewritten files (JSON/txt sidecars) a same-prefix growth is a
+ * rewrite, not an append, so it's handled as a divergence (snapshot old, overwrite) — never appended. */
+function syncFile(src: string, dst: string, relParts: string[], archive: string, versionsDir: string, stats: CollectStats, appendable: boolean): void {
   const srcStat = statSync(src);
   if (!existsSync(dst)) {
     copyWhole(src, dst, srcStat);
@@ -195,13 +212,13 @@ function syncFile(src: string, dst: string, relParts: string[], archive: string,
 
   const ssize = srcStat.size;
   const asize = arcStat.size;
-  if (ssize >= asize && prefixEquals(src, dst, asize)) {
-    // Pure append (or identical when ssize === asize → appends nothing). Always verify the full
-    // prefix before appending; never trust size alone.
-    if (ssize > asize) {
-      appendRange(src, dst, asize, ssize);
-      stats.appended++;
-    }
+  if (ssize === asize && prefixEquals(src, dst, asize)) {
+    // Identical content, mtime moved → just realign metadata (no append, appendable or not).
+    syncMeta(dst, srcStat);
+  } else if (appendable && ssize > asize && prefixEquals(src, dst, asize)) {
+    // Pure append onto an append-only log. Verify the full prefix before appending; never trust size.
+    appendRange(src, dst, asize, ssize);
+    stats.appended++;
     syncMeta(dst, srcStat);
   } else if (ssize < asize) {
     // Compaction: keep the longer archive; snapshot the compacted source (skip if an identical
@@ -252,7 +269,7 @@ function collectSource(
 
   const files: string[] = [];
   const projectsDir = join(configDir, "projects");
-  if (existsSync(projectsDir)) walkJsonl(projectsDir, files);
+  if (existsSync(projectsDir)) walkCollectable(projectsDir, files);
   const historySrc = join(configDir, "history.jsonl");
   if (existsSync(historySrc)) files.push(historySrc);
 
@@ -264,7 +281,7 @@ function collectSource(
     const relPosix = relParts.join("/");
     if (excludedDirs.some((enc) => relPosix.startsWith(`projects/${enc}/`))) continue; // excluded project
     stats.scanned++;
-    syncFile(src, join(archive, ...relParts), relParts, archive, versionsDir, stats);
+    syncFile(src, join(archive, ...relParts), relParts, archive, versionsDir, stats, base.endsWith(".jsonl"));
   }
 
   // Settings: latest-wins, snapshot old on change.

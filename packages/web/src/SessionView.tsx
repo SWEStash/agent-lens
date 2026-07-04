@@ -4,6 +4,8 @@ import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { api, exportUrl, type Classification, type ClassificationSignals, type EventNode, type SessionChild, type SessionDetail, type ToolCall } from "./api";
 import { fmtCost, fmtDate, fmtDuration, fmtTokens, shortModel, tokenSplitTitle } from "./format";
+import { prettyJson } from "./jsonish";
+import CopyButton from "./CopyButton";
 
 /** How message bodies render: "markdown" (formatted, the default) or "raw" (verbatim text).
  * Provided once per SessionView and consumed deep in the tree by message bodies. */
@@ -247,7 +249,10 @@ function ToolChip({ t }: { t: ToolCall }) {
       {open && (
         <div className="tool-body" id={bodyId}>
           {t.input_json && t.input_json !== "{}" && (
-            <pre className="code">{prettyJson(t.input_json)}</pre>
+            <div className="code-block">
+              <CopyButton text={prettyJson(t.input_json)} className="copy-corner" title="Copy tool input JSON" />
+              <pre className="code">{prettyJson(t.input_json)}</pre>
+            </div>
           )}
           {t.result_summary && <div className="result">{t.result_summary}</div>}
         </div>
@@ -371,9 +376,16 @@ function AskUserQuestionBlock({ t }: { t: ToolCall }) {
           </div>
         );
       })}
-      <button className="ghost small" aria-expanded={raw} aria-controls={rawId} onClick={() => setRaw((r) => !r)}>
-        {raw ? "Hide raw JSON ▴" : "View raw JSON ▾"}
-      </button>
+      <div className="launch-actions">
+        <button className="ghost small" aria-expanded={raw} aria-controls={rawId} onClick={() => setRaw((r) => !r)}>
+          {raw ? "Hide raw JSON ▴" : "View raw JSON ▾"}
+        </button>
+        <CopyButton
+          text={prettyJson(t.input_json ?? "{}") + (t.result_summary ? "\n\n" + prettyJson(t.result_summary) : "")}
+          label="JSON"
+          title="Copy raw question JSON"
+        />
+      </div>
       {raw && (
         <pre id={rawId} className="code">
           {prettyJson(t.input_json ?? "{}")}
@@ -384,21 +396,47 @@ function AskUserQuestionBlock({ t }: { t: ToolCall }) {
   );
 }
 
-/** One tool call, routed to its renderer: approved plans and AskUserQuestion get rich cards (always
- * shown); every other tool is a generic chip that the "hide tool messages" toggle can suppress. */
+/** A Workflow launch, rendered minimally in the transcript: the run name/status, the launch ack, and
+ * a link into the workflow detail page — where the full launch payload (task list, script, raw JSON)
+ * is rendered. The transcript deliberately stays compact; the big fan-out belongs on the workflow
+ * page, not inline. Like Plans/Q&A it's a significant action, so it always shows. */
+function WorkflowLaunchBlock({ t }: { t: ToolCall }) {
+  const label = t.workflow_name ? `Workflow · ${t.workflow_name}` : "Workflow";
+  return (
+    <div className="tool launch-tool">
+      <div className="launch-tool-head">
+        <span className="tool-name">🔀 {label}</span>
+        {t.status && <span className="tool-status">{t.status}</span>}
+      </div>
+      {t.workflow_run_id && (
+        <Link className="subagent-link small" to={`/workflow/${t.workflow_run_id}`}>
+          🔀 launched {t.workflow_agent_count ?? 0} agent{t.workflow_agent_count === 1 ? "" : "s"} · <code>{t.workflow_run_id}</code> →
+        </Link>
+      )}
+      {t.result_summary && <div className="result">{t.result_summary}</div>}
+    </div>
+  );
+}
+
+/** One tool call, routed to its renderer: approved plans, AskUserQuestion, and Workflow launches get
+ * rich cards (always shown); every other tool is a generic chip that the "hide tool messages" toggle
+ * can suppress. */
 function ToolRender({ t, hideTools }: { t: ToolCall; hideTools: boolean }) {
   if (t.tool_name === "ExitPlanMode") {
     const plan = parsePlan(t.input_json);
     if (plan) return <PlanBlock plan={plan} />;
   }
   if (t.tool_name === "AskUserQuestion") return <AskUserQuestionBlock t={t} />;
+  if (t.tool_name === "Workflow") return <WorkflowLaunchBlock t={t} />;
   return hideTools ? null : <ToolChip t={t} />;
 }
 
-/** Whether a tool call renders anything under the current toggle — Plans/Q&A always do; generic chips
- * only when tools aren't hidden. Used so an event with nothing left to show collapses away entirely. */
+/** Whether a tool call renders anything under the current toggle — Plans/Q&A/Workflow launches always
+ * do; generic chips only when tools aren't hidden. Used so an event with nothing left to show
+ * collapses away entirely. */
 function toolVisible(t: ToolCall, hideTools: boolean): boolean {
   if (t.tool_name === "AskUserQuestion") return true;
+  if (t.tool_name === "Workflow") return true;
   if (t.tool_name === "ExitPlanMode" && parsePlan(t.input_json)) return true;
   return !hideTools;
 }
@@ -530,14 +568,6 @@ function CollapsibleText({ text }: { text: string }) {
   );
 }
 
-function prettyJson(s: string): string {
-  try {
-    return JSON.stringify(JSON.parse(s), null, 2).slice(0, 4000);
-  } catch {
-    return s.slice(0, 4000);
-  }
-}
-
 interface TurnGroup {
   turnId: string | null;
   turn: any | null;
@@ -603,6 +633,8 @@ function EventBlock({ e }: { e: EventNode }) {
   if (!hasBody) return null;
   const cmd = e.text ? parseCommand(e.text) : null;
   const notif = e.text && !cmd ? parseTaskNotification(e.text) : null;
+  // What the message-level copy button grabs: the visible body, else the thinking text.
+  const copyText = e.text || e.thinking || "";
   return (
     <div className={"event ev-" + who}>
       <div className="ev-meta">
@@ -612,13 +644,19 @@ function EventBlock({ e }: { e: EventNode }) {
         {e.model && <span className="tag">{shortModel(e.model)}</span>}
         {e.is_sidechain ? <span className="tag subagent">subagent</span> : null}
         <span className="muted ev-time">{fmtDate(e.timestamp)}</span>
+        {copyText && <CopyButton text={copyText} className="ev-copy copy-hover" title="Copy message" />}
       </div>
       {e.thinking && (
         <div className="thinking">
           <button className="thinking-toggle" aria-expanded={showThinking} aria-controls={thinkId} onClick={() => setShowThinking((s) => !s)}>
             🧠 thinking {showThinking ? "▾" : "▸"}
           </button>
-          {showThinking && <pre id={thinkId} className="thinking-body">{e.thinking}</pre>}
+          {showThinking && (
+            <div className="code-block">
+              <CopyButton text={e.thinking} className="copy-corner" title="Copy thinking" />
+              <pre id={thinkId} className="thinking-body">{e.thinking}</pre>
+            </div>
+          )}
         </div>
       )}
       {e.text && (cmd ? <CommandBlock cmd={cmd} /> : notif ? <TaskNotificationBlock n={notif} /> : <CollapsibleText text={e.text} />)}
@@ -660,6 +698,9 @@ function SubagentPanel({ d }: { d: SessionDetail }) {
               <Link className="wf-run-name" to={`/workflow/${run.run_id}`} onClick={(e) => e.stopPropagation()}>
                 🔀 {run.name || "workflow"} →
               </Link>
+              {run.status && (
+                <span className={"tag task-status task-status-" + run.status.toLowerCase()}>{run.status}</span>
+              )}
               <span className="muted small">
                 {kids.length} agent{kids.length === 1 ? "" : "s"}
                 {run.turn_seq != null ? ` · turn ${run.turn_seq + 1}` : ""} · <code>{run.run_id}</code>

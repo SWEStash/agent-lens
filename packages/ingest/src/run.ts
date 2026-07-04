@@ -19,6 +19,7 @@ import { openDb, openRaw, resetSchema } from "./db.js";
 import { ClaudeCodeAdapter } from "./adapters/claude-code.js";
 import { classify, CLASSIFIER_VERSION } from "./classify.js";
 import { ingestFile, newStats, prepareStatements, pruneExcluded, rebuildDerived } from "./pipeline.js";
+import { ingestWorkflowResults, newWorkflowStats } from "./workflows.js";
 import { parseExcludes, isExcludedArchivePath } from "./redact.js";
 import { sha256, sha256File, streamLines, STREAM_THRESHOLD } from "./fileread.js";
 
@@ -65,6 +66,7 @@ export function runIngest(argv: string[] = process.argv.slice(2)): void {
 
   const stmts = prepareStatements(db);
   const stats = newStats();
+  const wfStats = newWorkflowStats();
   // Sessions touched this run; drives the incremental derived rebuild (ADR-010, impacts 2/3).
   const dirty = new Set<string>();
 
@@ -125,6 +127,10 @@ export function runIngest(argv: string[] = process.argv.slice(2)): void {
       ingestFile(db, stmts, adapter, file, lines, { size: st.size, mtimeMs, hash }, now, stats);
       dirty.add(file.sessionId);
     }
+
+    // Workflow-tool result sidecars (wf_<id>.json) — the authoritative record of how each run
+    // finished; not *.jsonl, so the transcript walk above never sees them. Own table, own skip-state.
+    ingestWorkflowResults(db, join(archiveRoot, source.label), source.label, excludedDirs, now, wfStats, args.full);
   }
 
   // Incremental derived rebuild over only the touched sessions (+ their linkage neighborhood); --full
@@ -151,10 +157,13 @@ export function runIngest(argv: string[] = process.argv.slice(2)): void {
     totalTokens += u.input_tokens + u.output_tokens + u.cache_creation_input_tokens + u.cache_read_input_tokens;
   }
 
+  const wfRuns = count("SELECT COUNT(*) n FROM workflow_results");
+
   db.close();
   console.log(
     `agent-lens-ingest: files=${stats.files} skipped=${stats.skipped} new_events=${stats.newEvents} malformed=${stats.malformed}${pruned ? ` excluded_pruned=${pruned}` : ""}\n` +
       `  sessions=${sessions} turns=${turns} events=${events} tool_calls=${tools} classified=${classified.count}\n` +
+      `  workflow_results=${wfRuns} (sidecar upserted=${wfStats.upserted} skipped=${wfStats.skipped} malformed=${wfStats.malformed})\n` +
       `  tokens=${totalTokens.toLocaleString()} est_cost=$${cost.toFixed(2)} db=${dbPath}`,
   );
 }

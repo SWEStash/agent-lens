@@ -199,8 +199,8 @@ describe("workflow detail endpoint", () => {
         VALUES ('oe3', 'orch', 'orch:0', 2, 'user', 'user', '2026-01-01T00:02:00Z', 0, 0,
                 '<task-notification><tool-use-id>tu_wf</tool-use-id><status>completed</status><summary>flow done</summary><result>{"ok":true}</result><failures>none</failures></task-notification>',
                 '{"message":{"content":"<task-notification><tool-use-id>tu_wf</tool-use-id><status>completed</status><summary>flow done</summary><result>{\\"ok\\":true}</result><failures>none</failures></task-notification>"}}');
-      INSERT INTO tool_calls (id, event_uuid, session_id, turn_id, tool_name, workflow_run_id, workflow_name, status, result_summary)
-        VALUES ('tu_wf', 'oe2', 'orch', 'orch:0', 'Workflow', 'wf_run1', 'my-flow', 'async_launched', 'all done');
+      INSERT INTO tool_calls (id, event_uuid, session_id, turn_id, tool_name, workflow_run_id, workflow_name, status, result_summary, input_json)
+        VALUES ('tu_wf', 'oe2', 'orch', 'orch:0', 'Workflow', 'wf_run1', 'my-flow', 'async_launched', 'all done', '{"description":"do the thing","args":"[{\\"skill\\":\\"a\\"}]"}');
       INSERT INTO sessions (id, agent_id, source_id, ai_title, is_sidechain, workflow_run_id, parent_session_id, parent_turn_id, started_at, ended_at, event_count, turn_count) VALUES
         ('agent-x', 'claude-code', 'test', 'Agent X', 1, 'wf_run1', 'orch', 'orch:0', '2026-01-01T00:00:40Z', '2026-01-01T00:00:50Z', 1, 1),
         ('agent-y', 'claude-code', 'test', 'Agent Y', 1, 'wf_run1', 'orch', 'orch:0', '2026-01-01T00:00:45Z', '2026-01-01T00:01:10Z', 1, 1);
@@ -216,6 +216,8 @@ describe("workflow detail endpoint", () => {
     expect(r.statusCode).toBe(200);
     const body = r.json();
     expect(body).toMatchObject({ run_id: "wf_run1", name: "my-flow", status: "async_launched", result_summary: "all done" });
+    // The launch payload is exposed so the page can render it (LaunchView) for async runs.
+    expect(body.input_json).toContain('"description":"do the thing"');
     expect(body.parent).toMatchObject({ id: "orch", title: "Orchestrator", turn_seq: 0 });
     expect(body.agents.map((a: any) => a.id).sort()).toEqual(["agent-x", "agent-y"]);
     expect(body.stats.agent_count).toBe(2);
@@ -231,6 +233,38 @@ describe("workflow detail endpoint", () => {
     const r = await app2.inject({ method: "GET", url: "/api/workflows/nope" });
     expect(r.statusCode).toBe(404);
     await app2.close();
+  });
+
+  it("prefers the result sidecar (workflow_results) over the transcript notification", async () => {
+    // Seed a Workflow tool_call (async_launched, no completion notification) plus the ingested result
+    // sidecar for the same run; the sidecar must supply status + completion + the run roll-up.
+    const db = new Database(":memory:");
+    db.pragma("foreign_keys = ON");
+    db.exec(SCHEMA_SQL);
+    db.exec(`
+      INSERT INTO agents (id, name, kind) VALUES ('claude-code', 'Claude Code CLI', 'cli');
+      INSERT INTO sources (id, label, agent_id, config_dir) VALUES ('test', 'test', 'claude-code', NULL);
+      INSERT INTO sessions (id, agent_id, source_id, ai_title, is_sidechain, event_count, turn_count) VALUES ('orch', 'claude-code', 'test', 'Orchestrator', 0, 1, 1);
+      INSERT INTO turns (id, session_id, seq, user_event_uuid) VALUES ('orch:0', 'orch', 0, 'oe1');
+      INSERT INTO events (uuid, session_id, turn_id, seq, type, role, timestamp, is_sidechain, is_meta, raw_json)
+        VALUES ('oe2', 'orch', 'orch:0', 1, 'assistant', 'assistant', '2026-01-01T00:00:30Z', 0, 0, '{"message":{"content":[]}}');
+      INSERT INTO tool_calls (id, event_uuid, session_id, turn_id, tool_name, workflow_run_id, workflow_name, status)
+        VALUES ('tu_wf', 'oe2', 'orch', 'orch:0', 'Workflow', 'wf_side', 'my-flow', 'async_launched');
+      INSERT INTO workflow_results (run_id, source_id, session_id, task_id, workflow_name, status, summary, default_model, result_json, phases_json, logs_json, agent_count, total_tokens, total_tool_calls, duration_ms, started_at, ended_at, ingested_at)
+        VALUES ('wf_side', 'test', 'orch', 'tk1', 'my-flow', 'completed', 'evals done', 'claude-fable-5',
+                '{"total":{"green":5}}', '[{"title":"Generate"},{"title":"Judge"}]', '["a: GREEN 5/5"]', 12, 500, 24, 5000, '2026-01-01T00:00:00Z', '2026-01-01T00:00:05Z', 'now');
+    `);
+    const app3 = await createApp(db);
+    await app3.ready();
+    const r = await app3.inject({ method: "GET", url: "/api/workflows/wf_side" });
+    expect(r.statusCode).toBe(200);
+    const body = r.json();
+    expect(body.status).toBe("completed"); // sidecar status, not the async_launched tool_call status
+    expect(body.completion).toMatchObject({ status: "completed", summary: "evals done", result: '{"total":{"green":5}}' });
+    expect(body.run).toMatchObject({ default_model: "claude-fable-5", agent_count: 12, total_tool_calls: 24, duration_ms: 5000 });
+    expect(body.run.phases.map((p: any) => p.title)).toEqual(["Generate", "Judge"]);
+    expect(body.run.logs).toEqual(["a: GREEN 5/5"]);
+    await app3.close();
   });
 });
 

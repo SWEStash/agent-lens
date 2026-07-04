@@ -4,64 +4,10 @@ import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { api, type WorkflowAgent, type WorkflowDetail } from "./api";
 import { fmtCost, fmtDate, fmtDuration, fmtTokens, shortModel } from "./format";
+import { decodeEntities, looseParse, prettyJson, splitTruncation } from "./jsonish";
 import ResultView from "./ResultView";
-
-/** Flattened transcript text HTML-encodes a few characters (e.g. "->" → "-&gt;"); decode them so the
- * result reads correctly and JSON inside it parses. */
-function decodeEntities(s: string): string {
-  return s
-    .replace(/&lt;/g, "<")
-    .replace(/&gt;/g, ">")
-    .replace(/&quot;/g, '"')
-    .replace(/&#3?9;|&#x27;/g, "'")
-    .replace(/&amp;/g, "&");
-}
-
-/** Claude Code truncates large task-notification results, appending a literal
- * "(truncated N chars, full result in <path>)" note. Peel that off so the JSON body can be parsed and
- * the note shown separately. */
-function splitTruncation(s: string): { body: string; note: string | null } {
-  const m = s.match(/\s*\(\s*truncated[^)]*\)\s*$/i);
-  if (!m || m.index == null) return { body: s, note: null };
-  return { body: s.slice(0, m.index).trimEnd(), note: m[0].trim() };
-}
-
-/** Parse JSON that may be truncated mid-structure (Claude Code caps large results). Strict parse
- * first; on failure, recover the largest valid prefix by cutting back to the last completed element
- * boundary and closing the still-open brackets. Returns `{ value, repaired }`, or value=undefined if
- * nothing parseable could be recovered. String-aware so punctuation inside strings isn't miscounted. */
-function looseParse(body: string): { value: unknown; repaired: boolean } {
-  try {
-    return { value: JSON.parse(body), repaired: false };
-  } catch {
-    /* fall through to best-effort recovery */
-  }
-  const stack: string[] = [];
-  let inStr = false;
-  let esc = false;
-  let safe = -1;
-  let safeStack: string[] = [];
-  for (let i = 0; i < body.length; i++) {
-    const c = body[i];
-    if (inStr) {
-      if (esc) esc = false;
-      else if (c === "\\") esc = true;
-      else if (c === '"') inStr = false;
-      continue;
-    }
-    if (c === '"') inStr = true;
-    else if (c === "{" || c === "[") stack.push(c === "{" ? "}" : "]");
-    else if (c === "}" || c === "]") (stack.pop(), (safe = i + 1), (safeStack = [...stack]));
-    else if (c === ",") (safe = i, (safeStack = [...stack])); // cut before the dangling element
-  }
-  if (safe < 0) return { value: undefined, repaired: false };
-  const candidate = body.slice(0, safe) + safeStack.reverse().join("");
-  try {
-    return { value: JSON.parse(candidate), repaired: true };
-  } catch {
-    return { value: undefined, repaired: false };
-  }
-}
+import LaunchView from "./LaunchView";
+import CopyButton from "./CopyButton";
 
 /** Render the workflow's returned result as a browsable, structured view (ResultView) — the way the
  * Claude Code workflows TUI makes sense of structured data — rather than a raw/pretty-printed dump.
@@ -84,6 +30,9 @@ function ResultBody({ raw }: { raw: string }) {
       {(note || repaired) && (
         <div className="muted small wf-trunc">⚠ {note ?? "Result was truncated; showing the recoverable portion."}</div>
       )}
+      <div className="launch-actions">
+        <CopyButton text={recovered ? prettyJson(body) : body} label="result" title="Copy the returned result" />
+      </div>
     </>
   );
 }
@@ -123,6 +72,15 @@ export default function WorkflowView() {
   if (!d) return <div className="muted pad" role="status" aria-live="polite">Loading…</div>;
   const status = (d.status ?? "").toLowerCase();
 
+  // Prefer the runner's self-reported roll-up (d.run) over stats derived from ingested agent
+  // transcripts — it stays correct when few/no agents were ingested (async still pending, or a run
+  // that failed before fanning out). Cost stays derived (the sidecar reports no cost).
+  const agentCount = d.run?.agent_count ?? d.stats.agent_count;
+  const totalTokens = d.run?.total_tokens ?? d.stats.total_tokens;
+  const durationMs = d.run?.duration_ms ?? d.stats.duration_ms;
+  const phaseTitles = (d.run?.phases ?? []).map((p) => p?.title).filter((t): t is string => !!t);
+  const logs = d.run?.logs ?? [];
+
   return (
     <div className="detail">
       <div className="detail-head">
@@ -133,6 +91,7 @@ export default function WorkflowView() {
         <div className="detail-meta">
           <code>{d.run_id}</code>
           {d.status && <span className={"tag task-status task-status-" + status}>{d.status}</span>}
+          {d.run?.default_model && <span className="tag">{shortModel(d.run.default_model)}</span>}
           {d.parent?.id && (
             <span className="spawned-by">
               ↖ launched from{" "}
@@ -140,15 +99,28 @@ export default function WorkflowView() {
               {d.parent.turn_seq != null ? ` · turn ${d.parent.turn_seq + 1}` : ""}
             </span>
           )}
-          <span>{d.stats.agent_count} agent{d.stats.agent_count === 1 ? "" : "s"}</span>
-          <span>{fmtTokens(d.stats.total_tokens)} tok</span>
-          <span title="Estimated at API list prices (cache-aware)">{fmtCost(d.stats.total_cost)}</span>
-          <span>{fmtDuration(d.stats.duration_ms)}</span>
-          <span className="muted">{fmtDate(d.stats.started_at)}</span>
+          {/* Prefer the runner's self-reported roll-up (authoritative even when 0 agent transcripts
+              were ingested, e.g. a run that failed before fan-out); fall back to derived stats. */}
+          <span>{agentCount} agent{agentCount === 1 ? "" : "s"}</span>
+          <span>{fmtTokens(totalTokens)} tok</span>
+          {d.run?.total_tool_calls != null && <span>{d.run.total_tool_calls} tool calls</span>}
+          <span title="Estimated from ingested agent transcripts at API list prices (cache-aware)">{fmtCost(d.stats.total_cost)}</span>
+          <span>{fmtDuration(durationMs)}</span>
+          <span className="muted">{fmtDate(d.run?.started_at ?? d.stats.started_at)}</span>
         </div>
+        {phaseTitles.length > 0 && (
+          <div className="wf-phases">
+            {phaseTitles.map((t, i) => (
+              <span key={i} className="wf-phase-chip">
+                {i > 0 && <span className="wf-phase-arrow" aria-hidden="true">→</span>}
+                {t}
+              </span>
+            ))}
+          </div>
+        )}
       </div>
 
-      {d.completion ? (
+      {d.completion && (
         <div className="wf-result">
           <h2>
             Returned result
@@ -169,8 +141,44 @@ export default function WorkflowView() {
             </details>
           )}
         </div>
-      ) : d.result_summary ? (
-        // No completion notification ingested yet — show the launch acknowledgment as a fallback.
+      )}
+
+      {/* The runner's concise per-item outcome lines (e.g. "skill#1: RED 3/5 GREEN 5/5"). */}
+      {logs.length > 0 && (
+        <details className="wf-logs" open={logs.length <= 20}>
+          <summary>Run log · {logs.length} line{logs.length === 1 ? "" : "s"}</summary>
+          <ul className="wf-log-list">
+            {logs.map((l, i) => (
+              <li key={i}>{l}</li>
+            ))}
+          </ul>
+        </details>
+      )}
+
+      {/* What was launched. The primary content for async runs with no completion yet (open); a
+          reference detail once results are in. Falls back to the plain launch-ack summary. */}
+      {d.input_json ? (
+        <div className="wf-result wf-launch">
+          {d.completion ? (
+            <details>
+              <summary>
+                <h2>Launch payload</h2>
+              </summary>
+              <LaunchView raw={d.input_json} />
+            </details>
+          ) : (
+            <>
+              <h2>Launch payload</h2>
+              {status === "async_launched" && (
+                <p className="wf-result-summary muted">
+                  Launched asynchronously — results will appear here once the run reports back.
+                </p>
+              )}
+              <LaunchView raw={d.input_json} />
+            </>
+          )}
+        </div>
+      ) : !d.completion && d.result_summary ? (
         <div className="wf-result">
           <h2>Workflow launch</h2>
           <div className="text md">

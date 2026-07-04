@@ -17,7 +17,7 @@
  * (Phase 2). Bump SCHEMA_VERSION on any DDL change.
  */
 
-export const SCHEMA_VERSION = 8;
+export const SCHEMA_VERSION = 9;
 
 export const SCHEMA_SQL = /* sql */ `
 PRAGMA journal_mode = WAL;
@@ -205,6 +205,35 @@ CREATE TABLE IF NOT EXISTS classifications (
   classifier_version INTEGER NOT NULL DEFAULT 1,
   PRIMARY KEY (scope, target_id)
 );
+
+-- Workflow-tool run results, ingested from the sidecar JSON the runner writes next to the launching
+-- session (…/projects/<enc>/<sessionId>/workflows/wf_<id>.json). The transcript only carries the
+-- "launched in background" ack for an async run; this sidecar is the authoritative record of how the
+-- run finished — status (completed/failed), summary, the returned result payload, and roll-up
+-- tokens/tool-calls/duration/agent-count. One row per run id; UPSERT on re-ingest. Stored verbatim
+-- (like tool_calls.input_json) — the DB is local; redaction is an export-time concern. --------------
+CREATE TABLE IF NOT EXISTS workflow_results (
+  run_id           TEXT PRIMARY KEY,   -- wf_<id> (matches tool_calls.workflow_run_id / sessions.workflow_run_id)
+  source_id        TEXT,               -- which configured source (account) it came from
+  session_id       TEXT,               -- launching session (path segment before /workflows/)
+  task_id          TEXT,               -- async task id (the "Task ID: …" in the launch ack)
+  workflow_name    TEXT,
+  status           TEXT,               -- completed | failed | running | ...
+  summary          TEXT,
+  default_model    TEXT,               -- model the run executed on (e.g. claude-fable-5)
+  result_json      TEXT,               -- the returned result object, verbatim JSON (null when none)
+  phases_json      TEXT,               -- [{title}] the run's phase structure (e.g. Generate → Judge)
+  logs_json        TEXT,               -- concise per-item outcome lines the runner emitted
+  progress_json    TEXT,               -- workflowProgress: the phase/agent event timeline
+  agent_count      INTEGER,            -- agents the run reports having fanned out to
+  total_tokens     INTEGER,
+  total_tool_calls INTEGER,
+  duration_ms      INTEGER,
+  started_at       TEXT,               -- ISO, from the sidecar startTime/timestamp
+  ended_at         TEXT,               -- ISO, started_at + duration
+  ingested_at      TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_workflow_results_session ON workflow_results(session_id);
 
 -- Idempotent ingest bookkeeping per archive file. --------------------------
 CREATE TABLE IF NOT EXISTS ingest_state (

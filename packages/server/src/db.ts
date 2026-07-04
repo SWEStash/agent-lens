@@ -364,10 +364,15 @@ export function getSession(db: DB, id: string) {
   // Workflow runs launched from THIS session: each Workflow tool_call carries a run id + name and sits
   // on a turn. This lets the UI group the spawned subagents by run and link each group back to the
   // exact launching turn (turn_seq) — instead of one flat, unattributed fan-out list.
+  // Run status rides along from the result sidecar (workflow_results) when ingested, so the session's
+  // workflow-run groups can flag a failed/completed run at a glance. NULL when no sidecar (async, still
+  // pending) or the table isn't present yet (read-only pre-ingest DB).
+  const hasWR = tableExists(db, "workflow_results");
   const workflow_runs = db
     .prepare(
       `SELECT tc.workflow_run_id AS run_id, tc.workflow_name AS name, t.seq AS turn_seq,
               (SELECT COUNT(*) FROM sessions s WHERE s.workflow_run_id = tc.workflow_run_id) AS agent_count
+              ${hasWR ? ", (SELECT status FROM workflow_results wr WHERE wr.run_id = tc.workflow_run_id) AS status" : ", NULL AS status"}
        FROM tool_calls tc LEFT JOIN turns t ON t.id = tc.turn_id
        WHERE tc.session_id = ? AND tc.workflow_run_id IS NOT NULL
        ORDER BY t.seq`,
@@ -388,10 +393,27 @@ function xmlTag(text: string, tag: string): string | null {
   return text.match(new RegExp(`<${tag}>([\\s\\S]*?)</${tag}>`))?.[1]?.trim() ?? null;
 }
 
+/** Whether a table exists — the server opens the DB read-only, so a not-yet-ingested schema (no
+ * workflow_results table) must degrade gracefully rather than throw. */
+function tableExists(db: DB, name: string): boolean {
+  return !!db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name = ?").get(name);
+}
+
+/** Parse a stored JSON column back to a value, or null when absent/malformed. */
+function safeJson(s: string | null): unknown {
+  if (!s) return null;
+  try {
+    return JSON.parse(s);
+  } catch {
+    return null;
+  }
+}
+
 export function getWorkflow(db: DB, runId: string) {
   const wf = db
     .prepare(
       `SELECT tc.id AS tool_use_id, tc.workflow_run_id AS run_id, tc.workflow_name AS name, tc.status, tc.result_summary,
+              tc.input_json AS input_json,
               tc.session_id AS parent_session_id, t.seq AS turn_seq,
               ps.ai_title AS parent_ai_title, ps.slug AS parent_slug
        FROM tool_calls tc
@@ -458,12 +480,67 @@ export function getWorkflow(db: DB, runId: string) {
     }
   }
 
+  // The runner's own result sidecar (workflow_results), ingested from wf_<id>.json. It's the
+  // authoritative record of how the run finished — especially for async runs that never posted a
+  // task-notification (completion above stays null) or that failed before fanning out any agents.
+  // Sidecar-preferred: it supplies status + the returned result and fills the completion when the
+  // transcript has none. Its self-reported roll-up (model, tokens, tool calls, phases, per-item logs,
+  // duration, agent count) rides along as `run` so the page can show it even with zero ingested agents.
+  const wr = tableExists(db, "workflow_results")
+    ? (db
+        .prepare(
+          `SELECT status, summary, default_model, result_json, phases_json, logs_json,
+                  agent_count, total_tokens, total_tool_calls, duration_ms, started_at, ended_at
+           FROM workflow_results WHERE run_id = ?`,
+        )
+        .get(wf.run_id) as any)
+    : null;
+
+  let run: {
+    status: string | null;
+    summary: string | null;
+    default_model: string | null;
+    agent_count: number | null;
+    total_tokens: number | null;
+    total_tool_calls: number | null;
+    duration_ms: number | null;
+    started_at: string | null;
+    ended_at: string | null;
+    phases: unknown;
+    logs: unknown;
+  } | null = null;
+  if (wr) {
+    run = {
+      status: wr.status ?? null,
+      summary: wr.summary ?? null,
+      default_model: wr.default_model ?? null,
+      agent_count: wr.agent_count ?? null,
+      total_tokens: wr.total_tokens ?? null,
+      total_tool_calls: wr.total_tool_calls ?? null,
+      duration_ms: wr.duration_ms ?? null,
+      started_at: wr.started_at ?? null,
+      ended_at: wr.ended_at ?? null,
+      phases: safeJson(wr.phases_json),
+      logs: safeJson(wr.logs_json),
+    };
+    if (wr.result_json != null || wr.status) {
+      completion = {
+        status: wr.status ?? completion?.status ?? null,
+        summary: wr.summary ?? completion?.summary ?? null,
+        result: wr.result_json ?? completion?.result ?? null,
+        failures: completion?.failures ?? null,
+      };
+    }
+  }
+
   return {
     run_id: wf.run_id,
     name: wf.name ?? null,
-    status: wf.status ?? null,
+    status: wr?.status ?? wf.status ?? null,
     result_summary: wf.result_summary ?? null,
+    input_json: wf.input_json ?? null,
     completion,
+    run,
     parent: { id: wf.parent_session_id, title: wf.parent_ai_title || wf.parent_slug || null, turn_seq: wf.turn_seq ?? null },
     agents,
     stats: { agent_count: agents.length, total_tokens, total_cost: Number(total_cost.toFixed(4)), started_at, ended_at, duration_ms },

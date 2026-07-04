@@ -138,6 +138,8 @@ export interface WorkflowRun {
   name: string | null;
   turn_seq: number | null;
   agent_count: number;
+  /** Run status from the result sidecar (completed/failed/…); null when not yet ingested. */
+  status: string | null;
 }
 
 export interface SessionDetail {
@@ -175,12 +177,33 @@ export interface WorkflowCompletion {
   failures: string | null;
 }
 
+/** The Workflow runner's self-reported roll-up, from the ingested wf_<id>.json result sidecar. */
+export interface WorkflowRunResult {
+  status: string | null;
+  summary: string | null;
+  default_model: string | null;
+  agent_count: number | null;
+  total_tokens: number | null;
+  total_tool_calls: number | null;
+  duration_ms: number | null;
+  started_at: string | null;
+  ended_at: string | null;
+  phases: Array<{ title?: string }> | null;
+  logs: string[] | null;
+}
+
 export interface WorkflowDetail {
   run_id: string;
   name: string | null;
   status: string | null;
   result_summary: string | null;
+  /** The Workflow tool's launch payload (scriptPath/script/description + the task list). Rendered by
+   * LaunchView; the primary content for async launches that have no completion yet. */
+  input_json: string | null;
   completion: WorkflowCompletion | null;
+  /** The runner's own result sidecar roll-up (model, tokens, tool calls, phases, per-item logs,
+   * duration, agent count) — present once the wf_<id>.json sidecar is ingested; null otherwise. */
+  run: WorkflowRunResult | null;
   parent: { id: string; title: string | null; turn_seq: number | null };
   agents: WorkflowAgent[];
   stats: {
