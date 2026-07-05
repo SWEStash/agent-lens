@@ -266,6 +266,40 @@ describe("workflow detail endpoint", () => {
     expect(body.run.logs).toEqual(["a: GREEN 5/5"]);
     await app3.close();
   });
+
+  it("serves the workflowProgress timeline as run.progress (backs the phase graph)", async () => {
+    const db = new Database(":memory:");
+    db.pragma("foreign_keys = ON");
+    db.exec(SCHEMA_SQL);
+    const progress = JSON.stringify([
+      { type: "workflow_phase", index: 1, title: "Generate" },
+      { type: "workflow_agent", phaseIndex: 1, phaseTitle: "Generate", agentId: "a1", model: "claude-fable-5", state: "done" },
+      { type: "workflow_phase", index: 2, title: "Judge" },
+      { type: "workflow_agent", phaseIndex: 2, phaseTitle: "Judge", agentId: "a2", model: "claude-opus-4-8", state: "done" },
+    ]);
+    db.exec(`
+      INSERT INTO agents (id, name, kind) VALUES ('claude-code', 'Claude Code CLI', 'cli');
+      INSERT INTO sources (id, label, agent_id, config_dir) VALUES ('test', 'test', 'claude-code', NULL);
+      INSERT INTO sessions (id, agent_id, source_id, is_sidechain, event_count, turn_count) VALUES ('orch', 'claude-code', 'test', 0, 1, 1);
+      INSERT INTO turns (id, session_id, seq, user_event_uuid) VALUES ('orch:0', 'orch', 0, 'oe1');
+      INSERT INTO events (uuid, session_id, turn_id, seq, type, role, timestamp, is_sidechain, is_meta, raw_json)
+        VALUES ('oe2', 'orch', 'orch:0', 1, 'assistant', 'assistant', '2026-01-01T00:00:30Z', 0, 0, '{"message":{"content":[]}}');
+      INSERT INTO tool_calls (id, event_uuid, session_id, turn_id, tool_name, workflow_run_id, workflow_name, status)
+        VALUES ('tu_wf', 'oe2', 'orch', 'orch:0', 'Workflow', 'wf_prog', 'my-flow', 'async_launched');
+      INSERT INTO workflow_results (run_id, source_id, session_id, workflow_name, status, progress_json, ingested_at)
+        VALUES ('wf_prog', 'test', 'orch', 'my-flow', 'completed', '${progress.replace(/'/g, "''")}', 'now');
+    `);
+    const app4 = await createApp(db);
+    await app4.ready();
+    const body = (await app4.inject({ method: "GET", url: "/api/workflows/wf_prog" })).json();
+    expect(Array.isArray(body.run.progress)).toBe(true);
+    expect(body.run.progress).toHaveLength(4);
+    expect(body.run.progress.filter((e: any) => e.type === "workflow_agent").map((e: any) => e.model)).toEqual([
+      "claude-fable-5",
+      "claude-opus-4-8",
+    ]);
+    await app4.close();
+  });
 });
 
 // raw_json is stored gzip-compressed (ADR-011); the transcript read path must transparently decode it,

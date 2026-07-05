@@ -800,10 +800,14 @@ button.small { padding: 2px 8px; font-size: 12px; }
 .launch-tool { border-left: 3px solid var(--accent); padding: 8px 12px; }
 .launch-tool-head { display: flex; align-items: baseline; gap: 10px; margin-bottom: 2px; }
 
-/* --- Workflow run phases + per-item run log (workflow page) --- */
-.wf-phases { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 8px; }
-.wf-phase-chip { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; padding: 2px 9px; border: 1px solid var(--border); border-radius: 12px; background: var(--panel2); }
-.wf-phase-arrow { color: var(--muted); margin-left: -2px; }
+/* --- Workflow run phases (a stepper) + per-item run log (workflow page) --- */
+.wf-phases { display: flex; flex-wrap: wrap; align-items: stretch; gap: 8px; margin-top: 10px; }
+/* Each phase is its own card (title + a derived "N agents · models" descriptor); the connector is a
+   SIBLING between cards, so it reads as a flow rather than one glued "→ Judge" pill. */
+.wf-phase-chip { display: flex; flex-direction: column; gap: 2px; font-size: 12px; padding: 6px 12px; border: 1px solid var(--border); border-radius: 10px; background: var(--panel2); min-width: 88px; }
+.wf-phase-title { font-weight: 600; }
+.wf-phase-desc { color: var(--muted); font-size: 11px; }
+.wf-phase-arrow { align-self: center; color: var(--muted); font-size: 15px; }
 .wf-logs { margin-top: 14px; }
 .wf-logs > summary { cursor: pointer; font-size: 13px; font-weight: 600; }
 .wf-log-list { margin: 8px 0 0; padding-left: 0; list-style: none; display: flex; flex-direction: column; gap: 2px; font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 12px; }

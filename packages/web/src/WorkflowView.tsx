@@ -1,8 +1,8 @@
-import { useEffect, useState } from "react";
+import { Fragment, useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { api, type WorkflowAgent, type WorkflowDetail } from "./api";
+import { api, type WorkflowAgent, type WorkflowDetail, type WorkflowProgressEntry } from "./api";
 import { fmtCost, fmtDate, fmtDuration, fmtTokens, shortModel } from "./format";
 import { decodeEntities, looseParse, prettyJson, splitTruncation } from "./jsonish";
 import ResultView from "./ResultView";
@@ -35,6 +35,39 @@ function ResultBody({ raw }: { raw: string }) {
       </div>
     </>
   );
+}
+
+interface PhaseNode {
+  title: string;
+  agentCount: number;
+  models: string[];
+}
+
+/** Build the phase graph from the runner's workflowProgress: each phase marker becomes a node, and its
+ * spawned agents (grouped by phaseIndex) supply the descriptor (count + distinct models). Falls back to
+ * the bare phase titles (no descriptor) when progress is absent — older/failed runs. */
+function buildPhaseGraph(progress: WorkflowProgressEntry[] | null | undefined, fallbackTitles: string[]): PhaseNode[] {
+  if (progress && progress.length) {
+    const nodes = new Map<number, PhaseNode>();
+    const ensure = (idx: number, title?: string) => {
+      let n = nodes.get(idx);
+      if (!n) {
+        n = { title: title || `Phase ${idx}`, agentCount: 0, models: [] };
+        nodes.set(idx, n);
+      } else if (title) n.title = title;
+      return n;
+    };
+    for (const e of progress) if (e.type === "workflow_phase") ensure(e.index, e.title);
+    for (const e of progress) {
+      if (e.type === "workflow_agent" && e.phaseIndex != null) {
+        const n = ensure(e.phaseIndex, e.phaseTitle);
+        n.agentCount++;
+        if (e.model && !n.models.includes(e.model)) n.models.push(e.model);
+      }
+    }
+    if (nodes.size) return [...nodes.keys()].sort((a, b) => a - b).map((k) => nodes.get(k)!);
+  }
+  return fallbackTitles.map((title) => ({ title, agentCount: 0, models: [] }));
 }
 
 /** One spawned-agent row in a workflow run, linking to its full transcript. Mirrors SessionView's
@@ -84,6 +117,7 @@ export default function WorkflowView() {
   const totalTokens = d.run?.total_tokens ?? d.stats.total_tokens;
   const durationMs = d.run?.duration_ms ?? d.stats.duration_ms;
   const phaseTitles = (d.run?.phases ?? []).map((p) => p?.title).filter((t): t is string => !!t);
+  const phaseGraph = buildPhaseGraph(d.run?.progress, phaseTitles);
   const logs = d.run?.logs ?? [];
 
   return (
@@ -113,13 +147,25 @@ export default function WorkflowView() {
           <span>{fmtDuration(durationMs)}</span>
           <span className="muted">{fmtDate(d.run?.started_at ?? d.stats.started_at)}</span>
         </div>
-        {phaseTitles.length > 0 && (
-          <div className="wf-phases">
-            {phaseTitles.map((t, i) => (
-              <span key={i} className="wf-phase-chip">
-                {i > 0 && <span className="wf-phase-arrow" aria-hidden="true">→</span>}
-                {t}
-              </span>
+        {phaseGraph.length > 0 && (
+          <div className="wf-phases" aria-label="workflow phases">
+            {phaseGraph.map((p, i) => (
+              <Fragment key={i}>
+                {i > 0 && (
+                  <span className="wf-phase-arrow" aria-hidden="true">
+                    →
+                  </span>
+                )}
+                <div className="wf-phase-chip">
+                  <span className="wf-phase-title">{p.title}</span>
+                  {p.agentCount > 0 && (
+                    <span className="wf-phase-desc">
+                      {p.agentCount} agent{p.agentCount === 1 ? "" : "s"}
+                      {p.models.length ? ` · ${p.models.map(shortModel).join(", ")}` : ""}
+                    </span>
+                  )}
+                </div>
+              </Fragment>
             ))}
           </div>
         )}

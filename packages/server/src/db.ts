@@ -528,7 +528,7 @@ export function getWorkflow(db: DB, runId: string) {
   const wr = tableExists(db, "workflow_results")
     ? (db
         .prepare(
-          `SELECT status, summary, default_model, result_json, phases_json, logs_json,
+          `SELECT status, summary, default_model, result_json, phases_json, logs_json, progress_json,
                   agent_count, total_tokens, total_tool_calls, duration_ms, started_at, ended_at
            FROM workflow_results WHERE run_id = ?`,
         )
@@ -547,6 +547,7 @@ export function getWorkflow(db: DB, runId: string) {
     ended_at: string | null;
     phases: unknown;
     logs: unknown;
+    progress: unknown;
   } | null = null;
   if (wr) {
     run = {
@@ -561,6 +562,9 @@ export function getWorkflow(db: DB, runId: string) {
       ended_at: wr.ended_at ?? null,
       phases: safeJson(wr.phases_json),
       logs: safeJson(wr.logs_json),
+      // The per-phase/per-agent event timeline (workflowProgress) — lets the page render a phase graph
+      // with a per-phase descriptor (agent count, models). Absent on older/failed runs → UI falls back.
+      progress: safeJson(wr.progress_json),
     };
     if (wr.result_json != null || wr.status) {
       completion = {

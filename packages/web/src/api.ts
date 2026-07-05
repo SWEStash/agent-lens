@@ -201,7 +201,27 @@ export interface WorkflowRunResult {
   ended_at: string | null;
   phases: Array<{ title?: string }> | null;
   logs: string[] | null;
+  /** The runner's workflowProgress event timeline: interleaved phase markers and per-agent entries.
+   * Powers the phase graph's per-phase descriptor (agent count, models). Null on older/failed runs. */
+  progress: WorkflowProgressEntry[] | null;
 }
+
+/** One entry in a run's workflowProgress: either a phase marker or a spawned-agent record. */
+export type WorkflowProgressEntry =
+  | { type: "workflow_phase"; index: number; title?: string }
+  | {
+      type: "workflow_agent";
+      index?: number;
+      label?: string;
+      phaseIndex?: number;
+      phaseTitle?: string;
+      agentId?: string;
+      model?: string;
+      state?: string;
+      tokens?: number;
+      toolCalls?: number;
+      durationMs?: number;
+    };
 
 export interface WorkflowDetail {
   run_id: string;
