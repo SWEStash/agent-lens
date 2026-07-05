@@ -286,6 +286,77 @@ describe("extractParts decodes stored raw_json (ADR-011)", () => {
   });
 });
 
+// Subagent metadata (session_meta) enriches both fan-out views: a subagent's authoritative type +
+// human description + nesting depth, LEFT JOINed onto the children/agents projections.
+describe("session_meta enriches subagent + workflow-agent rows", () => {
+  it("GET /api/sessions/:id → children carry agent_type/agent_description/spawn_depth", async () => {
+    const db = new Database(":memory:");
+    db.pragma("foreign_keys = ON");
+    db.exec(SCHEMA_SQL);
+    db.exec(`
+      INSERT INTO agents (id, name, kind) VALUES ('claude-code', 'Claude Code CLI', 'cli');
+      INSERT INTO sources (id, label, agent_id, config_dir) VALUES ('test', 'test', 'claude-code', NULL);
+      INSERT INTO sessions (id, agent_id, source_id, is_sidechain, event_count, turn_count) VALUES
+        ('orch', 'claude-code', 'test', 0, 1, 1);
+      INSERT INTO sessions (id, agent_id, source_id, is_sidechain, parent_session_id, event_count, turn_count) VALUES
+        ('agent-a', 'claude-code', 'test', 1, 'orch', 1, 1),
+        ('agent-b', 'claude-code', 'test', 1, 'orch', 1, 1);
+      -- meta present for agent-a (typed + described + nested), absent for agent-b (still lists).
+      INSERT INTO session_meta (session_id, source_id, agent_type, agent_description, spawn_depth, tool_use_id, ingested_at)
+        VALUES ('agent-a', 'test', 'Explore', 'Explore the ingest pipeline', 2, 'toolu_1', 'now');
+    `);
+    const app2 = await createApp(db);
+    await app2.ready();
+    const body = (await app2.inject({ method: "GET", url: "/api/sessions/orch" })).json();
+    const a = body.children.find((c: any) => c.id === "agent-a");
+    const b = body.children.find((c: any) => c.id === "agent-b");
+    expect(a).toMatchObject({ agent_type: "Explore", agent_description: "Explore the ingest pipeline", spawn_depth: 2 });
+    expect(b).toMatchObject({ agent_type: null, agent_description: null, spawn_depth: null });
+    await app2.close();
+  });
+
+  it("GET /api/workflows/:run_id → agents carry meta fields", async () => {
+    const db = new Database(":memory:");
+    db.pragma("foreign_keys = ON");
+    db.exec(SCHEMA_SQL);
+    db.exec(`
+      INSERT INTO agents (id, name, kind) VALUES ('claude-code', 'Claude Code CLI', 'cli');
+      INSERT INTO sources (id, label, agent_id, config_dir) VALUES ('test', 'test', 'claude-code', NULL);
+      INSERT INTO sessions (id, agent_id, source_id, ai_title, is_sidechain, event_count, turn_count) VALUES ('orch', 'claude-code', 'test', 'Orch', 0, 1, 1);
+      INSERT INTO turns (id, session_id, seq, user_event_uuid) VALUES ('orch:0', 'orch', 0, 'oe1');
+      INSERT INTO events (uuid, session_id, turn_id, seq, type, role, timestamp, is_sidechain, is_meta, raw_json)
+        VALUES ('oe2', 'orch', 'orch:0', 1, 'assistant', 'assistant', '2026-01-01T00:00:30Z', 0, 0, '{"message":{"content":[]}}');
+      INSERT INTO tool_calls (id, event_uuid, session_id, turn_id, tool_name, workflow_run_id, workflow_name, status)
+        VALUES ('tu_wf', 'oe2', 'orch', 'orch:0', 'Workflow', 'wf_run1', 'my-flow', 'async_launched');
+      INSERT INTO sessions (id, agent_id, source_id, is_sidechain, workflow_run_id, started_at, event_count, turn_count) VALUES
+        ('agent-x', 'claude-code', 'test', 1, 'wf_run1', '2026-01-01T00:00:40Z', 1, 1);
+      INSERT INTO session_meta (session_id, source_id, agent_type, agent_description, spawn_depth, tool_use_id, ingested_at)
+        VALUES ('agent-x', 'test', 'ai-evaluation', 'gen-red for ai-evaluation', NULL, 'toolu_2', 'now');
+    `);
+    const app2 = await createApp(db);
+    await app2.ready();
+    const body = (await app2.inject({ method: "GET", url: "/api/workflows/wf_run1" })).json();
+    expect(body.agents[0]).toMatchObject({ id: "agent-x", agent_type: "ai-evaluation", agent_description: "gen-red for ai-evaluation" });
+    await app2.close();
+  });
+});
+
+// Schema-version drift: /api/health flags a DB stamped by an older build so the UI can warn that a full
+// re-ingest is required (an incremental ingest can't migrate a schema bump).
+describe("health surfaces schema staleness", () => {
+  it("GET /api/health → schema_stale true when meta.schema_version mismatches the build", async () => {
+    const db = new Database(":memory:");
+    db.exec(SCHEMA_SQL);
+    db.prepare("INSERT INTO meta(key, value) VALUES ('schema_version', '1')").run(); // ancient stamp
+    const app2 = await createApp(db);
+    await app2.ready();
+    const body = (await app2.inject({ method: "GET", url: "/api/health" })).json();
+    expect(body.schema_version).toBe(1);
+    expect(body.schema_stale).toBe(true);
+    await app2.close();
+  });
+});
+
 // The source-filter dropdown shows "(N)" next to each source. N must be MAIN sessions only — the list
 // it filters defaults to main-only, and each task spawns many subagent sidechains, so counting all
 // sessions wildly inflates it (the reported 327-vs-27 bug).

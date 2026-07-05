@@ -11,12 +11,28 @@ export function openRaw(file: string): DB {
   return db;
 }
 
-/** Apply the current schema (idempotent CREATE IF NOT EXISTS) and stamp the version. */
+/** The schema version stamped in an existing DB, or null if unstamped/brand-new. */
+export function readSchemaVersion(db: DB): number | null {
+  const row = db
+    .prepare("SELECT value FROM meta WHERE key = 'schema_version'")
+    .get() as { value: string } | undefined;
+  if (!row) return null;
+  const n = Number(row.value);
+  return Number.isFinite(n) ? n : null;
+}
+
+/**
+ * Apply the current schema (idempotent CREATE IF NOT EXISTS) and stamp the version ONLY when absent.
+ * Stamping if-absent (not overwrite) is deliberate: an incremental `ingest` runs CREATE IF NOT EXISTS,
+ * which adds new *tables* but cannot migrate altered columns on existing ones — so overwriting the stamp
+ * would let a stale DB claim the current version and lie. A stale DB keeps its old stamp; the caller
+ * (`runIngest`) guards on it. `resetSchema` drops `meta`, so its applySchema re-stamps the current
+ * version from scratch — the only path that advances the stamp.
+ */
 function applySchema(db: DB): void {
   db.exec(SCHEMA_SQL);
   db.prepare(
-    "INSERT INTO meta(key, value) VALUES ('schema_version', ?) " +
-      "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+    "INSERT INTO meta(key, value) VALUES ('schema_version', ?) ON CONFLICT(key) DO NOTHING",
   ).run(String(SCHEMA_VERSION));
 }
 
@@ -59,6 +75,7 @@ export function resetSchema(db: DB): void {
     DROP TABLE IF EXISTS sources;
     DROP TABLE IF EXISTS agents;
     DROP TABLE IF EXISTS workflow_results;
+    DROP TABLE IF EXISTS session_meta;
     DROP TABLE IF EXISTS ingest_state;
     DROP TABLE IF EXISTS meta;
   `);

@@ -667,11 +667,17 @@ function EventBlock({ e }: { e: EventNode }) {
   );
 }
 
-/** One spawned-subagent row. */
+/** One spawned-subagent row. Prefers the meta sidecar's human description as the title, and surfaces
+ * the authoritative agent type + nesting depth (from session_meta) that the transcript doesn't carry. */
 function SubagentItem({ c }: { c: SessionChild }) {
+  const title = c.agent_description || c.title || c.id.slice(0, 12);
   return (
     <li>
-      <Link to={`/session/${c.id}`}>{c.title || c.id.slice(0, 12)}</Link>
+      <Link to={`/session/${c.id}`}>{title}</Link>
+      {c.agent_type && <span className="tag subagent meta-type">{c.agent_type}</span>}
+      {c.spawn_depth != null && c.spawn_depth > 1 && (
+        <span className="tag meta-depth" title={`nested ${c.spawn_depth} levels deep`}>↳{c.spawn_depth}</span>
+      )}
       <span className="muted">
         {" "}· {(c.models ?? "").split(",").filter(Boolean).map(shortModel).join(", ")} ·{" "}
         {fmtTokens(c.tokens)} tok · {fmtCost(c.cost)}

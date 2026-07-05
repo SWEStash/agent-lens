@@ -129,6 +129,10 @@ export interface SessionChild {
   tokens: number;
   cost: number;
   workflow_run_id: string | null;
+  /** From the subagent's meta sidecar (session_meta): authoritative type, human title, nesting depth. */
+  agent_type: string | null;
+  agent_description: string | null;
+  spawn_depth: number | null;
 }
 
 /** A Workflow-tool run launched from a session: its id, name, the turn that started it, and how many
@@ -163,6 +167,10 @@ export interface WorkflowAgent {
   models: string | null;
   tokens: number;
   cost: number;
+  /** From the agent's meta sidecar (session_meta): authoritative type, human title, nesting depth. */
+  agent_type: string | null;
+  agent_description: string | null;
+  spawn_depth: number | null;
 }
 
 /** A Workflow-tool run's detail page payload: the launching tool_call + parent crumb, every spawned

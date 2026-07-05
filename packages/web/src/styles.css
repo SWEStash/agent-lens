@@ -158,6 +158,14 @@ table.sessions { width: 100%; border-collapse: collapse; }
   padding: 1px 6px;
 }
 .tag.subagent { background: #3a2f10; color: #e0b85a; }
+/* Subagent meta badges (type + nesting depth) shown beside a spawned-agent link. */
+.tag.meta-type, .tag.meta-depth { margin-left: 6px; }
+.tag.meta-depth { background: var(--tag); color: var(--muted); }
+
+/* Schema-drift warning banner (App shell) — DB written by an older build; needs a full re-ingest. */
+.schema-banner { background: #3a2f10; color: #e0b85a; border-bottom: 1px solid var(--border); padding: 8px 16px; font-size: 13px; text-align: center; }
+.schema-banner code { background: rgba(0, 0, 0, 0.3); padding: 1px 5px; border-radius: 4px; }
+:root[data-theme="light"] .schema-banner { background: #fbe9c8; color: #8a5a0f; }
 
 .pager { display: flex; align-items: center; gap: 16px; justify-content: center; margin-top: 18px; }
 .page-jump { display: inline-flex; align-items: center; }
