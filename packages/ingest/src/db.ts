@@ -76,6 +76,7 @@ export function resetSchema(db: DB): void {
     DROP TABLE IF EXISTS agents;
     DROP TABLE IF EXISTS workflow_results;
     DROP TABLE IF EXISTS session_meta;
+    DROP TABLE IF EXISTS tool_results;
     DROP TABLE IF EXISTS ingest_state;
     DROP TABLE IF EXISTS meta;
   `);

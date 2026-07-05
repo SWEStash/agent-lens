@@ -341,6 +341,38 @@ describe("session_meta enriches subagent + workflow-agent rows", () => {
   });
 });
 
+// Spilled tool outputs (tool_results): when a tool result_summary is the "Full output saved to:
+// …/tool-results/<name>.txt" marker, getSession attaches the un-truncated text so the UI can expand it.
+describe("getSession attaches spilled full tool results", () => {
+  it("GET /api/sessions/:id → tool call with a truncation marker gets full_result", async () => {
+    const db = new Database(":memory:");
+    db.pragma("foreign_keys = ON");
+    db.exec(SCHEMA_SQL);
+    db.exec(`
+      INSERT INTO agents (id, name, kind) VALUES ('claude-code', 'Claude Code CLI', 'cli');
+      INSERT INTO sources (id, label, agent_id, config_dir) VALUES ('test', 'test', 'claude-code', NULL);
+      INSERT INTO sessions (id, agent_id, source_id, is_sidechain, event_count, turn_count) VALUES ('sess1', 'claude-code', 'test', 0, 1, 1);
+      INSERT INTO turns (id, session_id, seq, user_event_uuid) VALUES ('sess1:0', 'sess1', 0, 'e1');
+      INSERT INTO events (uuid, session_id, turn_id, seq, type, role, timestamp, is_sidechain, is_meta, raw_json)
+        VALUES ('e2', 'sess1', 'sess1:0', 1, 'assistant', 'assistant', '2026-01-01T00:00:30Z', 0, 0, '{"message":{"content":[]}}');
+      INSERT INTO tool_calls (id, event_uuid, session_id, turn_id, tool_name, result_summary) VALUES
+        ('tc_big', 'e2', 'sess1', 'sess1:0', 'Bash', 'Output too large (32.1KB). Full output saved to: /home/u/.claude/projects/-x/sess1/tool-results/bk7e5i18g.txt Preview (first 2KB): …'),
+        ('tc_small', 'e2', 'sess1', 'sess1:0', 'Bash', 'ok, small result');
+      INSERT INTO tool_results (session_id, name, path, bytes, text, ingested_at)
+        VALUES ('sess1', 'bk7e5i18g', '/archive/.../tool-results/bk7e5i18g.txt', 32900, 'THE FULL UNTRUNCATED OUTPUT', 'now');
+    `);
+    const app2 = await createApp(db);
+    await app2.ready();
+    const body = (await app2.inject({ method: "GET", url: "/api/sessions/sess1" })).json();
+    const tools = body.events.flatMap((e: any) => e.toolCalls);
+    const big = tools.find((t: any) => t.id === "tc_big");
+    const small = tools.find((t: any) => t.id === "tc_small");
+    expect(big.full_result).toMatchObject({ text: "THE FULL UNTRUNCATED OUTPUT", bytes: 32900 });
+    expect(small.full_result).toBeUndefined(); // no marker → no lookup
+    await app2.close();
+  });
+});
+
 // Schema-version drift: /api/health flags a DB stamped by an older build so the UI can warn that a full
 // re-ingest is required (an incremental ingest can't migrate a schema bump).
 describe("health surfaces schema staleness", () => {

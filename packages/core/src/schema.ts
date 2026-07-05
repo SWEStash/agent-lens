@@ -17,7 +17,7 @@
  * (Phase 2). Bump SCHEMA_VERSION on any DDL change.
  */
 
-export const SCHEMA_VERSION = 10;
+export const SCHEMA_VERSION = 11;
 
 export const SCHEMA_SQL = /* sql */ `
 PRAGMA journal_mode = WAL;
@@ -246,6 +246,19 @@ CREATE TABLE IF NOT EXISTS session_meta (
   spawn_depth       INTEGER,            -- meta.spawnDepth (optional; absent ⇒ top-level)
   tool_use_id       TEXT,               -- meta.toolUseId (the spawning tool_call)
   ingested_at       TEXT
+);
+
+-- Full un-truncated tool outputs spilled to disk (tool-results/<name>.txt) when a result was too large
+-- for the transcript, which keeps only a 280-char summary naming the file. Joined at read time by
+-- parsing that summary's '…/tool-results/<name>.txt' marker back to (session_id, name).
+CREATE TABLE IF NOT EXISTS tool_results (
+  session_id  TEXT,     -- session the tool ran in (from the archive path)
+  name        TEXT,     -- file basename without .txt (matches the marker in tool_calls.result_summary)
+  path        TEXT,     -- archive path (provenance)
+  bytes       INTEGER,  -- original size, for the UI
+  text        TEXT,     -- full un-truncated output, stored inline (self-contained DB)
+  ingested_at TEXT,
+  PRIMARY KEY (session_id, name)
 );
 
 -- Idempotent ingest bookkeeping per archive file. --------------------------

@@ -69,6 +69,9 @@ export interface ToolCall {
   total_duration_ms: number | null;
   input_json: string | null;
   result_summary: string | null;
+  /** Present when the transcript truncated this result to a "…/tool-results/<name>.txt" marker and the
+   * spilled full output has been ingested — lets the UI expand to the un-truncated text. */
+  full_result?: { text: string; bytes: number } | null;
 }
 
 export interface EventNode {

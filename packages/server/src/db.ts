@@ -261,6 +261,20 @@ export function getSession(db: DB, id: string) {
        FROM tool_calls WHERE session_id = ?`,
     )
     .all(id) as any[];
+
+  // Spilled full tool outputs: when a result_summary is the "Full output saved to: …/tool-results/
+  // <name>.txt" marker (the transcript's 280-char stand-in), attach the un-truncated text from
+  // tool_results so the UI can expand it. Keyed by (session_id, name); guarded for a pre-ingest DB.
+  if (tableExists(db, "tool_results")) {
+    const getFull = db.prepare("SELECT text, bytes FROM tool_results WHERE session_id = ? AND name = ?");
+    for (const t of toolRows) {
+      const m = typeof t.result_summary === "string" ? t.result_summary.match(/tool-results\/([A-Za-z0-9_-]+)\.txt/) : null;
+      if (!m) continue;
+      const full = getFull.get(id, m[1]) as { text: string; bytes: number } | undefined;
+      if (full) t.full_result = { text: full.text, bytes: full.bytes };
+    }
+  }
+
   const toolsByEvent = new Map<string, any[]>();
   for (const t of toolRows) {
     if (!t.event_uuid) continue;

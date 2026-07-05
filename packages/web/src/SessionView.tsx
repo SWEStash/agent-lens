@@ -212,6 +212,7 @@ function SignalsPanel({ id, s, category }: { id: string; s: ClassificationSignal
 
 function ToolChip({ t }: { t: ToolCall }) {
   const [open, setOpen] = useState(false);
+  const [showFull, setShowFull] = useState(false);
   const bodyId = useId();
   const label = t.skill_name
     ? `Skill · ${t.skill_name}`
@@ -255,6 +256,24 @@ function ToolChip({ t }: { t: ToolCall }) {
             </div>
           )}
           {t.result_summary && <div className="result">{t.result_summary}</div>}
+          {t.full_result && (
+            <div className="full-result">
+              <button
+                type="button"
+                className="ghost small show-full"
+                aria-expanded={showFull}
+                onClick={() => setShowFull((s) => !s)}
+              >
+                {showFull ? "Hide" : "Show"} full result ({(t.full_result.bytes / 1024).toFixed(1)} KB)
+              </button>
+              {showFull && (
+                <div className="code-block">
+                  <CopyButton text={t.full_result.text} className="copy-corner" title="Copy full tool result" />
+                  <pre className="code">{t.full_result.text}</pre>
+                </div>
+              )}
+            </div>
+          )}
         </div>
       )}
     </div>
