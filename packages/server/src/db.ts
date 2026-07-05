@@ -1,5 +1,5 @@
 import Database from "better-sqlite3";
-import { costForUsage, unpackRaw } from "@agent-lens/core";
+import { costForUsage, SCHEMA_VERSION, unpackRaw } from "@agent-lens/core";
 
 export type DB = Database.Database;
 
@@ -7,6 +7,21 @@ export function openReadonly(file: string): DB {
   const db = new Database(file, { readonly: true, fileMustExist: true });
   db.pragma("query_only = ON");
   return db;
+}
+
+/**
+ * Compare the DB's stamped schema version against the version this server build expects. `stale` means
+ * the on-disk DB was written by an older schema (a bump requires `agent-lens ingest --full` to rebuild)
+ * — the UI surfaces this so a mismatch doesn't silently show missing/empty columns. `db_version` is null
+ * on an unstamped/never-ingested DB (treated as not-stale: nothing to warn about yet).
+ */
+export function schemaStatus(db: DB): { db_version: number | null; expected: number; stale: boolean } {
+  const row = db.prepare("SELECT value FROM meta WHERE key = 'schema_version'").get() as
+    | { value: string }
+    | undefined;
+  const dbVersion = row ? Number(row.value) : null;
+  const db_version = dbVersion != null && Number.isFinite(dbVersion) ? dbVersion : null;
+  return { db_version, expected: SCHEMA_VERSION, stale: db_version != null && db_version !== SCHEMA_VERSION };
 }
 
 /**
@@ -246,6 +261,20 @@ export function getSession(db: DB, id: string) {
        FROM tool_calls WHERE session_id = ?`,
     )
     .all(id) as any[];
+
+  // Spilled full tool outputs: when a result_summary is the "Full output saved to: …/tool-results/
+  // <name>.txt" marker (the transcript's 280-char stand-in), attach the un-truncated text from
+  // tool_results so the UI can expand it. Keyed by (session_id, name); guarded for a pre-ingest DB.
+  if (tableExists(db, "tool_results")) {
+    const getFull = db.prepare("SELECT text, bytes FROM tool_results WHERE session_id = ? AND name = ?");
+    for (const t of toolRows) {
+      const m = typeof t.result_summary === "string" ? t.result_summary.match(/tool-results\/([A-Za-z0-9_-]+)\.txt/) : null;
+      if (!m) continue;
+      const full = getFull.get(id, m[1]) as { text: string; bytes: number } | undefined;
+      if (full) t.full_result = { text: full.text, bytes: full.bytes };
+    }
+  }
+
   const toolsByEvent = new Map<string, any[]>();
   for (const t of toolRows) {
     if (!t.event_uuid) continue;
@@ -339,11 +368,17 @@ export function getSession(db: DB, id: string) {
   // Spawned subagents (schema v3): sessions whose parent_session_id points back here. Nesting them
   // under the parent is why the flat session list defaults to main-only — a task with N subagents is
   // one row with N children, not N+1 sibling rows sharing the same slug.
+  // Subagent metadata sidecars (session_meta) supply the authoritative agentType/description/spawnDepth
+  // — LEFT JOIN so a subagent still lists when its meta hasn't been ingested (or the table is absent on
+  // a pre-ingest read-only DB).
+  const hasMeta = tableExists(db, "session_meta");
   const children = db
     .prepare(
       `SELECT s.id, s.ai_title, s.slug, s.turn_count, s.started_at, s.workflow_run_id,
               (SELECT GROUP_CONCAT(DISTINCT model) FROM token_usage t WHERE t.session_id = s.id) AS models
-       FROM sessions s WHERE s.parent_session_id = ? ORDER BY s.started_at`,
+              ${hasMeta ? ", sm.agent_type, sm.agent_description, sm.spawn_depth" : ", NULL AS agent_type, NULL AS agent_description, NULL AS spawn_depth"}
+       FROM sessions s ${hasMeta ? "LEFT JOIN session_meta sm ON sm.session_id = s.id" : ""}
+       WHERE s.parent_session_id = ? ORDER BY s.started_at`,
     )
     .all(id) as any[];
   for (const ch of children) {
@@ -427,12 +462,16 @@ export function getWorkflow(db: DB, runId: string) {
   if (!wf) return null;
 
   // Subagent sessions in this run (same projection as getSession's children, plus the wall-clock
-  // fields so the page can show each agent's span and a run-level min/max).
+  // fields so the page can show each agent's span and a run-level min/max). LEFT JOIN session_meta for
+  // the authoritative type/description/depth — these workflow agents carry none in-transcript.
+  const hasMeta = tableExists(db, "session_meta");
   const agents = db
     .prepare(
       `SELECT s.id, s.ai_title, s.slug, s.turn_count, s.started_at, s.ended_at, s.duration_ms,
               (SELECT GROUP_CONCAT(DISTINCT model) FROM token_usage t WHERE t.session_id = s.id) AS models
-       FROM sessions s WHERE s.workflow_run_id = ? ORDER BY s.started_at`,
+              ${hasMeta ? ", sm.agent_type, sm.agent_description, sm.spawn_depth" : ", NULL AS agent_type, NULL AS agent_description, NULL AS spawn_depth"}
+       FROM sessions s ${hasMeta ? "LEFT JOIN session_meta sm ON sm.session_id = s.id" : ""}
+       WHERE s.workflow_run_id = ? ORDER BY s.started_at`,
     )
     .all(runId) as any[];
 
@@ -489,7 +528,7 @@ export function getWorkflow(db: DB, runId: string) {
   const wr = tableExists(db, "workflow_results")
     ? (db
         .prepare(
-          `SELECT status, summary, default_model, result_json, phases_json, logs_json,
+          `SELECT status, summary, default_model, result_json, phases_json, logs_json, progress_json,
                   agent_count, total_tokens, total_tool_calls, duration_ms, started_at, ended_at
            FROM workflow_results WHERE run_id = ?`,
         )
@@ -508,6 +547,7 @@ export function getWorkflow(db: DB, runId: string) {
     ended_at: string | null;
     phases: unknown;
     logs: unknown;
+    progress: unknown;
   } | null = null;
   if (wr) {
     run = {
@@ -522,6 +562,9 @@ export function getWorkflow(db: DB, runId: string) {
       ended_at: wr.ended_at ?? null,
       phases: safeJson(wr.phases_json),
       logs: safeJson(wr.logs_json),
+      // The per-phase/per-agent event timeline (workflowProgress) — lets the page render a phase graph
+      // with a per-phase descriptor (agent count, models). Absent on older/failed runs → UI falls back.
+      progress: safeJson(wr.progress_json),
     };
     if (wr.result_json != null || wr.status) {
       completion = {

@@ -8,7 +8,7 @@ import { existsSync } from "node:fs";
 import Fastify, { type FastifyInstance } from "fastify";
 import fastifyStatic from "@fastify/static";
 import { sessionToMarkdown, type MarkdownEvent } from "@agent-lens/core";
-import { type DB, lastIngested, listSources, listProjects, listModels, listSessions, getSession, getWorkflow, listSkills, getSkill } from "./db.js";
+import { type DB, lastIngested, schemaStatus, listSources, listProjects, listModels, listSessions, getSession, getWorkflow, listSkills, getSkill } from "./db.js";
 import { dashboardOverview, dashboardTimeseries, dashboardBreakdowns, type DashFilters } from "./dashboard.js";
 import { originAllowed, runRefresh } from "./refresh.js";
 
@@ -20,7 +20,10 @@ export interface CreateAppOpts {
 export async function createApp(db: DB, opts: CreateAppOpts = {}): Promise<FastifyInstance> {
   const app = Fastify({ logger: false });
 
-  app.get("/api/health", async () => ({ ok: true, last_ingested: lastIngested(db) }));
+  app.get("/api/health", async () => {
+    const s = schemaStatus(db);
+    return { ok: true, last_ingested: lastIngested(db), schema_version: s.db_version, schema_stale: s.stale };
+  });
 
   // The one write-action on this read-only server: run a collect + ingest pass on the host so the UI
   // can pull in new transcripts on demand (ADR-015). Guarded against cross-site CSRF (Origin) and

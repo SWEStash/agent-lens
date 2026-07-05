@@ -13,13 +13,16 @@ import {
   loadExcludes,
   loadSources,
   resolveDataDir,
+  SCHEMA_VERSION,
   type SourceAdapter,
 } from "@agent-lens/core";
-import { openDb, openRaw, resetSchema } from "./db.js";
+import { openDb, openRaw, readSchemaVersion, resetSchema } from "./db.js";
 import { ClaudeCodeAdapter } from "./adapters/claude-code.js";
 import { classify, CLASSIFIER_VERSION } from "./classify.js";
 import { ingestFile, newStats, prepareStatements, pruneExcluded, rebuildDerived } from "./pipeline.js";
 import { ingestWorkflowResults, newWorkflowStats } from "./workflows.js";
+import { ingestSubagentMeta, newMetaStats } from "./meta.js";
+import { ingestToolResults, newToolResultStats } from "./toolResults.js";
 import { parseExcludes, isExcludedArchivePath } from "./redact.js";
 import { sha256, sha256File, streamLines, STREAM_THRESHOLD } from "./fileread.js";
 
@@ -50,7 +53,23 @@ export function runIngest(argv: string[] = process.argv.slice(2)): void {
   // drop+recreate from the archive (source of truth). This is also the migration path — a
   // SCHEMA_VERSION bump's new columns take effect here without a separate migration step.
   const db = args.full ? openRaw(dbPath) : openDb(dbPath);
-  if (args.full) resetSchema(db);
+  if (args.full) {
+    resetSchema(db);
+  } else {
+    // Schema guard: an incremental ingest only runs CREATE IF NOT EXISTS — it adds new tables but
+    // cannot migrate altered columns on existing ones, and never advances the stamp (applySchema is
+    // stamp-if-absent). So a DB stamped by an older build is stale: refuse rather than silently ingest
+    // into a half-migrated schema. `ingest --full` (drop+recreate) is the migration path.
+    const dbVer = readSchemaVersion(db);
+    if (dbVer != null && dbVer !== SCHEMA_VERSION) {
+      console.error(
+        `agent-lens-ingest: schema mismatch — DB is v${dbVer}, this build expects v${SCHEMA_VERSION}. ` +
+          `Run 'agent-lens ingest --full' to rebuild.`,
+      );
+      db.close();
+      process.exit(1);
+    }
+  }
 
   // Adapter registry keyed by agent type; configured sources resolved by the shared resolver.
   const adapterList: SourceAdapter[] = [new ClaudeCodeAdapter()];
@@ -67,6 +86,8 @@ export function runIngest(argv: string[] = process.argv.slice(2)): void {
   const stmts = prepareStatements(db);
   const stats = newStats();
   const wfStats = newWorkflowStats();
+  const metaStats = newMetaStats();
+  const trStats = newToolResultStats();
   // Sessions touched this run; drives the incremental derived rebuild (ADR-010, impacts 2/3).
   const dirty = new Set<string>();
 
@@ -131,6 +152,14 @@ export function runIngest(argv: string[] = process.argv.slice(2)): void {
     // Workflow-tool result sidecars (wf_<id>.json) — the authoritative record of how each run
     // finished; not *.jsonl, so the transcript walk above never sees them. Own table, own skip-state.
     ingestWorkflowResults(db, join(archiveRoot, source.label), source.label, excludedDirs, now, wfStats, args.full);
+
+    // Per-subagent metadata (subagents/agent-<id>.meta.json) — the authoritative agentType/description/
+    // spawnDepth; joined onto sessions at read time. Own table (session_meta), own skip-state.
+    ingestSubagentMeta(db, join(archiveRoot, source.label), source.label, excludedDirs, now, metaStats, args.full);
+
+    // Spilled full tool outputs (tool-results/<name>.txt) — the un-truncated result the transcript only
+    // summarized; joined onto tool_calls at read time via the summary's marker. Own table, own skip-state.
+    ingestToolResults(db, join(archiveRoot, source.label), excludedDirs, now, trStats, args.full);
   }
 
   // Incremental derived rebuild over only the touched sessions (+ their linkage neighborhood); --full
@@ -158,12 +187,16 @@ export function runIngest(argv: string[] = process.argv.slice(2)): void {
   }
 
   const wfRuns = count("SELECT COUNT(*) n FROM workflow_results");
+  const metaRows = count("SELECT COUNT(*) n FROM session_meta");
+  const trRows = count("SELECT COUNT(*) n FROM tool_results");
 
   db.close();
   console.log(
     `agent-lens-ingest: files=${stats.files} skipped=${stats.skipped} new_events=${stats.newEvents} malformed=${stats.malformed}${pruned ? ` excluded_pruned=${pruned}` : ""}\n` +
       `  sessions=${sessions} turns=${turns} events=${events} tool_calls=${tools} classified=${classified.count}\n` +
       `  workflow_results=${wfRuns} (sidecar upserted=${wfStats.upserted} skipped=${wfStats.skipped} malformed=${wfStats.malformed})\n` +
+      `  session_meta=${metaRows} (upserted=${metaStats.upserted} skipped=${metaStats.skipped} malformed=${metaStats.malformed})\n` +
+      `  tool_results=${trRows} (upserted=${trStats.upserted} skipped=${trStats.skipped} malformed=${trStats.malformed})\n` +
       `  tokens=${totalTokens.toLocaleString()} est_cost=$${cost.toFixed(2)} db=${dbPath}`,
   );
 }

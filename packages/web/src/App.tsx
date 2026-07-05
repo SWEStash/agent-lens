@@ -21,9 +21,14 @@ export default function App() {
   // Header freshness readout: when the data was last ingested. Polled so the label (and any
   // background collector run) stays current without a manual reload.
   const [lastIngested, setLastIngested] = useState<string | null>(null);
+  // Schema-version drift: the on-disk DB was written by an older build and needs a full re-ingest.
+  const [schemaStale, setSchemaStale] = useState(false);
   const refreshStatus = useCallback(() => {
-    api<{ last_ingested?: string | null }>("/health")
-      .then((h) => setLastIngested(h.last_ingested ?? null))
+    api<{ last_ingested?: string | null; schema_stale?: boolean }>("/health")
+      .then((h) => {
+        setLastIngested(h.last_ingested ?? null);
+        setSchemaStale(!!h.schema_stale);
+      })
       .catch(() => {});
   }, []);
   useEffect(() => {
@@ -111,6 +116,12 @@ export default function App() {
           </button>
         </div>
       </header>
+      {schemaStale && (
+        <div className="schema-banner" role="status">
+          ⚠ Data schema is out of date — run <code>agent-lens ingest --full</code> on the host to rebuild.
+          The <em>Refresh</em> button only does an incremental ingest and won't fix this.
+        </div>
+      )}
       <main className={"content" + (wide ? " wide" : "")} id="main" tabIndex={-1}>
         <Outlet />
       </main>

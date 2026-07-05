@@ -69,6 +69,9 @@ export interface ToolCall {
   total_duration_ms: number | null;
   input_json: string | null;
   result_summary: string | null;
+  /** Present when the transcript truncated this result to a "…/tool-results/<name>.txt" marker and the
+   * spilled full output has been ingested — lets the UI expand to the un-truncated text. */
+  full_result?: { text: string; bytes: number } | null;
 }
 
 export interface EventNode {
@@ -129,6 +132,10 @@ export interface SessionChild {
   tokens: number;
   cost: number;
   workflow_run_id: string | null;
+  /** From the subagent's meta sidecar (session_meta): authoritative type, human title, nesting depth. */
+  agent_type: string | null;
+  agent_description: string | null;
+  spawn_depth: number | null;
 }
 
 /** A Workflow-tool run launched from a session: its id, name, the turn that started it, and how many
@@ -163,6 +170,10 @@ export interface WorkflowAgent {
   models: string | null;
   tokens: number;
   cost: number;
+  /** From the agent's meta sidecar (session_meta): authoritative type, human title, nesting depth. */
+  agent_type: string | null;
+  agent_description: string | null;
+  spawn_depth: number | null;
 }
 
 /** A Workflow-tool run's detail page payload: the launching tool_call + parent crumb, every spawned
@@ -190,7 +201,27 @@ export interface WorkflowRunResult {
   ended_at: string | null;
   phases: Array<{ title?: string }> | null;
   logs: string[] | null;
+  /** The runner's workflowProgress event timeline: interleaved phase markers and per-agent entries.
+   * Powers the phase graph's per-phase descriptor (agent count, models). Null on older/failed runs. */
+  progress: WorkflowProgressEntry[] | null;
 }
+
+/** One entry in a run's workflowProgress: either a phase marker or a spawned-agent record. */
+export type WorkflowProgressEntry =
+  | { type: "workflow_phase"; index: number; title?: string }
+  | {
+      type: "workflow_agent";
+      index?: number;
+      label?: string;
+      phaseIndex?: number;
+      phaseTitle?: string;
+      agentId?: string;
+      model?: string;
+      state?: string;
+      tokens?: number;
+      toolCalls?: number;
+      durationMs?: number;
+    };
 
 export interface WorkflowDetail {
   run_id: string;
