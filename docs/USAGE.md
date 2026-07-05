@@ -37,6 +37,33 @@ node packages/cli/dist/agent-lens.js <command>   # the built CLI
 
 Below, `agent-lens <command>` means either the installed binary or `node packages/cli/dist/agent-lens.js <command>` from a source build. The subcommands are `collect`, `ingest`, `serve`, `watch`, `metrics`, and `service`.
 
+## Upgrade
+
+Nothing is destroyed on upgrade: the archive under `<dataDir>/archive` is the source of truth and the
+SQLite DB is a derived projection, so you can always rebuild it (`agent-lens ingest --full`).
+
+```bash
+# End users (npm):
+npm install -g @swestash/agent-lens@latest
+agent-lens collect --then-ingest            # pick up any new data + new file types
+
+# From source:
+cd /path/to/agent-lens
+git pull && pnpm install && pnpm -r build
+agent-lens collect --then-ingest
+```
+
+Running as a service (`agent-lens service install`)? After upgrading the binary, restart it so the new
+code is live — `systemctl --user restart agent-lens-server.service` (Linux), or restart the launchd /
+Task Scheduler entry on macOS / Windows — and the background collect+ingest timer refreshes the DB on
+its next tick (or click **Refresh** in the UI to do it now).
+
+**Schema changes.** Each release stamps a `SCHEMA_VERSION`. A normal incremental `ingest` applies
+additive schema changes automatically (`CREATE … IF NOT EXISTS`) and picks up newly-collected file
+types on its next run, so most upgrades need nothing special. Run a one-time `agent-lens ingest --full`
+only when a release note calls for it (a change to *existing* tables); because the archive is the
+source of truth, a full rebuild is safe and just re-derives every table from scratch.
+
 ## Configure sources (which agent accounts to collect)
 
 A **source** is a labeled agent instance: a `label` + the agent's `configDir`. Multiple local
