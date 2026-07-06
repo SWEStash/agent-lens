@@ -43,8 +43,10 @@ echo "=== ingest --full over the 3-source corpus (isolated DB) ==="
 INGEST="$(node packages/ingest/dist/index.js --full)"; echo "$INGEST" | sed 's/^/  /'
 
 echo "=== scenario assertions (DB) ==="
-# malformed / partial JSONL: the truncated line was counted, not silently dropped.
-ok 1 "$(echo "$INGEST" | grep -oE 'malformed=[0-9]+' | cut -d= -f2)" "malformed line counted"
+# malformed / partial JSONL: the truncated line was counted, not silently dropped. `head -1` targets
+# the transcript-ingest line specifically — the per-sidecar report lines (workflow_results/session_meta/
+# tool_results) also print their own `malformed=0`, so an unbounded grep would return multiple values.
+ok 1 "$(echo "$INGEST" | grep -oE 'malformed=[0-9]+' | head -1 | cut -d= -f2)" "malformed line counted"
 # multi-source: three labeled sources, no cross-source bleed.
 ok 3 "$(q "SELECT COUNT(DISTINCT source_id) FROM sessions;")" "multi-source (3 sources)"
 ok 14 "$(q "SELECT COUNT(*) FROM sessions;")" "total sessions"
