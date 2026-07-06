@@ -27,12 +27,12 @@ jobs:
       # Exposed here so the release step's `if:` can detect whether the secret is configured.
       NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v4
         with:
           fetch-depth: 0 # semantic-release needs full history + tags
           persist-credentials: true
 
-      - uses: actions/setup-node@v5
+      - uses: actions/setup-node@v4
         with:
           node-version: "24"
           registry-url: "https://registry.npmjs.org"
@@ -44,7 +44,7 @@ jobs:
         id: pnpm
         run: echo "dir=$(pnpm store path --silent)" >> "$GITHUB_OUTPUT"
 
-      - uses: actions/cache@v5
+      - uses: actions/cache@v4
         with:
           path: ${{ steps.pnpm.outputs.dir }}
           key: pnpm-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
