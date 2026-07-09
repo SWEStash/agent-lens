@@ -26,6 +26,7 @@ const asst = (id, t, model, content, usage) => u(id, { type: "assistant", timest
 const usage = (i, o, cw, cr) => ({ input_tokens: i, output_tokens: o, cache_creation_input_tokens: cw, cache_read_input_tokens: cr });
 const userMsg = (id, t, text, extra = {}) => u(id, { type: "user", timestamp: ts(t), cwd: CWD, gitBranch: "main", version: "2.1.0", message: { role: "user", content: text }, ...extra });
 const toolResult = (id, t, tuid, extra = {}) => u(id, { type: "user", timestamp: ts(t), message: { role: "user", content: [{ type: "tool_result", tool_use_id: tuid, content: "(result)" }] }, ...extra });
+const toolResText = (id, t, tuid, text, extra = {}) => u(id, { type: "user", timestamp: ts(t), message: { role: "user", content: [{ type: "tool_result", tool_use_id: tuid, content: text }] }, ...extra });
 
 function write(relPath, lines) {
   const dest = join(ROOT, relPath);
@@ -93,6 +94,41 @@ for (const [n, table, i, o] of [["wf01", "users", 1000, 120], ["wf02", "orders",
   ]);
 }
 
+// 3a-i) WORKFLOW RESULT SIDECAR (workflows/wf_<id>.json): the authoritative record of how the run
+//     finished — status/summary, phase structure, live progress events, per-item logs, the returned
+//     result payload, and roll-up tokens/tool-calls/agents. Drives the workflow detail page + phase
+//     graph (progress_json ← workflowProgress, phases_json ← phases). Lives beside (not under) the
+//     fan-out: <session>/workflows/<runId>.json.
+write(`projects/${PROJ}/sc-workflow-0003/workflows/${WF_RUN}.json`, [
+  {
+    runId: WF_RUN,
+    taskId: "tu_wf",
+    workflowName: "migrate-db",
+    status: "completed",
+    summary: "Migrated the users and orders tables across two fan-out agents; row counts verified.",
+    defaultModel: HAIKU,
+    startTime: 1789041720000,
+    durationMs: 42000,
+    agentCount: 2,
+    totalTokens: 2350,
+    totalToolCalls: 8,
+    phases: [{ title: "Plan" }, { title: "Migrate" }, { title: "Verify" }],
+    workflowProgress: [
+      { type: "workflow_phase", index: 0, title: "Plan" },
+      { type: "workflow_phase", index: 1, title: "Migrate" },
+      { type: "workflow_phase", index: 2, title: "Verify" },
+    ],
+    logs: ["users: migrated 1,204 rows", "orders: migrated 3,981 rows", "verify: row counts match source"],
+    result: { migrated: [{ table: "users", rows: 1204 }, { table: "orders", rows: 3981 }], ok: true },
+  },
+]);
+// 3a-ii) SUBAGENT META SIDECARS (subagents/agent-<id>.meta.json): the authoritative agentType /
+//     description / spawnDepth for each subagent, joined onto the session at read time (type +
+//     description badges). One per fan-out agent, plus the Task-spawned child in scenario 2.
+write(`${WF_DIR}/agent-wf01.meta.json`, [{ agentType: "migrator", description: "Migrate the users table", toolUseId: "tu_wf", spawnDepth: 1 }]);
+write(`${WF_DIR}/agent-wf02.meta.json`, [{ agentType: "migrator", description: "Migrate the orders table", toolUseId: "tu_wf", spawnDepth: 1 }]);
+write(`projects/${PROJ}/sc-sub-parent-0002/subagents/agent-c0ffee01.meta.json`, [{ agentType: "general-purpose", description: "Investigate the failing auth test", toolUseId: "tu_task" }]);
+
 // 3b) SLASH COMMAND: a local slash command (/plugin) — a markup-wrapped invocation plus its local
 //     stdout, with NO assistant output (local commands never reach the model). Exercises the command
 //     chip rendering and the "user messages, no output" shape.
@@ -143,6 +179,91 @@ write(`projects/${PROJ}/sc-resumed-0005.jsonl`, resumedMirror);
 write(`.versions/20260301T000000/projects/${PROJ}/sc-resumed-0005.jsonl`, [
   ...resumedMirror,
   asst("e3", 3, OPUS, [{ type: "text", text: "Finished the refactor." }], usage(100, 20, 0, 1100)),
+]);
+
+// 6) BASH CONSOLE: shows the shell-console transcript renderer — a $ prompt per logical command
+//    (heredoc-, quote-, and $()-aware so continuations aren't mis-prompted), the description as a #
+//    caption, background/timeout badges, multi-line output, and a spilled full result ("Show full
+//    result"). The build's real output is too large for the transcript, so it only keeps the
+//    "saved to …/tool-results/<name>.txt" marker; the un-truncated text lives in the spill file below.
+write(`projects/${PROJ}/sc-bash-0008.jsonl`, [
+  userMsg("h1", 1, "Build, run the tests, write the deploy script, then commit and open the PR"),
+  asst("h2", 2, OPUS, [
+    { type: "text", text: "Building and running the suite." },
+    { type: "tool_use", id: "tu_h2", name: "Bash", input: { command: "pnpm -r build && pnpm test", description: "Build all packages and run the test suite" } },
+  ], usage(700, 120, 0, 3000)),
+  toolResText("h3", 3, "tu_h2", `Output too large (18.4 KB). Full output saved to: ${CWD}/tool-results/bkbuild01.txt`),
+  asst("h4", 4, OPUS, [
+    { type: "tool_use", id: "tu_h4", name: "Bash", input: { command: "cat > deploy.sh <<'EOF'\n#!/usr/bin/env bash\nset -euo pipefail\nfor svc in api web worker; do\n  echo \"deploying $svc\"\n  kubectl rollout restart deploy/$svc\ndone\nEOF\nchmod +x deploy.sh", description: "Write a multi-service deploy script and make it executable" } },
+  ], usage(400, 90, 0, 3200)),
+  toolResText("h5", 5, "tu_h4", "(no output)"),
+  asst("h6", 6, OPUS, [
+    { type: "tool_use", id: "tu_h6", name: "Bash", input: { command: "tail -f deploy.log | grep --line-buffered ERROR > errors.txt & echo watching", description: "Watch the deploy log for errors in the background", run_in_background: true, timeout: 120000 } },
+  ], usage(300, 60, 0, 3300)),
+  toolResText("h7", 7, "tu_h6", "watching\n[1] 48213"),
+  asst("h8", 8, OPUS, [
+    { type: "tool_use", id: "tu_h8", name: "Bash", input: { command: "git add -A\ngit commit -q -m \"$(cat <<'EOF'\nrelease: cut v0.4.0\n\n- ship the shell-console + diff transcript renderers\n- preserve newlines in tool-result summaries\nEOF\n)\"\ngit push 2>&1 | tail -2\necho \"=== PR ===\"; gh pr view --json url --jq .url", description: "Commit, push, and print the PR url" } },
+  ], usage(500, 110, 0, 3500)),
+  toolResText("h9", 9, "tu_h8", "To github.com:demo/acme-api.git\n   9f3a1c2..7b21e04  main -> main\n=== PR ===\nhttps://github.com/demo/acme-api/pull/42"),
+  asst("h10", 10, OPUS, [{ type: "text", text: "Build passed, deploy script written, watcher running, PR opened." }], usage(300, 70, 0, 3700)),
+]);
+// Spilled full output for the build step (the transcript kept only the "saved to" marker above).
+write(`projects/${PROJ}/sc-bash-0008/tool-results/bkbuild01.txt`, [
+  "> @agent-lens/core build\n> @agent-lens/ingest build\n> @agent-lens/server build\n> @agent-lens/web build\n\n42 packages built in 12.4s\n\n RUN  v4.1.9\n Test Files  16 passed (16)\n      Tests  149 passed (149)\n   Duration  2.10s",
+]);
+
+// 7) EDIT / MULTIEDIT / WRITE: the colored-diff transcript renderer — an Edit with surrounding context
+//    (LCS diff, not a raw replace), a MultiEdit with two hunks, and a Write shown as all-additions.
+write(`projects/${PROJ}/sc-edit-0009.jsonl`, [
+  userMsg("d1", 1, "Type the greeter, tweak the config, and add a logger module"),
+  asst("d2", 2, OPUS, [
+    { type: "text", text: "Refactoring the greeter." },
+    { type: "tool_use", id: "tu_d2", name: "Edit", input: { file_path: `${CWD}/src/greet.ts`, old_string: "export function greet(name) {\n  console.log('hi ' + name);\n  return name;\n}", new_string: "export function greet(name: string) {\n  logger.info(`hi ${name}`);\n  return name;\n}" } },
+  ], usage(600, 120, 0, 4000)),
+  toolResText("d3", 3, "tu_d2", "The file src/greet.ts has been updated."),
+  asst("d4", 4, OPUS, [
+    { type: "tool_use", id: "tu_d4", name: "MultiEdit", input: { file_path: `${CWD}/config/app.yaml`, edits: [
+      { old_string: "timeout: 30\nretries: 1", new_string: "timeout: 60\nretries: 3" },
+      { old_string: "log_level: info", new_string: "log_level: debug\nlog_format: json" },
+    ] } },
+  ], usage(400, 90, 0, 4200)),
+  toolResText("d5", 5, "tu_d4", "Applied 2 edits to config/app.yaml"),
+  asst("d6", 6, OPUS, [
+    { type: "tool_use", id: "tu_d6", name: "Write", input: { file_path: `${CWD}/src/logger.ts`, content: "export const logger = {\n  info: (m: string) => console.log('[info]', m),\n  warn: (m: string) => console.warn('[warn]', m),\n};" } },
+  ], usage(500, 100, 0, 4400)),
+  toolResText("d7", 7, "tu_d6", "File created successfully at: src/logger.ts"),
+  asst("d8", 8, OPUS, [{ type: "text", text: "Greeter typed, config tuned, logger added." }], usage(300, 70, 0, 4600)),
+]);
+
+// 8) PLAN + ASK-USER-QUESTION: the approved-plan card (ExitPlanMode carries the plan markdown) and the
+//    Q&A card (AskUserQuestion — the questions live in the input, the user's selection + notes come back
+//    in the tool_result's toolUseResult as {answers, annotations}, keyed by question text).
+write(`projects/${PROJ}/sc-plan-0010.jsonl`, [
+  userMsg("q1", 1, "Plan the move from session-token auth to OAuth"),
+  asst("q2", 2, OPUS, [
+    { type: "tool_use", id: "tu_ask", name: "AskUserQuestion", input: { questions: [
+      { question: "Which OAuth provider should we integrate?", header: "Provider", multiSelect: false, options: [
+        { label: "Auth0", description: "Managed, fastest to ship; per-MAU pricing." },
+        { label: "Keycloak", description: "Self-hosted, no per-user cost; you run it." },
+        { label: "Google only", description: "Simplest, but locks users to Google accounts." },
+      ] },
+      { question: "Which flows do we need on day one?", header: "Flows", multiSelect: true, options: [
+        { label: "Authorization Code + PKCE", description: "Web + SPA sign-in." },
+        { label: "Client Credentials", description: "Service-to-service tokens." },
+        { label: "Device Code", description: "CLI / TV sign-in." },
+      ] },
+    ] } },
+  ], usage(500, 130, 0, 2000)),
+  toolResult("q3", 3, "tu_ask", { toolUseResult: {
+    questions: [{ question: "Which OAuth provider should we integrate?" }, { question: "Which flows do we need on day one?" }],
+    answers: { "Which OAuth provider should we integrate?": "Auth0", "Which flows do we need on day one?": ["Authorization Code + PKCE", "Client Credentials"] },
+    annotations: { "Which OAuth provider should we integrate?": { notes: "Ship fast now; revisit self-hosting once we cross 50k MAU." } },
+  } }),
+  asst("q4", 4, OPUS, [
+    { type: "tool_use", id: "tu_plan", name: "ExitPlanMode", input: { plan: "## Migrate session-token auth → OAuth (Auth0)\n\n**Context.** We're replacing home-grown session tokens with Auth0 so we stop maintaining our own login and get MFA for free.\n\n### Steps\n1. Add the Auth0 SDK and an `/auth/callback` route (Authorization Code + PKCE).\n2. Add a Client-Credentials token issuer for service-to-service calls.\n3. Migrate the session middleware to validate Auth0 JWTs; keep the old path behind a flag for one release.\n4. Backfill `user.external_id` from the current session store.\n5. Flip the flag, monitor error budget, then delete the legacy token code.\n\n### Verification\n- E2E sign-in through the real Auth0 tenant (staging).\n- Contract test the JWT validation middleware.\n- Canary 5% of traffic before full rollout." } },
+  ], usage(700, 260, 0, 2500)),
+  toolResult("q5", 5, "tu_plan"),
+  asst("q6", 6, OPUS, [{ type: "text", text: "Plan approved — starting on the Auth0 SDK integration." }], usage(300, 80, 0, 3000)),
 ]);
 
 console.log(`build-scenarios: wrote synthetic scenario corpus to ${ROOT}`);

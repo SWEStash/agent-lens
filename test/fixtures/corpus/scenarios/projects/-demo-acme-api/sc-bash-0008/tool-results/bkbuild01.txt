@@ -1,0 +1,11 @@
+> @agent-lens/core build
+> @agent-lens/ingest build
+> @agent-lens/server build
+> @agent-lens/web build
+
+42 packages built in 12.4s
+
+ RUN  v4.1.9
+ Test Files  16 passed (16)
+      Tests  149 passed (149)
+   Duration  2.10s
