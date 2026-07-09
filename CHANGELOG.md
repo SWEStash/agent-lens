@@ -1,3 +1,11 @@
+# [0.4.0](https://github.com/SWEStash/agent-lens/compare/v0.3.0...v0.4.0) (2026-07-09)
+
+
+### Features
+
+* **ingest:** preserve newlines in tool-result summaries ([6021380](https://github.com/SWEStash/agent-lens/commit/6021380f292f4372be0f00b7a74c66dd7a5756de))
+* **web:** render Bash as a shell console and Edit/Write as a colored diff ([626906f](https://github.com/SWEStash/agent-lens/commit/626906f448bcba6db70cc3a3b6b816249ae76108))
+
 # [0.3.0](https://github.com/SWEStash/agent-lens/compare/v0.2.0...v0.3.0) (2026-07-05)
 
 
