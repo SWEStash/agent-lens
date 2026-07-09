@@ -336,6 +336,7 @@ macOS) if you need at-rest protection. See `docs/decisions/ADR-009-retention-and
 | `AGENT_LENS_ALLOW_NONLOCAL` | _(unset)_ | server | required to bind a non-loopback host |
 | `AGENT_LENS_VERSIONS_KEEP_DAYS` | `90` | prune | retention window for `.versions/` snapshots |
 | `CLAUDE_DIR` | _(unset)_ | collect, ingest | legacy single-source override |
+| `AGENT_LENS_LABEL` | `default` | collect, ingest | source label used with the legacy `CLAUDE_DIR` single-source mode |
 
 ### Paths
 
@@ -361,6 +362,9 @@ macOS) if you need at-rest protection. See `docs/decisions/ADR-009-retention-and
 | `GET /api/dashboard/overview` | KPI aggregates (sessions, split token totals, cost) |
 | `GET /api/dashboard/timeseries` | tokens/cost/activity over time (adaptive buckets) |
 | `GET /api/dashboard/breakdowns` | by model / category / complexity / tool / skill / subagent |
+| `GET /api/workflows/:run_id` | workflow run detail (phase graph, returned result, run log, per-agent rows) |
+| `GET /api/skills` | skills list (optional `q`, `source`, `project` filters) |
+| `GET /api/skills/:name` | skill detail (content-addressed versions + firings) |
 
 `/api/sessions` query params: `source`, `project`, `model`, `kind` (`main`\|`subagent`),
 `q` (full-text), `from`, `to` (ISO timestamps), `limit` (≤200), `offset`.

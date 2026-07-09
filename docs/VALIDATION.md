@@ -14,7 +14,7 @@ correctness, real-scale consistency, and the whole CLI→API path.
 | Layer | Question | Where | Needs hand-authored expecteds? | Scale |
 |------|----------|-------|-------------------------------|-------|
 | 1. Golden fixtures | Are the *formulas* exactly right? | vitest | Yes | tiny |
-| 2. Invariants | Does the *real* data stay self-consistent? | `scripts/validate.mjs` | No | full (632 sessions) |
+| 2. Invariants | Does the *real* data stay self-consistent? | `scripts/validate.mjs` | No | full (your real DB) |
 | 3. Determinism | Is incremental == full rebuild? | vitest | No | committed corpus |
 | 4. Redaction oracle | Is the corpus metric-faithful to real data? | `scripts/oracle.mjs` | No (raw is its own oracle) | committed corpus |
 | 5. Sandbox e2e | Does the whole CLI→API path work? | `scripts/sandbox.sh` | spot-check | committed corpus |
@@ -31,7 +31,7 @@ covered by Layer 1 fixtures instead, never by the oracle.
 ## How to run
 
 ```bash
-pnpm test                                   # Layers 1, 3, 4-unit + corpus scenarios (85 tests)
+pnpm test                                   # Layers 1, 3, 4-unit + corpus scenarios (150 tests)
 cp data/agent-lens.db /tmp/al-validate.db   # snapshot (never read the live WAL DB)
 pnpm validate --db /tmp/al-validate.db      # Layer 2 invariants on the real corpus
 pnpm build-corpus                           # regenerate the redacted corpus + run the oracle
@@ -72,10 +72,13 @@ pnpm sandbox                                # Layer 5 end-to-end over the corpus
 
 ## Results
 
-**Layer 1/3/4-unit + corpus scenarios — `pnpm test`:** 85 tests pass (10 files).
+> The **Layer 2** and **Findings** figures below are a point-in-time snapshot from a real
+> ~630-session DB — Layer 2 runs against your own `data/agent-lens.db`, so the numbers scale with
+> your data. Layers 1/3/4/5 run on the committed corpus and are deterministic.
 
-**Layer 2 — invariants on the live corpus (632 sessions, 69,097 events, 17,707
-token rows):** all hard invariants PASS.
+**Layer 1/3/4-unit + corpus scenarios — `pnpm test`:** 150 tests pass (16 files).
+
+**Layer 2 — invariants on the live corpus (~632-session snapshot):** all hard invariants PASS.
 
 ```
 [1] dedup                — each (session_id, message_id) appears once
@@ -131,7 +134,7 @@ hand-computed expecteds. Three things to be aware of:
 
 | # | Finding | Evidence | Impact | Recommendation |
 |---|---------|----------|--------|----------------|
-| 1 | **Workflow subagents now link to their orchestrator (resolved).** Was: 249 of 488 subagent sessions had `parent_session_id = NULL` because the Workflow tool emits no `toolUseResult.agentId`, so the `tool_calls.spawned_session_id` link only covered `Agent`/`Task` spawns. | `validate.mjs` [5]; `ingest.test.ts` "workflow-linkage" + "path-less orphan"; `corpus-scenarios.test.ts` | Fan-out now rolls up workflow agents to their spawning session. | **Fixed:** the launching Workflow tool_call's result carries a run id (`wf_<id>`) + name, and the run's subagents nest under `…/subagents/workflows/<runId>/` — so `sessions.workflow_run_id` matches `tool_calls.workflow_run_id`, giving each workflow agent **both** its parent session **and** the exact launching turn (`parent_turn_id`). A path-based parent (`spawn_parent_id`) is the final fallback. The session view groups the fan-out by run (named, counted, linked to its turn). Tokens stay siloed → no double-count. Re-ingest with `ingest --full` to apply on an existing DB (SCHEMA_VERSION 7). |
+| 1 | **Workflow subagents now link to their orchestrator (resolved).** Was: 249 of 488 subagent sessions had `parent_session_id = NULL` because the Workflow tool emits no `toolUseResult.agentId`, so the `tool_calls.spawned_session_id` link only covered `Agent`/`Task` spawns. | `validate.mjs` [5]; `ingest.test.ts` "workflow-linkage" + "path-less orphan"; `corpus-scenarios.test.ts` | Fan-out now rolls up workflow agents to their spawning session. | **Fixed:** the launching Workflow tool_call's result carries a run id (`wf_<id>`) + name, and the run's subagents nest under `…/subagents/workflows/<runId>/` — so `sessions.workflow_run_id` matches `tool_calls.workflow_run_id`, giving each workflow agent **both** its parent session **and** the exact launching turn (`parent_turn_id`). A path-based parent (`spawn_parent_id`) is the final fallback. The session view groups the fan-out by run (named, counted, linked to its turn). Tokens stay siloed → no double-count. Re-ingest with `ingest --full` to apply on an existing DB (SCHEMA_VERSION 11). |
 | 2 | **Cost is cache-dominated.** cache_read = 2.33T tokens = **95.7%** of all tokens; total derived cost $1,912.90. | `validate.mjs` [2]/[3] | Cost correctness rides almost entirely on the cache-read rate, not input/output. | Already handled correctly (separate `cacheRead` rate per model; cache_read excluded from "work" tokens). Keep the pricing table current — a wrong cache-read rate would dominate the error. |
 | 3 | **`<synthetic>` model carries 0 tokens.** It appears on 149 rows but sums to 0 tokens, so it never affects cost (hence "all models priced"). | `validate.mjs` [8]; direct query | None today. | No action; documented so a future non-zero `<synthetic>` (which *would* be unpriced) is expected to surface in `validate.mjs` [8]. |
 

@@ -18,10 +18,12 @@ one language end-to-end where practical and low operational burden.
 - **Language:** TypeScript on Node (>= 24) across ingest, server, and web.
 - **Store:** SQLite via `better-sqlite3` + FTS5 (see ADR-003).
 - **Server:** a small HTTP API (Fastify or Express) bound to `127.0.0.1` (see ADR-005).
-- **Web:** Vite + React SPA; charting library chosen at Phase 4 (Recharts vs ECharts — open item).
+- **Web:** Vite + React SPA; charting library **Recharts** (resolved at Phase 4; the ECharts
+  alternative was dropped).
 - **Monorepo:** pnpm workspaces — `packages/core` (shared schema/types), `ingest`, `server`, `web`.
 - **Collection** (Stage 1) stays a POSIX shell + rsync + systemd unit (ADR-002) — not TS — because
-  it is plumbing best expressed with native tools.
+  it is plumbing best expressed with native tools. **Superseded by ADR-014:** collection is now
+  portable Node (`agent-lens collect`), so no shell/rsync/systemd is required.
 
 ## Consequences
 

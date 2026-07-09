@@ -20,8 +20,8 @@ without a single byte leaving your machine.
 ## Table of contents
 
 - [At a glance](#at-a-glance)
-- [Screenshots](#screenshots)
 - [Features](#features)
+- [Screenshots](#screenshots)
 - [How it works](#how-it-works)
 - [Requirements](#requirements)
 - [Quick start](#quick-start)
@@ -72,48 +72,6 @@ agent-lens-ingest: files=312 skipped=298 new_events=1840 malformed=0
 - Which skills and subagents do I actually use, and how often?
 - What exactly happened in that session three weeks ago? *(full transcript + full-text search)*
 
-## Screenshots
-
-A live, **corpus-only** demo (synthetic + redacted data, no real sessions) is published via GitHub
-Pages: **<https://swestash.github.io/agent-lens/>**. The images below are generated from that same
-committed corpus by `node scripts/screenshots.mjs` — fully reproducible, never any real data.
-
-**Dashboard** — token breakdown, estimated cost, cache-read ratio, and breakdowns by model, category,
-complexity, tool, skill, and subagent fan-out:
-
-![Agent Lens dashboard showing KPI cards (token breakdown, estimated cost, cache-read ratio, total tokens), tokens/cost/activity-over-time charts, and breakdown charts by model, task category, complexity band, tool frequency, skill activation, and subagent fan-out](docs/img/dashboard.png)
-
-**Session transcript** — turn-segmented, with purpose-built rendering per tool. **Bash** shows as a
-shell console: a `$` prompt per logical command (heredoc-, quote-, and `$()`-aware), the description as
-a `#` caption, flag badges, and multi-line output (with a "Show full result" for spilled output):
-
-![A Bash session rendered as a shell console: each command prefixed with a $ prompt (a heredoc's body correctly left unprefixed), the description as a # caption, background/timeout badges, and multi-line command output](docs/img/session-transcript.png)
-
-![A slash-command session showing the /plugin invocation rendered as an outlined command chip with its local output, instead of raw command markup](docs/img/session-command.png)
-
-**Edits as diffs** — `Edit` / `MultiEdit` / `Write` render as a colored `+`/`−` diff with surrounding
-context and a per-file add/remove stat, instead of a raw JSON blob:
-
-![A session showing Edit, MultiEdit, and Write tool calls rendered as colored +/- diffs with unchanged context lines, per-edit hunks, and per-file add/remove counts](docs/img/session-diff.png)
-
-**Plans & questions** — approved plans render as a titled card (the plan markdown), and AskUserQuestion
-shows each question's options with the user's selection checked and any written notes:
-
-![An AskUserQuestion card with the user's chosen options checked and a written note, above an approved-plan card rendering the plan markdown with steps and verification](docs/img/session-plan.png)
-
-**Workflow runs** — a Workflow tool call opens a detail page for the fan-out: a phase graph, the
-returned result, the run log, and per-agent rows with type/description badges and token/cost roll-ups:
-
-![The workflow detail page for a migrate-db run: a Plan → Migrate → Verify phase graph, the returned result table, a run log, and two fan-out agents with "migrator" type badges and per-agent tokens/cost](docs/img/workflow.png)
-
-**Classification signals** — the deterministic, no-AI explainer for why a session scored as it did:
-
-![The classifier "why" panel: a complexity breakdown by signal (work tokens, subagents, turns, duration, lines changed, files), category scores, and the evidence behind the verdict](docs/img/session-signals.png)
-
-**Sessions browser** — a filterable, full-text-searchable index across every collected source:
-
-![The Agent Lens sessions list with source/model filters and full-text search across all sources](docs/img/sessions.png)
-
 ## Features
 
 - **Passive collection** — copies each account's transcripts into a local archive before Claude
@@ -128,8 +86,10 @@ returned result, the run log, and per-agent rows with type/description badges an
 - **Live `watch` mode** — `agent-lens watch` collects + ingests whenever a source changes (debounced).
 - **Normalized store** — sessions / turns / events / tool-calls / token-usage in SQLite with **FTS5**
   full-text search. The archive is the source of truth; the DB is a rebuildable projection.
-- **Transcript viewer** — turn-segmented sessions, collapsible thinking, expandable tool calls,
-  one-click **Markdown export**, and a **light/dark theme toggle** (dark by default).
+- **Rich transcript viewer** — turn-segmented sessions, collapsible thinking, and purpose-built
+  rendering per tool: Bash as a shell console, `Edit`/`MultiEdit`/`Write` as colored diffs, plans and
+  `AskUserQuestion` as cards, workflow runs with a phase graph. One-click **Markdown export** and a
+  **light/dark theme toggle** (dark by default).
 - **Freshness + one-click refresh** — the header shows when data was last ingested and a **Refresh**
   button runs collect+ingest on the host on demand (loopback-only, CSRF-guarded; ADR-015).
 - **Analytics dashboards** — tokens / cost / activity over time (adaptive day/week/month bucketing)
@@ -139,6 +99,32 @@ returned result, the run log, and per-agent rows with type/description badges an
 - **Subagent call tree** — sidechain (subagent) sessions are linked back to the spawning parent turn.
 - **Multi-account** — collect several Claude installs side by side, each tagged by source.
 - **Strictly local** — loopback-only server, gitignored data, zero outbound network calls.
+
+## Screenshots
+
+A live, **corpus-only** demo (synthetic data, no real sessions) is published via GitHub Pages:
+**<https://swestash.github.io/agent-lens/>** — click through the whole UI there. The images below are
+generated from the same committed corpus by `node scripts/screenshots.mjs` — fully reproducible.
+
+**Dashboard** — token breakdown, estimated cost, cache-read ratio, and breakdowns by model, category,
+complexity, tool, skill, and subagent fan-out:
+
+![Agent Lens dashboard showing KPI cards (token breakdown, estimated cost, cache-read ratio, total tokens), tokens/cost/activity-over-time charts, and breakdown charts by model, task category, complexity band, tool frequency, skill activation, and subagent fan-out](docs/img/dashboard.png)
+
+**Session transcript** — turn-segmented, with purpose-built rendering per tool: Bash as a shell
+console (a `$` prompt per command, the description as a `#` caption, flag badges, multi-line output),
+`Edit`/`MultiEdit`/`Write` as colored `+`/`−` diffs, plans and `AskUserQuestion` as cards, and workflow
+runs with a phase graph:
+
+![A Bash session rendered as a shell console: each command prefixed with a $ prompt (a heredoc's body correctly left unprefixed), the description as a # caption, background/timeout badges, and multi-line command output](docs/img/session-transcript.png)
+
+**Sessions browser** — a filterable, full-text-searchable index across every collected source:
+
+![The Agent Lens sessions list with source/model filters and full-text search across all sources](docs/img/sessions.png)
+
+> ▶ The colored `Edit` diffs, plan / `AskUserQuestion` cards, the workflow phase graph, and the
+> classifier "why" panel are all best explored in the
+> **[live demo](https://swestash.github.io/agent-lens/)**.
 
 ## How it works
 

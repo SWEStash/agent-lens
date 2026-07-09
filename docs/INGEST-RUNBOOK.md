@@ -19,7 +19,9 @@ the [Operations Guide](USAGE.md). This runbook covers running, migrating, and tr
 
 A run prints: `files / skipped / new_events / malformed` (plus `excluded_pruned=N` when an excluded
 project's sessions were removed — see *Excluding projects* in USAGE.md), then `sessions / turns /
-events / tool_calls / classified`, then `tokens / est_cost / db`.
+events / tool_calls / classified`, then one line per sidecar stage — `workflow_results`,
+`session_meta`, and `tool_results` (each with its own `upserted/skipped/malformed`) — and finally
+`tokens / est_cost / db`.
 
 ## Incremental vs. `--full`
 

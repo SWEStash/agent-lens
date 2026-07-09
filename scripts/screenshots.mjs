@@ -120,33 +120,12 @@ async function main() {
   await expandTools();
   await shot("session-diff.png", { fullPage: true });
 
-  // 5) Plan + Q&A — the approved-plan card (ExitPlanMode markdown) and the AskUserQuestion card
-  //    (options with the user's selection checked + written notes).
-  await go("/session/sc-plan-0010");
-  await page.waitForSelector("main");
-  await expandTools();
-  await shot("session-plan.png", { fullPage: true });
-
-  // 6) Workflow detail — the fan-out run: phase graph (from the result sidecar), per-agent rows,
+  // 5) Workflow detail — the fan-out run: phase graph (from the result sidecar), per-agent rows,
   //    roll-up tokens/tool-calls, and links back to the launching turn.
   await go("/workflow/wf_demo000abc");
   await page.waitForSelector("main");
   await page.waitForTimeout(400);
   await shot("workflow.png", { fullPage: true });
-
-  // 7) Signals explainer — expand the classifier "why" panel on a representative session.
-  await go("/session/sc-sub-parent-0002");
-  await page.waitForSelector("main");
-  const why = page.getByRole("button", { name: /why/i }).first();
-  if (await why.count()) { await why.click(); await page.waitForSelector(".signals-panel"); }
-  await page.waitForTimeout(300);
-  await shot("session-signals.png", { fullPage: true });
-
-  // 8) Slash command — the outlined command chip + local output (not raw <command-*> markup).
-  await go("/session/sc-command-0006");
-  await page.waitForSelector(".cmd, main");
-  await page.waitForTimeout(200);
-  await shot("session-command.png", { fullPage: true });
 
   await browser.close();
   console.log("screenshots: done →", IMG);
