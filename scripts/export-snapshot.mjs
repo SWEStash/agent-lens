@@ -42,8 +42,8 @@ writeFileSync(
   env.AGENT_LENS_CONFIG,
   JSON.stringify({
     sources: [
-      { label: "team-a", agent: "claude-code", configDir: "/unused-in-ingest" },
-      { label: "team-b", agent: "claude-code", configDir: "/unused-in-ingest" },
+      // Demo/Pages uses ONLY the synthetic, readable `scenarios` source — never the redacted-real
+      // team-a/team-b (which exist purely to validate the redaction oracle and would show "[redacted]").
       { label: "scenarios", agent: "claude-code", configDir: "/unused-in-ingest" },
     ],
   }),

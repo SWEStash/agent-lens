@@ -208,6 +208,66 @@ table.sessions { width: 100%; border-collapse: collapse; }
   font-size: 12px; white-space: pre-wrap; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
 .cmd-note { margin: 2px 0; }
 
+/* Bash tool call: a `#` description caption (or command preview) in the header, a terminal-style
+ * command block with a `$` prompt per logical command, a console output block, and small flag badges.
+ * Uses shared tokens so it themes light/dark for free. */
+.bash-desc, .bash-preview {
+  flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-size: 12px; color: var(--muted);
+}
+.bash-preview { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+.shell {
+  margin-top: 6px; background: var(--code-bg); border: 1px solid var(--border); border-radius: 6px;
+  padding: 10px;
+}
+.shell-cmd {
+  margin: 0; white-space: pre-wrap; word-break: break-word; overflow-x: auto;
+  font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 12px;
+}
+/* Per-line prompt gutter: `$ ` (accent) on a new command, blank+aligned on a continuation line.
+ * Non-selectable so copying the rendered command via mouse-drag doesn't drag prompts in. */
+.shell-gutter { color: var(--accent); user-select: none; }
+.shell-gutter.cont { color: transparent; }
+/* Command output, rendered like terminal output below the command (newlines preserved where the
+ * ingested summary kept them). */
+.shell-out {
+  margin: 6px 0 0; padding: 8px 10px; white-space: pre-wrap; word-break: break-word; overflow-x: auto;
+  background: var(--code-bg); border-radius: 6px; color: var(--muted);
+  font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 12px;
+}
+.bash-badges { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 6px; }
+.bash-badge {
+  font-size: 11px; color: var(--muted); background: var(--tag); border-radius: 6px; padding: 1px 7px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+/* Edit / MultiEdit / Write tool call: file path + a +adds/−dels stat in the header, a colored diff
+ * (added green, removed red, context muted) per edit. Diff tints derive from the shared ok/err tokens
+ * so they hold up in both themes. */
+.edit-path {
+  flex: 1; min-width: 0; display: flex; gap: 8px; align-items: baseline; overflow: hidden;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px;
+}
+.edit-path .base { font-weight: 600; flex: none; }
+.edit-path .dir { color: var(--muted); font-size: 11px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.diff-stat { flex: none; display: inline-flex; gap: 6px; font-size: 11px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+.diff-stat .add { color: var(--ok); }
+.diff-stat .del { color: var(--err); }
+.diff { margin-top: 6px; border: 1px solid var(--border); border-radius: 6px; overflow: hidden; background: var(--code-bg); }
+.diff-line { display: flex; font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 12px; line-height: 1.5; }
+.diff-sign { width: 2ch; flex: none; text-align: center; user-select: none; color: var(--muted); }
+.diff-text { flex: 1; min-width: 0; white-space: pre-wrap; word-break: break-word; padding-right: 8px; }
+.diff-line.add { background: color-mix(in srgb, var(--ok) 15%, transparent); }
+.diff-line.add .diff-sign { color: var(--ok); }
+.diff-line.del { background: color-mix(in srgb, var(--err) 15%, transparent); }
+.diff-line.del .diff-sign { color: var(--err); }
+.diff-line.ctx { color: var(--muted); }
+.diff-hunk-sep {
+  padding: 2px 8px; font-size: 11px; color: var(--muted); background: var(--panel2);
+  border-bottom: 1px solid var(--border);
+}
+.diff-more { padding: 4px 8px; font-size: 11px; color: var(--muted); font-style: italic; }
+
 /* Task notification: a compact status card for an async task/workflow completion message, instead of
  * the raw <task-notification> XML. */
 .task-notif { margin: 4px 0; padding: 7px 10px; border: 1px solid var(--border); border-left: 3px solid var(--accent);

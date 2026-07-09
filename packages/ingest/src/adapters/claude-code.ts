@@ -24,7 +24,14 @@ function flattenText(content: unknown): string | null {
   return text || null;
 }
 
-/** Short, single-line summary of a tool result (kept small to avoid dumping large/secret output). */
+/** Compact projection of a tool result for the transcript view. Preserves line structure — so console
+ * output (build logs, git output, …) renders as lines instead of one run-on line — while staying
+ * bounded: trailing per-line whitespace and runs of blank lines are trimmed, and the text is capped by
+ * both line count and characters so a large result can't be dumped wholesale into the DB. Internal
+ * spacing is kept intact so column-aligned output survives. The full untruncated output, when big
+ * enough, is spilled by Claude Code to tool-results/<name>.txt and surfaced separately (full_result). */
+const RESULT_SUMMARY_MAX_LINES = 40;
+const RESULT_SUMMARY_MAX_CHARS = 2000;
 function summarizeResult(content: unknown): string | null {
   let s: string | null = null;
   if (typeof content === "string") s = content;
@@ -39,8 +46,24 @@ function summarizeResult(content: unknown): string | null {
     s = JSON.stringify(content);
   }
   if (!s) return null;
-  s = s.replace(/\s+/g, " ").trim();
-  return s.slice(0, 280) || null;
+  // Normalize newlines, drop trailing per-line whitespace, and collapse 3+ blank lines — but keep
+  // internal spacing and single blank lines so the structure reads like the original console output.
+  s = s.replace(/\r\n/g, "\n").replace(/[ \t]+\n/g, "\n").replace(/\n{3,}/g, "\n\n").trim();
+  if (!s) return null;
+  let truncated = false;
+  const lines = s.split("\n");
+  if (lines.length > RESULT_SUMMARY_MAX_LINES) {
+    s = lines.slice(0, RESULT_SUMMARY_MAX_LINES).join("\n");
+    truncated = true;
+  }
+  if (s.length > RESULT_SUMMARY_MAX_CHARS) {
+    s = s.slice(0, RESULT_SUMMARY_MAX_CHARS);
+    const nl = s.lastIndexOf("\n");
+    if (nl > RESULT_SUMMARY_MAX_CHARS - 200) s = s.slice(0, nl); // prefer a clean line boundary
+    truncated = true;
+  }
+  s = s.trimEnd();
+  return (truncated ? s + "\n… (truncated)" : s) || null;
 }
 
 function asString(v: unknown): string | null {

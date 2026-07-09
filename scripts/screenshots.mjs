@@ -36,8 +36,7 @@ writeFileSync(
   env.AGENT_LENS_CONFIG,
   JSON.stringify({
     sources: [
-      { label: "team-a", agent: "claude-code", configDir: "/unused-in-ingest" },
-      { label: "team-b", agent: "claude-code", configDir: "/unused-in-ingest" },
+      // Demo screenshots use ONLY the synthetic, readable `scenarios` source (no redacted-real data).
       { label: "scenarios", agent: "claude-code", configDir: "/unused-in-ingest" },
     ],
   }),
@@ -82,6 +81,18 @@ async function main() {
   const page = await browser.newPage({ viewport: { width: 1440, height: 960 }, deviceScaleFactor: 2 });
   const go = async (path) => { await page.goto(BASE + path, { waitUntil: "networkidle" }); };
   const shot = async (name, opts = {}) => { await page.screenshot({ path: join(IMG, name), ...opts }); console.log("  wrote docs/img/" + name); };
+  // Tool cards (Bash console, Edit/Write diff, generic chips) render collapsed by default; expand them
+  // all so the screenshots show the rendered content, not just the headers.
+  const expandTools = async () => {
+    for (let i = 0; i < 60; i++) {
+      const h = page.locator("button.tool-head[aria-expanded='false']").first();
+      if ((await h.count()) === 0) break;
+      await h.click().catch(() => {});
+    }
+    // Un-clamp any collapsed prose (e.g. the approved-plan card's CollapsibleText).
+    for (const b of await page.getByRole("button", { name: /show more/i }).all()) await b.click().catch(() => {});
+    await page.waitForTimeout(200);
+  };
 
   // 1) Dashboard — KPIs (token breakdown, cost, cache-read ratio), charts, and breakdowns
   //    (by-model, by-source, subagent fan-out). Full page captures all of it.
@@ -96,25 +107,25 @@ async function main() {
   await page.waitForSelector("table, .empty");
   await shot("sessions.png");
 
-  // 3) Session transcript — the workflow orchestrator, now showing its linked fan-out children.
-  await go("/session/sc-workflow-0003");
+  // 3) Session transcript — the Bash shell-console renderer: a $ prompt per logical command
+  //    (heredoc-/quote-aware), the description as a # caption, flag badges, and multi-line output.
+  await go("/session/sc-bash-0008");
   await page.waitForSelector(".events, .transcript, main");
-  await page.waitForTimeout(300);
+  await expandTools();
   await shot("session-transcript.png", { fullPage: true });
 
-  // 4) Signals explainer — expand the classifier "why" panel on a representative session.
-  await go("/session/sc-sub-parent-0002");
+  // 4) Edit/MultiEdit/Write — the colored +/- diff renderer (context kept, per-edit hunks).
+  await go("/session/sc-edit-0009");
   await page.waitForSelector("main");
-  const why = page.getByRole("button", { name: /why/i }).first();
-  if (await why.count()) { await why.click(); await page.waitForSelector(".signals-panel"); }
-  await page.waitForTimeout(300);
-  await shot("session-signals.png", { fullPage: true });
+  await expandTools();
+  await shot("session-diff.png", { fullPage: true });
 
-  // 5) Slash command — the outlined command chip + local output (not raw <command-*> markup).
-  await go("/session/sc-command-0006");
-  await page.waitForSelector(".cmd, main");
-  await page.waitForTimeout(200);
-  await shot("session-command.png", { fullPage: true });
+  // 5) Workflow detail — the fan-out run: phase graph (from the result sidecar), per-agent rows,
+  //    roll-up tokens/tool-calls, and links back to the launching turn.
+  await go("/workflow/wf_demo000abc");
+  await page.waitForSelector("main");
+  await page.waitForTimeout(400);
+  await shot("workflow.png", { fullPage: true });
 
   await browser.close();
   console.log("screenshots: done →", IMG);

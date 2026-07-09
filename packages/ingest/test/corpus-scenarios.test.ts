@@ -61,10 +61,22 @@ describe("committed corpus represents every pipeline scenario", () => {
     expect(one("SELECT COUNT(*) n FROM sessions WHERE source_id NOT IN ('team-a','team-b','scenarios')").n).toBe(0);
   });
 
-  it("session counts: 14 total, 9 main, 5 subagent", () => {
-    expect(one("SELECT COUNT(*) n FROM sessions").n).toBe(14);
-    expect(one("SELECT COUNT(*) n FROM sessions WHERE is_sidechain=0").n).toBe(9);
-    expect(one("SELECT COUNT(*) n FROM sessions WHERE is_sidechain=1").n).toBe(5);
+  it("session counts: 43 total, 34 main, 9 subagent", () => {
+    expect(one("SELECT COUNT(*) n FROM sessions").n).toBe(43);
+    expect(one("SELECT COUNT(*) n FROM sessions WHERE is_sidechain=0").n).toBe(34);
+    expect(one("SELECT COUNT(*) n FROM sessions WHERE is_sidechain=1").n).toBe(9);
+  });
+
+  it("transcript renderers: showcase sessions exercise Bash, Edit/MultiEdit/Write, Plan, and Q&A", () => {
+    // sc-bash-0008: four Bash calls (console renderer — $ prompt per command, heredoc/quote-aware).
+    expect(one("SELECT COUNT(*) n FROM tool_calls WHERE session_id='sc-bash-0008' AND tool_name='Bash'").n).toBe(4);
+    // sc-edit-0009: the colored-diff renderer across all three edit tools.
+    expect(one("SELECT COUNT(*) n FROM tool_calls WHERE session_id='sc-edit-0009' AND tool_name='Edit'").n).toBe(1);
+    expect(one("SELECT COUNT(*) n FROM tool_calls WHERE session_id='sc-edit-0009' AND tool_name='MultiEdit'").n).toBe(1);
+    expect(one("SELECT COUNT(*) n FROM tool_calls WHERE session_id='sc-edit-0009' AND tool_name='Write'").n).toBe(1);
+    // sc-plan-0010: the approved-plan card + the AskUserQuestion Q&A card.
+    expect(one("SELECT COUNT(*) n FROM tool_calls WHERE session_id='sc-plan-0010' AND tool_name='ExitPlanMode'").n).toBe(1);
+    expect(one("SELECT COUNT(*) n FROM tool_calls WHERE session_id='sc-plan-0010' AND tool_name='AskUserQuestion'").n).toBe(1);
   });
 
   it("skill versioning: api-design fires 3× across 2 content versions; firings link to a version", () => {
@@ -79,8 +91,8 @@ describe("committed corpus represents every pipeline scenario", () => {
     expect(v.body).not.toContain("ARGUMENTS");
   });
 
-  it("subagents: all 5 link to a parent (3 Task via toolUseResult, 2 workflow via run id)", () => {
-    expect(one("SELECT COUNT(*) n FROM sessions WHERE is_sidechain=1 AND parent_session_id IS NOT NULL").n).toBe(5);
+  it("subagents: all 9 link to a parent (Task via toolUseResult + workflow via run id), none orphaned", () => {
+    expect(one("SELECT COUNT(*) n FROM sessions WHERE is_sidechain=1 AND parent_session_id IS NOT NULL").n).toBe(9);
     expect(one("SELECT COUNT(*) n FROM sessions WHERE is_sidechain=1 AND parent_session_id IS NULL").n).toBe(0);
     expect(one("SELECT COUNT(*) n FROM sessions WHERE parent_session_id='sc-workflow-0003'").n).toBe(2);
   });
