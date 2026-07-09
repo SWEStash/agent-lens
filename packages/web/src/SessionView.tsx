@@ -437,9 +437,384 @@ function WorkflowLaunchBlock({ t }: { t: ToolCall }) {
   );
 }
 
+interface BashInput {
+  command: string;
+  description?: string;
+  timeout?: number;
+  run_in_background?: boolean;
+  restart?: boolean;
+}
+
+/** Pull the shell command (+ optional description/flags) out of a Bash tool call's input so it can be
+ * rendered like a terminal instead of a raw JSON blob. Only `command` is guaranteed; the rest are
+ * optional/version-dependent (surfaced as badges, with the raw JSON as the source of truth). Returns
+ * null when there's no usable command (malformed/empty input) → caller falls back to the generic chip. */
+function parseBashInput(inputJson: string | null): BashInput | null {
+  if (!inputJson) return null;
+  try {
+    const o = JSON.parse(inputJson);
+    if (!o || typeof o !== "object") return null;
+    const command = typeof o.command === "string" ? o.command : "";
+    if (!command.trim()) return null;
+    return {
+      command,
+      description: typeof o.description === "string" ? o.description : undefined,
+      timeout: typeof o.timeout === "number" ? o.timeout : undefined,
+      run_in_background: o.run_in_background === true,
+      restart: o.restart === true,
+    };
+  } catch {
+    return null;
+  }
+}
+
+/** A physical line of a shell command, tagged with whether it *starts* a new logical command (gets a
+ * `$` prompt) or *continues* the previous one (heredoc body, open quote/`$(…)`, backslash or trailing
+ * `|`/`&&`/`||` continuation → no prompt). */
+type ShellLine = { text: string; cont: boolean };
+
+/** Parse a heredoc opener at `line[i]` (`<<` / `<<-`, optional spaces, optionally quoted delimiter),
+ * push its delimiter onto `heredocs`, and return the index of its last consumed char. */
+function scanHeredoc(line: string, i: number, heredocs: { delim: string; strip: boolean }[]): number {
+  let j = i + 2; // past "<<"
+  let strip = false;
+  if (line[j] === "-") {
+    strip = true;
+    j++;
+  }
+  while (line[j] === " " || line[j] === "\t") j++;
+  let q = "";
+  if (line[j] === "'" || line[j] === '"') {
+    q = line[j];
+    j++;
+  }
+  let delim = "";
+  if (q) {
+    while (j < line.length && line[j] !== q) delim += line[j++];
+    if (line[j] === q) j++;
+  } else {
+    while (j < line.length && /[A-Za-z0-9_]/.test(line[j])) delim += line[j++];
+  }
+  if (delim) heredocs.push({ delim, strip });
+  return j - 1; // caller's for-loop does i++
+}
+
+/** Split a (possibly multi-command, multi-line) shell command into physical lines, marking which start
+ * a new command vs. continue the previous one — so each real command gets a `$` prompt and heredoc
+ * bodies / continuations don't. A pragmatic scanner honoring single/double quotes, `$(…)`/subshell
+ * depth, heredocs (incl. mid-command, e.g. `"$(cat <<'EOF'…)"`), backslash and trailing-operator
+ * continuations. Control-structure bodies outside a heredoc (a bare multi-line `for`/`if`) aren't
+ * tracked, so each of their lines gets its own `$` — acceptable since those are rare as a raw command. */
+function splitShellCommand(command: string): ShellLine[] {
+  const lines = command.split("\n");
+  const out: ShellLine[] = [];
+  let mode: "NORMAL" | "SQUOTE" | "DQUOTE" = "NORMAL";
+  let parenDepth = 0;
+  const heredocs: { delim: string; strip: boolean }[] = [];
+  let pendingCont = false;
+
+  for (const line of lines) {
+    if (heredocs.length > 0) {
+      out.push({ text: line, cont: true }); // heredoc body — literal, never a new command
+      const hd = heredocs[0];
+      const probe = hd.strip ? line.replace(/^\t+/, "") : line;
+      if (probe.trimEnd() === hd.delim) heredocs.shift();
+      continue;
+    }
+
+    out.push({ text: line, cont: mode !== "NORMAL" || parenDepth > 0 || pendingCont });
+
+    pendingCont = false;
+    for (let i = 0; i < line.length; i++) {
+      const c = line[i];
+      if (mode === "SQUOTE") {
+        if (c === "'") mode = "NORMAL";
+        continue;
+      }
+      if (mode === "DQUOTE") {
+        if (c === "\\") i++;
+        else if (c === '"') mode = "NORMAL";
+        else if (c === "$" && line[i + 1] === "(") (parenDepth++, i++);
+        else if (c === ")") parenDepth > 0 && parenDepth--;
+        else if (c === "<" && line[i + 1] === "<" && line[i + 2] !== "<") i = scanHeredoc(line, i, heredocs);
+        continue;
+      }
+      // NORMAL
+      if (c === "\\") i++;
+      else if (c === "'") mode = "SQUOTE";
+      else if (c === '"') mode = "DQUOTE";
+      else if (c === "#" && (i === 0 || /\s/.test(line[i - 1]))) break; // trailing comment
+      else if (c === "$" && line[i + 1] === "(") (parenDepth++, i++);
+      else if (c === "(") parenDepth++;
+      else if (c === ")") parenDepth > 0 && parenDepth--;
+      else if (c === "<" && line[i + 1] === "<" && line[i + 2] !== "<") i = scanHeredoc(line, i, heredocs);
+    }
+
+    if (mode === "NORMAL" && parenDepth === 0 && heredocs.length === 0) {
+      const t = line.replace(/\s+$/, "");
+      const bs = t.match(/\\+$/);
+      if (bs && bs[0].length % 2 === 1) pendingCont = true;
+      else if (/(&&|\|\||\|)$/.test(t)) pendingCont = true;
+    }
+  }
+  return out;
+}
+
+/** Render a Bash tool call as a shell console: the description as a `#` caption beside the title (or, if
+ * absent, a one-line command preview when collapsed), and when open a terminal-style command block with
+ * a `$` prompt per logical command (heredoc bodies / continuations get no prompt), flag badges, the
+ * command output, and the raw input JSON one click away. Mirrors ToolChip's collapsible container +
+ * result rendering so hide-tools/collapse behaviour is unchanged. */
+function BashBlock({ t, bash }: { t: ToolCall; bash: BashInput }) {
+  const [open, setOpen] = useState(false);
+  const [showFull, setShowFull] = useState(false);
+  const [raw, setRaw] = useState(false);
+  const bodyId = useId();
+  const rawId = useId();
+  const preview = bash.command.split("\n")[0];
+  const lines = splitShellCommand(bash.command);
+  return (
+    <div className={"tool " + (t.status === "error" ? "tool-err" : "")}>
+      <button className="tool-head" aria-expanded={open} aria-controls={bodyId} onClick={() => setOpen((o) => !o)}>
+        <span className="tool-name">🖥 Bash</span>
+        {bash.description ? (
+          <span className="bash-desc"># {bash.description}</span>
+        ) : (
+          !open && <span className="bash-preview">{preview}</span>
+        )}
+        {t.status && <span className="tool-status">{t.status}</span>}
+        {t.total_duration_ms ? <span className="muted">{fmtDuration(t.total_duration_ms)}</span> : null}
+        <span className="chev">{open ? "▾" : "▸"}</span>
+      </button>
+      {open && (
+        <div className="tool-body" id={bodyId}>
+          <div className="shell code-block">
+            <CopyButton text={bash.command} className="copy-corner" title="Copy command" />
+            <pre className="shell-cmd">
+              {lines.map((l, i) => (
+                <span key={i}>
+                  <span className={"shell-gutter" + (l.cont ? " cont" : "")} aria-hidden="true">
+                    {l.cont ? "  " : "$ "}
+                  </span>
+                  {l.text}
+                  {i < lines.length - 1 ? "\n" : ""}
+                </span>
+              ))}
+            </pre>
+          </div>
+          {(bash.run_in_background || bash.restart || bash.timeout != null) && (
+            <div className="bash-badges">
+              {bash.run_in_background && <span className="bash-badge">background</span>}
+              {bash.restart && <span className="bash-badge">restart</span>}
+              {bash.timeout != null && <span className="bash-badge">timeout {Math.round(bash.timeout / 1000)}s</span>}
+            </div>
+          )}
+          {t.result_summary && <pre className="shell-out">{t.result_summary}</pre>}
+          {t.full_result && (
+            <div className="full-result">
+              <button
+                type="button"
+                className="ghost small show-full"
+                aria-expanded={showFull}
+                onClick={() => setShowFull((s) => !s)}
+              >
+                {showFull ? "Hide" : "Show"} full result ({(t.full_result.bytes / 1024).toFixed(1)} KB)
+              </button>
+              {showFull && (
+                <div className="code-block">
+                  <CopyButton text={t.full_result.text} className="copy-corner" title="Copy full tool result" />
+                  <pre className="code">{t.full_result.text}</pre>
+                </div>
+              )}
+            </div>
+          )}
+          <div className="launch-actions">
+            <button className="ghost small" aria-expanded={raw} aria-controls={rawId} onClick={() => setRaw((r) => !r)}>
+              {raw ? "Hide raw JSON ▴" : "View raw JSON ▾"}
+            </button>
+            <CopyButton text={prettyJson(t.input_json ?? "{}")} label="JSON" title="Copy raw tool input JSON" />
+          </div>
+          {raw && (
+            <pre id={rawId} className="code">
+              {prettyJson(t.input_json ?? "{}")}
+            </pre>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+type DiffLine = { type: "ctx" | "add" | "del"; text: string };
+
+/** Line-level LCS diff between two strings — the basis for rendering an Edit as a +/- diff with
+ * unchanged context lines kept. Guards against pathological cost on very large edits by falling back to
+ * a delete-all + add-all rendering. */
+function diffLines(oldStr: string, newStr: string): DiffLine[] {
+  const a = oldStr === "" ? [] : oldStr.split("\n");
+  const b = newStr === "" ? [] : newStr.split("\n");
+  const n = a.length;
+  const m = b.length;
+  if (n * m > 250000)
+    return [...a.map((t) => ({ type: "del" as const, text: t })), ...b.map((t) => ({ type: "add" as const, text: t }))];
+  const dp = Array.from({ length: n + 1 }, () => new Array<number>(m + 1).fill(0));
+  for (let i = n - 1; i >= 0; i--)
+    for (let j = m - 1; j >= 0; j--)
+      dp[i][j] = a[i] === b[j] ? dp[i + 1][j + 1] + 1 : Math.max(dp[i + 1][j], dp[i][j + 1]);
+  const out: DiffLine[] = [];
+  let i = 0;
+  let j = 0;
+  while (i < n && j < m) {
+    if (a[i] === b[j]) (out.push({ type: "ctx", text: a[i] }), i++, j++);
+    else if (dp[i + 1][j] >= dp[i][j + 1]) (out.push({ type: "del", text: a[i] }), i++);
+    else (out.push({ type: "add", text: b[j] }), j++);
+  }
+  while (i < n) out.push({ type: "del", text: a[i++] });
+  while (j < m) out.push({ type: "add", text: b[j++] });
+  return out;
+}
+
+interface EditView {
+  file_path: string;
+  kind: "Edit" | "MultiEdit" | "Write";
+  hunks: DiffLine[][];
+  adds: number;
+  dels: number;
+}
+
+/** Normalize an Edit / MultiEdit / Write tool input into diff hunks: Edit → one hunk (old→new),
+ * MultiEdit → one hunk per edit, Write → one all-additions hunk (new file content). Returns null when
+ * the input lacks a file path / usable payload, so the caller falls back to the generic chip. */
+function parseEditInput(toolName: string, inputJson: string | null): EditView | null {
+  if (!inputJson) return null;
+  try {
+    const o = JSON.parse(inputJson);
+    if (!o || typeof o !== "object" || typeof o.file_path !== "string") return null;
+    let hunks: DiffLine[][];
+    if (toolName === "Write") {
+      if (typeof o.content !== "string") return null;
+      hunks = [o.content === "" ? [] : o.content.split("\n").map((text: string) => ({ type: "add" as const, text }))];
+    } else if (toolName === "MultiEdit") {
+      if (!Array.isArray(o.edits)) return null;
+      hunks = o.edits
+        .filter((e: unknown): e is { old_string: string; new_string: string } => {
+          const r = e as Record<string, unknown>;
+          return !!r && typeof r.old_string === "string" && typeof r.new_string === "string";
+        })
+        .map((e: { old_string: string; new_string: string }) => diffLines(e.old_string, e.new_string));
+      if (hunks.length === 0) return null;
+    } else {
+      if (typeof o.old_string !== "string" || typeof o.new_string !== "string") return null;
+      hunks = [diffLines(o.old_string, o.new_string)];
+    }
+    let adds = 0;
+    let dels = 0;
+    for (const h of hunks)
+      for (const l of h) {
+        if (l.type === "add") adds++;
+        else if (l.type === "del") dels++;
+      }
+    return { file_path: o.file_path, kind: toolName as EditView["kind"], hunks, adds, dels };
+  } catch {
+    return null;
+  }
+}
+
+/** Split a file path into a directory prefix and basename for the header (basename emphasized). */
+function splitPath(p: string): { dir: string; base: string } {
+  const i = p.lastIndexOf("/");
+  return i >= 0 ? { dir: p.slice(0, i + 1), base: p.slice(i + 1) } : { dir: "", base: p };
+}
+
+const EDIT_ICON: Record<string, string> = { Edit: "✏️", MultiEdit: "✏️", Write: "📄" };
+const DIFF_MAX_LINES = 400;
+
+/** Render an Edit / MultiEdit / Write tool call as a colored +/- diff (unchanged lines shown as muted
+ * context) instead of a raw JSON blob: the file basename + path and a `+adds −dels` stat in the header,
+ * one diff block per edit (capped, with a spill note), the result, and the raw input JSON one click
+ * away. Mirrors BashBlock's collapsible container so hide-tools/collapse behaviour is unchanged. */
+function EditBlock({ t, edit }: { t: ToolCall; edit: EditView }) {
+  const [open, setOpen] = useState(false);
+  const [showFull, setShowFull] = useState(false);
+  const [raw, setRaw] = useState(false);
+  const bodyId = useId();
+  const rawId = useId();
+  const { dir, base } = splitPath(edit.file_path);
+  return (
+    <div className={"tool " + (t.status === "error" ? "tool-err" : "")}>
+      <button className="tool-head" aria-expanded={open} aria-controls={bodyId} onClick={() => setOpen((o) => !o)}>
+        <span className="tool-name">
+          {EDIT_ICON[edit.kind] ?? "✏️"} {edit.kind}
+        </span>
+        <span className="edit-path">
+          <span className="base">{base}</span>
+          {dir && <span className="dir">{dir.replace(/\/$/, "")}</span>}
+        </span>
+        <span className="diff-stat">
+          {edit.adds > 0 && <span className="add">+{edit.adds}</span>}
+          {edit.dels > 0 && <span className="del">−{edit.dels}</span>}
+        </span>
+        {t.status && <span className="tool-status">{t.status}</span>}
+        {t.total_duration_ms ? <span className="muted">{fmtDuration(t.total_duration_ms)}</span> : null}
+        <span className="chev">{open ? "▾" : "▸"}</span>
+      </button>
+      {open && (
+        <div className="tool-body" id={bodyId}>
+          {edit.hunks.map((hunk, hi) => (
+            <div key={hi} className="diff">
+              {edit.hunks.length > 1 && <div className="diff-hunk-sep">edit {hi + 1}</div>}
+              {hunk.slice(0, DIFF_MAX_LINES).map((l, i) => (
+                <div key={i} className={"diff-line " + l.type}>
+                  <span className="diff-sign" aria-hidden="true">
+                    {l.type === "add" ? "+" : l.type === "del" ? "−" : " "}
+                  </span>
+                  <span className="diff-text">{l.text === "" ? " " : l.text}</span>
+                </div>
+              ))}
+              {hunk.length > DIFF_MAX_LINES && (
+                <div className="diff-more">… {hunk.length - DIFF_MAX_LINES} more lines — View raw JSON for the rest</div>
+              )}
+            </div>
+          ))}
+          {t.result_summary && <pre className="shell-out">{t.result_summary}</pre>}
+          {t.full_result && (
+            <div className="full-result">
+              <button
+                type="button"
+                className="ghost small show-full"
+                aria-expanded={showFull}
+                onClick={() => setShowFull((s) => !s)}
+              >
+                {showFull ? "Hide" : "Show"} full result ({(t.full_result.bytes / 1024).toFixed(1)} KB)
+              </button>
+              {showFull && (
+                <div className="code-block">
+                  <CopyButton text={t.full_result.text} className="copy-corner" title="Copy full tool result" />
+                  <pre className="code">{t.full_result.text}</pre>
+                </div>
+              )}
+            </div>
+          )}
+          <div className="launch-actions">
+            <button className="ghost small" aria-expanded={raw} aria-controls={rawId} onClick={() => setRaw((r) => !r)}>
+              {raw ? "Hide raw JSON ▴" : "View raw JSON ▾"}
+            </button>
+            <CopyButton text={prettyJson(t.input_json ?? "{}")} label="JSON" title="Copy raw tool input JSON" />
+          </div>
+          {raw && (
+            <pre id={rawId} className="code">
+              {prettyJson(t.input_json ?? "{}")}
+            </pre>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 /** One tool call, routed to its renderer: approved plans, AskUserQuestion, and Workflow launches get
- * rich cards (always shown); every other tool is a generic chip that the "hide tool messages" toggle
- * can suppress. */
+ * rich cards (always shown); Bash gets a shell-console card and Edit/MultiEdit/Write a colored diff;
+ * every other tool is a generic chip that the "hide tool messages" toggle can suppress. */
 function ToolRender({ t, hideTools }: { t: ToolCall; hideTools: boolean }) {
   if (t.tool_name === "ExitPlanMode") {
     const plan = parsePlan(t.input_json);
@@ -447,6 +822,14 @@ function ToolRender({ t, hideTools }: { t: ToolCall; hideTools: boolean }) {
   }
   if (t.tool_name === "AskUserQuestion") return <AskUserQuestionBlock t={t} />;
   if (t.tool_name === "Workflow") return <WorkflowLaunchBlock t={t} />;
+  if (t.tool_name === "Bash") {
+    const bash = parseBashInput(t.input_json);
+    if (bash) return hideTools ? null : <BashBlock t={t} bash={bash} />;
+  }
+  if (t.tool_name === "Edit" || t.tool_name === "MultiEdit" || t.tool_name === "Write") {
+    const edit = parseEditInput(t.tool_name, t.input_json);
+    if (edit) return hideTools ? null : <EditBlock t={t} edit={edit} />;
+  }
   return hideTools ? null : <ToolChip t={t} />;
 }
 
