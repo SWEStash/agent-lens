@@ -49,18 +49,18 @@ echo "=== scenario assertions (DB) ==="
 ok 1 "$(echo "$INGEST" | grep -oE 'malformed=[0-9]+' | head -1 | cut -d= -f2)" "malformed line counted"
 # multi-source: three labeled sources, no cross-source bleed.
 ok 3 "$(q "SELECT COUNT(DISTINCT source_id) FROM sessions;")" "multi-source (3 sources)"
-ok 17 "$(q "SELECT COUNT(*) FROM sessions;")" "total sessions"
-ok 12 "$(q "SELECT COUNT(*) FROM sessions WHERE is_sidechain=0;")" "main sessions"
+ok 43 "$(q "SELECT COUNT(*) FROM sessions;")" "total sessions"
+ok 34 "$(q "SELECT COUNT(*) FROM sessions WHERE is_sidechain=0;")" "main sessions"
 # sidecars: the workflow result (phase graph), per-subagent meta (type/description badges), and a
 # spilled full tool output ("Show full result") — the three sidecar ingest paths, exercised end-to-end.
 ok 1 "$(q "SELECT COUNT(*) FROM workflow_results WHERE run_id='wf_demo000abc';")" "workflow result sidecar ingested"
-ok 3 "$(q "SELECT COUNT(*) FROM session_meta;")" "subagent meta sidecars ingested"
+ok 7 "$(q "SELECT COUNT(*) FROM session_meta;")" "subagent meta sidecars ingested"
 ok 1 "$(q "SELECT COUNT(*) FROM tool_results;")" "spilled tool result ingested"
 # skill versioning: api-design fires 3× over 2 content-addressed versions.
 ok 2 "$(q "SELECT COUNT(*) FROM skills WHERE name='api-design';")" "skill versions (content-addressed)"
 ok 2 "$(q "SELECT COUNT(DISTINCT skill_id) FROM tool_calls WHERE skill_name='api-design';")" "skill firings link to a version"
 # subagents: all 5 link to a parent — 3 Task (toolUseResult.agentId) + 2 workflow (run id).
-ok 5 "$(q "SELECT COUNT(*) FROM sessions WHERE is_sidechain=1 AND parent_session_id IS NOT NULL;")" "linked subagents"
+ok 9 "$(q "SELECT COUNT(*) FROM sessions WHERE is_sidechain=1 AND parent_session_id IS NOT NULL;")" "linked subagents"
 ok 0 "$(q "SELECT COUNT(*) FROM sessions WHERE is_sidechain=1 AND parent_session_id IS NULL;")" "no orphan subagents"
 ok 2 "$(q "SELECT COUNT(*) FROM sessions WHERE parent_session_id='sc-workflow-0003';")" "workflow fan-out linked to orchestrator"
 # workflow run is captured + tied to the launching turn (run grouping in the UI).
@@ -88,7 +88,7 @@ node -e '
   const ov = JSON.parse(process.argv[1]), bd = JSON.parse(process.argv[2]);
   const sk = JSON.parse(process.argv[3]), skd = JSON.parse(process.argv[4]);
   let bad = 0; const ok = (c, n) => { console.log(`  ${c ? "PASS" : "FAIL"}  ${n}`); if (!c) bad++; };
-  ok(ov.sessions === 17, "overview serves 17 sessions");
+  ok(ov.sessions === 43, "overview serves 43 sessions");
   ok(bd.by_source.length === 3, "breakdowns: 3 sources");
   ok(ov.cost > 0 && ov.tokens.cache_read > 0, "overview: cost + cache_read > 0");
   ok(bd.subagent_fanout.total_spawns >= 1, "breakdowns: subagent fan-out present");

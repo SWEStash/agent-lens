@@ -36,8 +36,7 @@ writeFileSync(
   env.AGENT_LENS_CONFIG,
   JSON.stringify({
     sources: [
-      { label: "team-a", agent: "claude-code", configDir: "/unused-in-ingest" },
-      { label: "team-b", agent: "claude-code", configDir: "/unused-in-ingest" },
+      // Demo screenshots use ONLY the synthetic, readable `scenarios` source (no redacted-real data).
       { label: "scenarios", agent: "claude-code", configDir: "/unused-in-ingest" },
     ],
   }),
