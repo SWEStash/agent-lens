@@ -218,7 +218,11 @@ corpus by `node scripts/screenshots.mjs`.
 
 ![Agent Lens dashboard — KPI cards, tokens/cost/activity charts, and per-model / category / complexity / tool / skill / subagent breakdowns](img/dashboard.png)
 
-![Agent Lens session transcript — turn-segmented view with the spawned-subagent fan-out linked to the orchestrating session](img/session-transcript.png)
+![Agent Lens session transcript — Bash rendered as a shell console with a $ prompt per command, a description caption, flag badges, and multi-line output](img/session-transcript.png)
+
+![Agent Lens edit rendering — Edit/MultiEdit/Write shown as colored +/- diffs with context and per-file add/remove counts](img/session-diff.png)
+
+![Agent Lens workflow detail — a fan-out run's phase graph, returned result, run log, and per-agent rows with type badges](img/workflow.png)
 
 **Sessions** — you can:
 

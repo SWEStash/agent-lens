@@ -83,12 +83,28 @@ complexity, tool, skill, and subagent fan-out:
 
 ![Agent Lens dashboard showing KPI cards (token breakdown, estimated cost, cache-read ratio, total tokens), tokens/cost/activity-over-time charts, and breakdown charts by model, task category, complexity band, tool frequency, skill activation, and subagent fan-out](docs/img/dashboard.png)
 
-**Session transcript** — turn-segmented, with the spawned-subagent fan-out **grouped by workflow run**
-(named, counted, and linked to the launching turn) and slash commands rendered as outlined chips:
+**Session transcript** — turn-segmented, with purpose-built rendering per tool. **Bash** shows as a
+shell console: a `$` prompt per logical command (heredoc-, quote-, and `$()`-aware), the description as
+a `#` caption, flag badges, and multi-line output (with a "Show full result" for spilled output):
 
-![A workflow orchestrator session ("Run the full DB migration workflow") showing its spawned subagents grouped under the named workflow run, the Workflow tool call, and the turn-by-turn transcript](docs/img/session-transcript.png)
+![A Bash session rendered as a shell console: each command prefixed with a $ prompt (a heredoc's body correctly left unprefixed), the description as a # caption, background/timeout badges, and multi-line command output](docs/img/session-transcript.png)
 
 ![A slash-command session showing the /plugin invocation rendered as an outlined command chip with its local output, instead of raw command markup](docs/img/session-command.png)
+
+**Edits as diffs** — `Edit` / `MultiEdit` / `Write` render as a colored `+`/`−` diff with surrounding
+context and a per-file add/remove stat, instead of a raw JSON blob:
+
+![A session showing Edit, MultiEdit, and Write tool calls rendered as colored +/- diffs with unchanged context lines, per-edit hunks, and per-file add/remove counts](docs/img/session-diff.png)
+
+**Plans & questions** — approved plans render as a titled card (the plan markdown), and AskUserQuestion
+shows each question's options with the user's selection checked and any written notes:
+
+![An AskUserQuestion card with the user's chosen options checked and a written note, above an approved-plan card rendering the plan markdown with steps and verification](docs/img/session-plan.png)
+
+**Workflow runs** — a Workflow tool call opens a detail page for the fan-out: a phase graph, the
+returned result, the run log, and per-agent rows with type/description badges and token/cost roll-ups:
+
+![The workflow detail page for a migrate-db run: a Plan → Migrate → Verify phase graph, the returned result table, a run log, and two fan-out agents with "migrator" type badges and per-agent tokens/cost](docs/img/workflow.png)
 
 **Classification signals** — the deterministic, no-AI explainer for why a session scored as it did:
 
