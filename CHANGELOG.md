@@ -1,3 +1,10 @@
+# [0.5.0](https://github.com/SWEStash/agent-lens/compare/v0.4.0...v0.5.0) (2026-07-14)
+
+
+### Features
+
+* **security:** retrospective security findings with triage ([47cff28](https://github.com/SWEStash/agent-lens/commit/47cff2878e7c6515abf219edc507ef6e248876c3))
+
 # [0.4.0](https://github.com/SWEStash/agent-lens/compare/v0.3.0...v0.4.0) (2026-07-09)
 
 
