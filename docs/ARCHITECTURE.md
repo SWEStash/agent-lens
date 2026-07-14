@@ -84,7 +84,8 @@ flowchart TD
   INGEST --> MARK["dirty.add(sessionId)"] --> LOOP
   LOOP --> REBUILD["rebuildDerived(dirty)<br/>expand linkage neighborhood → rebuild turns,<br/>turn_id, parent linkage, aggregates"]
   REBUILD --> CLASSIFY["classify(expanded)<br/>category + complexity bands"]
-  CLASSIFY --> REPORT(["report: files/skipped/new_events, totals, cost"]) 
+  CLASSIFY --> DETECT["detect(expanded)<br/>security findings (rules over tool_calls)"]
+  DETECT --> REPORT(["report: files/skipped/new_events, totals, cost, findings"]) 
 ```
 
 Key properties (full rationale in [ADR-010](decisions/ADR-010-incremental-scalable-ingest.md)):
@@ -94,8 +95,8 @@ Key properties (full rationale in [ADR-010](decisions/ADR-010-incremental-scalab
 - **Idempotent writes.** Events are keyed by `uuid` with `ON CONFLICT DO NOTHING`; ingesting the mirror
   and all divergence backups deduplicates to the maximal history (ADR-001/002).
 - **Dirty-session rebuild.** Only sessions touched this run — expanded to their subagent-linkage
-  neighborhood (spawned children + spawner parents, by fixpoint) — have their turns/aggregates/linkage
-  and classification recomputed. `--full` rebuilds everything.
+  neighborhood (spawned children + spawner parents, by fixpoint) — have their turns/aggregates/linkage,
+  classification, and security findings recomputed. `--full` rebuilds everything.
 - **Streaming.** Files over 8 MB stream in 64 KB chunks with a boundary-safe `StringDecoder`, bounding
   memory; the streaming hash equals the whole-file hash so skip decisions are path-independent.
 
@@ -114,6 +115,7 @@ erDiagram
   events ||--o| token_usage : "usage"
   events ||--o{ tool_calls : "invokes"
   sessions ||--o| classifications : "category/complexity"
+  tool_calls ||--o{ findings : "security findings"
   sessions }o--o| sessions : "parent (subagent linkage)"
 ```
 
@@ -137,3 +139,5 @@ erDiagram
 | [014](decisions/ADR-014-unified-service-command.md) | Unified `agent-lens service` command (collector timer + server daemon) |
 | [015](decisions/ADR-015-refresh-action-endpoint.md) | Scoped write-action endpoint: `POST /api/refresh` |
 | [016](decisions/ADR-016-npm-release-and-versioning.md) | npm publishing + automated versioning (semantic-release) |
+| [017](decisions/ADR-017-security-findings.md) | Retrospective security findings via a deterministic rule engine |
+| [018](decisions/ADR-018-security-triage-store.md) | Security-finding triage in a separate writable store |

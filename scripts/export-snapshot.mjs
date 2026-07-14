@@ -108,6 +108,13 @@ async function main() {
   writeSnap("dashboard/timeseries.json", await getJson("/api/dashboard/timeseries"));
   writeSnap("dashboard/breakdowns.json", await getJson("/api/dashboard/breakdowns"));
 
+  // Security findings (ADR-017): the summary + the full findings list. In snapshot mode api.ts strips
+  // the query, so the list collapses to one default file — limit=1000 keeps every finding in it (the
+  // demo corpus has few, well under a page).
+  writeSnap("security/summary.json", await getJson("/api/security/summary"));
+  writeSnap("security/findings.json", await getJson("/api/security/findings?limit=1000"));
+  writeSnap("security/mutes.json", await getJson("/api/security/mutes")); // empty in the demo; keeps the GET from 404ing
+
   // Skills list + one detail page per fired skill (api.ts resolves /skills/<name> →
   // snapshot/skills/<name>.json; encode the name to match the client fetch path exactly).
   const skills = await getJson("/api/skills");

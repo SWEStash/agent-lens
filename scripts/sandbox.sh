@@ -49,8 +49,8 @@ echo "=== scenario assertions (DB) ==="
 ok 1 "$(echo "$INGEST" | grep -oE 'malformed=[0-9]+' | head -1 | cut -d= -f2)" "malformed line counted"
 # multi-source: three labeled sources, no cross-source bleed.
 ok 3 "$(q "SELECT COUNT(DISTINCT source_id) FROM sessions;")" "multi-source (3 sources)"
-ok 43 "$(q "SELECT COUNT(*) FROM sessions;")" "total sessions"
-ok 34 "$(q "SELECT COUNT(*) FROM sessions WHERE is_sidechain=0;")" "main sessions"
+ok 47 "$(q "SELECT COUNT(*) FROM sessions;")" "total sessions"
+ok 38 "$(q "SELECT COUNT(*) FROM sessions WHERE is_sidechain=0;")" "main sessions"
 # sidecars: the workflow result (phase graph), per-subagent meta (type/description badges), and a
 # spilled full tool output ("Show full result") — the three sidecar ingest paths, exercised end-to-end.
 ok 1 "$(q "SELECT COUNT(*) FROM workflow_results WHERE run_id='wf_demo000abc';")" "workflow result sidecar ingested"
@@ -88,7 +88,7 @@ node -e '
   const ov = JSON.parse(process.argv[1]), bd = JSON.parse(process.argv[2]);
   const sk = JSON.parse(process.argv[3]), skd = JSON.parse(process.argv[4]);
   let bad = 0; const ok = (c, n) => { console.log(`  ${c ? "PASS" : "FAIL"}  ${n}`); if (!c) bad++; };
-  ok(ov.sessions === 43, "overview serves 43 sessions");
+  ok(ov.sessions === 47, "overview serves 47 sessions");
   ok(bd.by_source.length === 3, "breakdowns: 3 sources");
   ok(ov.cost > 0 && ov.tokens.cache_read > 0, "overview: cost + cache_read > 0");
   ok(bd.subagent_fanout.total_spawns >= 1, "breakdowns: subagent fan-out present");

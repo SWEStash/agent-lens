@@ -17,7 +17,7 @@
  * (Phase 2). Bump SCHEMA_VERSION on any DDL change.
  */
 
-export const SCHEMA_VERSION = 11;
+export const SCHEMA_VERSION = 12;
 
 export const SCHEMA_SQL = /* sql */ `
 PRAGMA journal_mode = WAL;
@@ -205,6 +205,34 @@ CREATE TABLE IF NOT EXISTS classifications (
   classifier_version INTEGER NOT NULL DEFAULT 1,
   PRIMARY KEY (scope, target_id)
 );
+
+-- Security findings (ADR-017), re-runnable. A deterministic rule engine (detect.ts) scans each
+-- tool call's verbatim input/result for risky operations — destructive/data-loss, credential access,
+-- data exfiltration, privilege/guardrail bypass — and records one row per (tool_call, rule) match.
+-- Findings are 0..N per tool call (unlike classifications, which are 1-per-session), so an incremental
+-- re-run DELETEs the touched sessions' rows and re-INSERTs (delete-then-insert) rather than upserting.
+-- Every input/modifier is captured in signals_json so a finding is fully explainable; framework_ref
+-- anchors it to OWASP Agentic / MITRE ATLAS. detector_version lets a future engine supersede rows.
+CREATE TABLE IF NOT EXISTS findings (
+  id               TEXT PRIMARY KEY,   -- deterministic hash(tool_call_id, rule_id)
+  session_id       TEXT NOT NULL REFERENCES sessions(id),
+  tool_call_id     TEXT REFERENCES tool_calls(id),
+  event_uuid       TEXT,               -- the tool call's event, for jump-to-transcript
+  turn_id          TEXT,
+  rule_id          TEXT NOT NULL,      -- 'destructive.rm_rf'
+  category         TEXT NOT NULL,      -- destructive | credential-access | exfiltration | privilege-bypass
+  framework_ref    TEXT,               -- 'OWASP ASI02' | 'MITRE ATLAS AML.T0086' | ...
+  severity         TEXT NOT NULL,      -- info | low | medium | high | critical
+  title            TEXT,
+  evidence         TEXT,               -- matched snippet, truncated (no wholesale secret dump)
+  signals_json     TEXT,               -- why: rule, matched pattern, context modifiers
+  detector_version INTEGER NOT NULL DEFAULT 1
+);
+CREATE INDEX IF NOT EXISTS idx_findings_session  ON findings(session_id);
+CREATE INDEX IF NOT EXISTS idx_findings_severity ON findings(severity);
+CREATE INDEX IF NOT EXISTS idx_findings_category ON findings(category);
+CREATE INDEX IF NOT EXISTS idx_findings_rule     ON findings(rule_id);
+CREATE INDEX IF NOT EXISTS idx_findings_tool_call ON findings(tool_call_id);
 
 -- Workflow-tool run results, ingested from the sidecar JSON the runner writes next to the launching
 -- session (…/projects/<enc>/<sessionId>/workflows/wf_<id>.json). The transcript only carries the

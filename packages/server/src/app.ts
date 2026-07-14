@@ -8,17 +8,44 @@ import { existsSync } from "node:fs";
 import Fastify, { type FastifyInstance } from "fastify";
 import fastifyStatic from "@fastify/static";
 import { sessionToMarkdown, type MarkdownEvent } from "@agent-lens/core";
-import { type DB, lastIngested, schemaStatus, listSources, listProjects, listModels, listSessions, getSession, getWorkflow, listSkills, getSkill } from "./db.js";
+import { type DB, lastIngested, schemaStatus, listSources, listProjects, listModels, listSessions, getSession, getWorkflow, listSkills, getSkill, listFindings, securitySummary } from "./db.js";
 import { dashboardOverview, dashboardTimeseries, dashboardBreakdowns, type DashFilters } from "./dashboard.js";
 import { originAllowed, runRefresh } from "./refresh.js";
+import { openTriage, dismiss, reopen, muteRule, unmute, listMutes, type TriageDB, type MuteScope } from "./triage.js";
 
 export interface CreateAppOpts {
   /** Absolute path to the built web SPA; when present it is served with a history fallback. */
   webDist?: string | null;
+  /** Path to the writable security-triage store (ADR-018). When set, it is opened read-write for
+   *  triage writes and ATTACHed to the read handle so the findings list can JOIN triage state. */
+  triageDbPath?: string | null;
 }
 
 export async function createApp(db: DB, opts: CreateAppOpts = {}): Promise<FastifyInstance> {
   const app = Fastify({ logger: false });
+
+  // Security triage store (ADR-018): a separate writable SQLite, ATTACHed to the read handle so the
+  // findings queries can JOIN dismissed/muted state, while writes go through `triageDb`. The analytics
+  // handle stays read-only. Absent → the security endpoints degrade to the un-triaged (all-open) view.
+  let triageDb: TriageDB | null = null;
+  if (opts.triageDbPath) {
+    triageDb = openTriage(opts.triageDbPath); // creates the file + schema before we ATTACH it
+    db.exec(`ATTACH DATABASE '${opts.triageDbPath.replace(/'/g, "''")}' AS triage`);
+    app.addHook("onClose", async () => triageDb?.close());
+  }
+
+  // Shared CSRF + availability guard for the triage write routes (same posture as /api/refresh).
+  const guardWrite = (req: any, reply: any): boolean => {
+    if (!originAllowed(req.headers.origin)) {
+      reply.code(403).send({ error: { code: "FORBIDDEN_ORIGIN", message: "cross-origin write blocked" } });
+      return false;
+    }
+    if (!triageDb) {
+      reply.code(503).send({ error: { code: "TRIAGE_UNAVAILABLE", message: "triage store not configured" } });
+      return false;
+    }
+    return true;
+  };
 
   app.get("/api/health", async () => {
     const s = schemaStatus(db);
@@ -88,6 +115,71 @@ export async function createApp(db: DB, opts: CreateAppOpts = {}): Promise<Fasti
     const result = getWorkflow(db, run_id);
     if (!result) return reply.code(404).send({ error: "not found" });
     return result;
+  });
+
+  // Security findings (ADR-017). Read-only; browsable list + roll-up summary for the /security page,
+  // the transcript inline badges (served via /api/sessions/:id), and the Dashboard KPI.
+  app.get("/api/security/summary", async () => securitySummary(db));
+  const findingFilters = (q: Record<string, string>) => ({
+    severity: q.severity,
+    category: q.category,
+    rule: q.rule,
+    session: q.session,
+    source: q.source,
+    project: q.project,
+    from: q.from,
+    to: q.to,
+    status: (["open", "dismissed", "muted", "all"] as const).find((s) => s === q.status),
+  });
+  app.get("/api/security/findings", async (req) => {
+    const q = req.query as Record<string, string>;
+    return listFindings(db, {
+      ...findingFilters(q),
+      sort: (["severity", "session", "rule", "category", "time"] as const).find((s) => s === q.sort),
+      dir: q.dir === "asc" ? "asc" : q.dir === "desc" ? "desc" : undefined,
+      limit: Math.min(Number(q.limit) || 50, 5000),
+      offset: Number(q.offset) || 0,
+    });
+  });
+
+  // Triage writes (ADR-018): CSRF-guarded, loopback-only, same posture as /api/refresh.
+  app.get("/api/security/mutes", async () => (triageDb ? listMutes(triageDb) : []));
+  app.post("/api/security/dismiss", async (req, reply) => {
+    if (!guardWrite(req, reply)) return reply;
+    const b = (req.body ?? {}) as { ids?: string[]; note?: string };
+    const n = dismiss(triageDb!, Array.isArray(b.ids) ? b.ids : [], b.note ?? null);
+    return { ok: true, dismissed: n };
+  });
+  app.post("/api/security/reopen", async (req, reply) => {
+    if (!guardWrite(req, reply)) return reply;
+    const b = (req.body ?? {}) as { ids?: string[] };
+    const n = reopen(triageDb!, Array.isArray(b.ids) ? b.ids : []);
+    return { ok: true, reopened: n };
+  });
+  // Dismiss every OPEN finding matching a filter (bulk cleanup) — collects ids server-side, then marks.
+  app.post("/api/security/dismiss-matching", async (req, reply) => {
+    if (!guardWrite(req, reply)) return reply;
+    const b = (req.body ?? {}) as { filter?: Record<string, string>; note?: string };
+    const page = listFindings(db, { ...findingFilters(b.filter ?? {}), status: "open", limit: 100000, offset: 0 });
+    const ids = (page.findings as Array<{ id: string }>).map((r) => r.id);
+    const n = dismiss(triageDb!, ids, b.note ?? null);
+    return { ok: true, dismissed: n };
+  });
+  app.post("/api/security/mute", async (req, reply) => {
+    if (!guardWrite(req, reply)) return reply;
+    const b = (req.body ?? {}) as { rule_id?: string; scope?: string; scope_id?: string; note?: string };
+    if (!b.rule_id) return reply.code(400).send({ error: { code: "BAD_REQUEST", message: "rule_id required" } });
+    const scope = (["global", "project", "source"] as const).find((s) => s === b.scope) ?? "global";
+    muteRule(triageDb!, b.rule_id, scope as MuteScope, b.scope_id ?? "", b.note ?? null);
+    return { ok: true };
+  });
+  app.post("/api/security/unmute", async (req, reply) => {
+    if (!guardWrite(req, reply)) return reply;
+    const b = (req.body ?? {}) as { rule_id?: string; scope?: string; scope_id?: string };
+    if (!b.rule_id) return reply.code(400).send({ error: { code: "BAD_REQUEST", message: "rule_id required" } });
+    const scope = (["global", "project", "source"] as const).find((s) => s === b.scope) ?? "global";
+    const n = unmute(triageDb!, b.rule_id, scope as MuteScope, b.scope_id ?? "");
+    return { ok: true, unmuted: n };
   });
 
   app.get("/api/skills", async (req) => {

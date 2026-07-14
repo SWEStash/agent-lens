@@ -207,9 +207,9 @@ is **not** auto-restarted on crash — it returns on the next logon.
 > **Tip:** `agent-lens service install` with no target installs the collector **and** the server at
 > once — the one-command "make it work after reboot" setup.
 
-Open the URL. The app has three views (nav tabs): **Sessions** (browse), **Skills**, and
-**Dashboard** (analytics). The top bar also shows **when data was last ingested** ("updated Xm ago"),
-a **Refresh** button that runs collect+ingest on the host on demand (`POST /api/refresh` — the one
+Open the URL. The app has four views (nav tabs): **Sessions** (browse), **Skills**, **Security**
+(findings), and **Dashboard** (analytics). The top bar also shows **when data was last ingested** ("updated Xm ago"),
+a **Refresh** button that runs collect+ingest on the host on demand (`POST /api/refresh` — a scoped
 write-action on the otherwise read-only server; loopback-only + CSRF-guarded, see ADR-015), and a
 **light/dark theme toggle** (dark by default; your choice is remembered).
 A live, corpus-only demo of these views (no real data) is published at
@@ -244,6 +244,17 @@ date range):
   Category/complexity are scoped to *main* sessions (subagent sessions skew read-heavy — see ADR-004).
 - **Unpriced models** (e.g. `claude-fable-5`) are surfaced explicitly, not silently zeroed, so cost
   reads as a lower bound rather than a wrong number.
+
+**Security** (`/security`) — risky operations the agent performed, flagged after the fact by
+deterministic rules over each tool call (ADR-017), classified by severity and anchored to OWASP
+Agentic / MITRE ATLAS. It's retrospective awareness, not runtime blocking. You can:
+
+- **Browse & filter** by severity, category, rule, source, project, date range, and status; findings
+  also appear **inline** on the offending tool call in the transcript, with a session banner.
+- **Triage** (ADR-018): mark a finding **safe** (single or batched), **dismiss all** matching a
+  filter, or **mute a whole rule** (globally or per project/source) to silence a noisy detector. Open
+  counts (dismissed + muted excluded) drive the KPIs so real, un-cleared findings stand out. Triage is
+  stored in a separate `triage.db` and survives `ingest --full`.
 
 UI development with hot reload (proxies `/api` to the running server):
 
@@ -365,11 +376,21 @@ macOS) if you need at-rest protection. See `docs/decisions/ADR-009-retention-and
 | `GET /api/workflows/:run_id` | workflow run detail (phase graph, returned result, run log, per-agent rows) |
 | `GET /api/skills` | skills list (optional `q`, `source`, `project` filters) |
 | `GET /api/skills/:name` | skill detail (content-addressed versions + firings) |
+| `GET /api/security/summary` | finding roll-up (open counts by severity/category/rule + reference content) |
+| `GET /api/security/findings` | filtered, paginated findings list (see query params) |
+| `GET /api/security/mutes` | currently muted rules |
 
 `/api/sessions` query params: `source`, `project`, `model`, `kind` (`main`\|`subagent`),
-`q` (full-text), `from`, `to` (ISO timestamps), `limit` (≤200), `offset`.
+`q` (full-text), `from`, `to` (date-inclusive), `limit` (≤200), `offset`.
 `/api/dashboard/*` query params: `source`, `from`, `to`; `timeseries` also accepts `bucket`
 (`day`\|`week`\|`month`, otherwise chosen adaptively from the data span).
+`/api/security/findings` query params: `severity`, `category`, `rule`, `session`, `source`,
+`project`, `from`, `to` (date-inclusive), `status` (`open` default \| `dismissed` \| `muted` \|
+`all`), `sort`, `dir`, `limit`, `offset`.
+
+**Write actions** (the exceptions to read-only; loopback-only + CSRF-guarded, see ADR-015/018):
+`POST /api/refresh` (collect+ingest), and the security-triage writes `POST /api/security/{dismiss,
+reopen,dismiss-matching,mute,unmute}` (which write the separate `triage.db`, never the analytics DB).
 
 ## Troubleshooting
 
