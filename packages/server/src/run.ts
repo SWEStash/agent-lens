@@ -34,8 +34,12 @@ export async function startServer(): Promise<void> {
     process.exit(1);
   }
 
+  // Triage store (ADR-018) sits beside the analytics DB and is never touched by ingest, so user triage
+  // survives `ingest --full`. Opened read-write by createApp; the analytics handle stays read-only.
+  const triageDbPath = process.env.AGENT_LENS_TRIAGE_DB || join(dirname(dbPath), "triage.db");
+
   const db = openReadonly(dbPath);
-  const app = await createApp(db, { webDist });
+  const app = await createApp(db, { webDist, triageDbPath });
 
   try {
     await app.listen({ host, port });

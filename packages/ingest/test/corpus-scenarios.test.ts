@@ -13,6 +13,7 @@ import type { SourceFile } from "@agent-lens/core";
 import { openDb } from "../dist/db.js";
 import { prepareStatements, ingestFile, rebuildDerived, newStats } from "../dist/pipeline.js";
 import { classify } from "../dist/classify.js";
+import { detect } from "../dist/detect.js";
 import { ClaudeCodeAdapter, parentSessionFromPath, workflowRunFromPath } from "../dist/adapters/claude-code.js";
 
 const CORPUS = join(dirname(fileURLToPath(import.meta.url)), "../../../test/fixtures/corpus");
@@ -49,6 +50,7 @@ beforeAll(() => {
   }
   rebuildDerived(db);
   classify(db);
+  detect(db);
   malformed = stats.malformed;
 });
 
@@ -61,9 +63,29 @@ describe("committed corpus represents every pipeline scenario", () => {
     expect(one("SELECT COUNT(*) n FROM sessions WHERE source_id NOT IN ('team-a','team-b','scenarios')").n).toBe(0);
   });
 
-  it("session counts: 43 total, 34 main, 9 subagent", () => {
-    expect(one("SELECT COUNT(*) n FROM sessions").n).toBe(43);
-    expect(one("SELECT COUNT(*) n FROM sessions WHERE is_sidechain=0").n).toBe(34);
+  it("security findings (ADR-017): the synthetic scenario trips all four categories", () => {
+    const sid = "sc-security-0011";
+    // 8 findings: rm -rf * (critical), key file read + private-key in output (2), force-push,
+    // curl upload (critical), chmod 777, sudo, write outside project.
+    expect(one(`SELECT COUNT(*) n FROM findings WHERE session_id='${sid}'`).n).toBe(8);
+    expect(one(`SELECT COUNT(DISTINCT category) n FROM findings WHERE session_id='${sid}'`).n).toBe(4);
+    // The curl-to-external + @file upload is critical exfiltration.
+    expect(one(`SELECT severity s FROM findings WHERE tool_call_id='tu_x8' AND rule_id='exfil.network_upload'`).s).toBe("critical");
+    // Reading ~/.ssh/id_rsa AND its private-key output both fire on the same tool call.
+    expect(one(`SELECT COUNT(*) n FROM findings WHERE tool_call_id='tu_x4'`).n).toBe(2);
+    // Writing to /etc (outside the /demo/acme-api project) is a high-severity privilege finding.
+    expect(one(`SELECT severity s FROM findings WHERE tool_call_id='tu_x14' AND rule_id='privilege.write_outside_project'`).s).toBe("high");
+    // No findings leak onto the benign scenarios (e.g. the plain pagination session).
+    expect(one(`SELECT COUNT(*) n FROM findings WHERE session_id='sc-plain-0001'`).n).toBe(0);
+    // The demo spreads findings across several sessions/projects so the /security page has variety.
+    expect(one("SELECT COUNT(DISTINCT session_id) n FROM findings").n).toBeGreaterThanOrEqual(4);
+    // The config-dir plan writes (rs-1021, sc-security-0011) are allowlisted → never flagged.
+    expect(one("SELECT COUNT(*) n FROM findings WHERE evidence LIKE '%/.claude/%'").n).toBe(0);
+  });
+
+  it("session counts: 47 total, 38 main, 9 subagent", () => {
+    expect(one("SELECT COUNT(*) n FROM sessions").n).toBe(47);
+    expect(one("SELECT COUNT(*) n FROM sessions WHERE is_sidechain=0").n).toBe(38);
     expect(one("SELECT COUNT(*) n FROM sessions WHERE is_sidechain=1").n).toBe(9);
   });
 

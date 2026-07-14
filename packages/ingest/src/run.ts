@@ -19,6 +19,7 @@ import {
 import { openDb, openRaw, readSchemaVersion, resetSchema } from "./db.js";
 import { ClaudeCodeAdapter } from "./adapters/claude-code.js";
 import { classify, CLASSIFIER_VERSION } from "./classify.js";
+import { detect, DETECTOR_VERSION } from "./detect.js";
 import { ingestFile, newStats, prepareStatements, pruneExcluded, rebuildDerived } from "./pipeline.js";
 import { ingestWorkflowResults, newWorkflowStats } from "./workflows.js";
 import { ingestSubagentMeta, newMetaStats } from "./meta.js";
@@ -170,6 +171,10 @@ export function runIngest(argv: string[] = process.argv.slice(2)): void {
   // re-runnable; also exposed standalone as `agent-lens metrics` (see runMetrics).
   const classified = classify(db, args.full ? null : expanded);
 
+  // Security findings (ADR-017) over the same derived tool_calls. Deterministic + re-runnable; the
+  // detector reuses the expanded dirty set and delete-then-inserts the touched sessions' findings.
+  const detected = detect(db, args.full ? null : expanded);
+
   // Report.
   const count = (sql: string) => (db.prepare(sql).get() as any).n as number;
   const sessions = count("SELECT COUNT(*) n FROM sessions");
@@ -189,6 +194,11 @@ export function runIngest(argv: string[] = process.argv.slice(2)): void {
   const wfRuns = count("SELECT COUNT(*) n FROM workflow_results");
   const metaRows = count("SELECT COUNT(*) n FROM session_meta");
   const trRows = count("SELECT COUNT(*) n FROM tool_results");
+  const sevCounts = db
+    .prepare("SELECT severity, COUNT(*) n FROM findings GROUP BY severity")
+    .all() as Array<{ severity: string; n: number }>;
+  const sevMap = Object.fromEntries(sevCounts.map((r) => [r.severity, r.n]));
+  const sevLine = ["critical", "high", "medium", "low", "info"].map((s) => `${s}=${sevMap[s] ?? 0}`).join(" ");
 
   db.close();
   console.log(
@@ -197,6 +207,7 @@ export function runIngest(argv: string[] = process.argv.slice(2)): void {
       `  workflow_results=${wfRuns} (sidecar upserted=${wfStats.upserted} skipped=${wfStats.skipped} malformed=${wfStats.malformed})\n` +
       `  session_meta=${metaRows} (upserted=${metaStats.upserted} skipped=${metaStats.skipped} malformed=${metaStats.malformed})\n` +
       `  tool_results=${trRows} (upserted=${trStats.upserted} skipped=${trStats.skipped} malformed=${trStats.malformed})\n` +
+      `  findings=${detected.count} (${sevLine})\n` +
       `  tokens=${totalTokens.toLocaleString()} est_cost=$${cost.toFixed(2)} db=${dbPath}`,
   );
 }
@@ -215,6 +226,10 @@ export function runMetrics(argv: string[] = process.argv.slice(2)): void {
 
   const db = openDb(dbPath);
   const r = classify(db);
+  const d = detect(db);
   db.close();
-  console.log(`agent-lens-metrics: classified=${r.count} classifier_version=${CLASSIFIER_VERSION} db=${dbPath}`);
+  console.log(
+    `agent-lens-metrics: classified=${r.count} classifier_version=${CLASSIFIER_VERSION} ` +
+      `findings=${d.count} detector_version=${DETECTOR_VERSION} db=${dbPath}`,
+  );
 }

@@ -25,8 +25,11 @@ export async function api<T = any>(path: string): Promise<T> {
 
 /** POST to a live API route (never used in snapshot mode — there is no backend). Same-origin, so the
  * browser sends the Origin header the server's CSRF guard checks; no custom header (avoids preflight). */
-export async function apiPost<T = any>(path: string): Promise<T> {
-  const r = await fetch("/api" + path, { method: "POST" });
+export async function apiPost<T = any>(path: string, body?: unknown): Promise<T> {
+  const r = await fetch("/api" + path, {
+    method: "POST",
+    ...(body !== undefined ? { headers: { "content-type": "application/json" }, body: JSON.stringify(body) } : {}),
+  });
   if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
   return r.json() as Promise<T>;
 }
@@ -72,6 +75,92 @@ export interface ToolCall {
   /** Present when the transcript truncated this result to a "…/tool-results/<name>.txt" marker and the
    * spilled full output has been ingested — lets the UI expand to the un-truncated text. */
   full_result?: { text: string; bytes: number } | null;
+  /** Security findings raised on this tool call (ADR-017) — drives the inline severity badge + panel. */
+  findings?: Finding[];
+}
+
+export type Severity = "info" | "low" | "medium" | "high" | "critical";
+
+/** The explainability blob behind a finding, written verbatim by the detector (detect.ts). */
+export interface FindingSignals {
+  rule: string;
+  category: string;
+  framework_ref: string;
+  tool_name: string;
+  base_severity: Severity;
+  severity: Severity;
+  status: string | null;
+  modifiers: Record<string, unknown>;
+  detector_version: number;
+}
+
+/** One security finding — a (tool_call, rule) match. List rows also carry session context. */
+export interface Finding {
+  id: string;
+  session_id: string;
+  tool_call_id: string | null;
+  event_uuid: string | null;
+  turn_id: string | null;
+  rule_id: string;
+  category: string;
+  framework_ref: string | null;
+  severity: Severity;
+  title: string | null;
+  evidence: string | null;
+  /** The tool the finding fired on (Bash/Read/Write/…) — clarifies path-only evidence. */
+  tool_name?: string | null;
+  signals?: FindingSignals | null;
+  // Present in the /security list projection (listFindings), absent in the inline session projection.
+  session_title?: string | null;
+  source_id?: string | null;
+  is_sidechain?: number;
+  project_path?: string | null;
+  project_id?: string | null;
+  /** Session timestamp — the "when" column. */
+  started_at?: string | null;
+  // Triage state (ADR-018), present when the triage store is attached.
+  dismissed?: number;
+  dismiss_note?: string | null;
+  dismissed_at?: string | null;
+  muted?: number;
+}
+
+export interface FindingsPage {
+  total: number;
+  findings: Finding[];
+}
+
+/** A muted rule (GET /api/security/mutes) — suppresses its findings from the open view. */
+export interface MuteRow {
+  rule_id: string;
+  scope: string;
+  scope_id: string;
+  note: string | null;
+  muted_at: string;
+}
+
+/** Framework-anchored reference content for a category (from core: SECURITY_CATEGORIES). */
+export interface SecurityCategoryRef {
+  key: string;
+  title: string;
+  framework_ref: string;
+  framework_url: string;
+  what: string;
+  why: string;
+  remediation: string;
+}
+
+/** GET /api/security/summary — roll-up for the page header + Dashboard KPI + reference explainers. */
+export interface SecuritySummary {
+  /** Counts below are over OPEN findings (dismissed + muted excluded). */
+  total: number;
+  sessions_flagged: number;
+  dismissed: number;
+  muted: number;
+  by_severity: Array<{ severity: Severity; n: number }>;
+  by_category: Array<{ category: string; n: number }>;
+  by_rule: Array<{ rule_id: string; category: string; title: string | null; n: number; rank: number }>;
+  categories: SecurityCategoryRef[];
 }
 
 export interface EventNode {
@@ -157,6 +246,8 @@ export interface SessionDetail {
   parent: SessionParent | null;
   children: SessionChild[];
   workflow_runs: WorkflowRun[];
+  /** Security findings across this session (ADR-017), most-severe first — for the header summary. */
+  findings: Finding[];
 }
 
 /** One subagent fanned out by a Workflow run, with its roll-up tokens/cost for the run's agent list. */

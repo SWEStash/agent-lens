@@ -15,9 +15,32 @@ import {
   Legend,
   Cell,
 } from "recharts";
-import { api, type DashOverview, type DashTimeseries, type DashBreakdowns, type TokenSplit } from "./api";
+import { Link } from "react-router-dom";
+import { api, type DashOverview, type DashTimeseries, type DashBreakdowns, type TokenSplit, type SecuritySummary } from "./api";
 import { fmtCost, fmtTokens, fmtDuration, shortModel } from "./format";
 import { ChartCard, Kpi, useChartTokens } from "./charts/theme";
+
+/** Dashboard security tile: OPEN critical/high counts (global; dismissed + muted excluded), linking to
+ * the /security page. A muted, all-clear tile when nothing open remains. */
+function SecurityKpi({ s }: { s: SecuritySummary }) {
+  const bySev = new Map(s.by_severity.map((r) => [r.severity, r.n]));
+  const critical = bySev.get("critical") ?? 0;
+  const high = bySev.get("high") ?? 0;
+  const value = s.total === 0 ? "—" : `${critical} / ${high}`;
+  return (
+    <Link
+      className={"kpi kpi-btn" + (critical > 0 ? " sev-critical" : high > 0 ? " sev-high" : "")}
+      to="/security"
+      title="Security findings — critical / high. Opens the Security page."
+    >
+      <div className="kpi-label">Security findings</div>
+      <div className="kpi-value">{value}</div>
+      <div className="kpi-sub">
+        {s.total === 0 ? "no open findings" : `critical / high · ${s.total} open in ${s.sessions_flagged} sessions`}
+      </div>
+    </Link>
+  );
+}
 
 /** The four token components as a compact, color-keyed breakdown that complements the "Total tokens"
  * KPI and the "Tokens over time" chart — same colors, exact totals + share at a glance. */
@@ -91,9 +114,12 @@ export default function Dashboard() {
   const [bd, setBd] = useState<DashBreakdowns | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  // Security summary is global (not source/date filtered), so fetch it once on mount like sources.
+  const [security, setSecurity] = useState<SecuritySummary | null>(null);
 
   useEffect(() => {
     api<Source[]>("/sources").then(setSources).catch(() => {});
+    api<SecuritySummary>("/security/summary").then(setSecurity).catch(() => {});
   }, []);
 
   useEffect(() => {
@@ -195,6 +221,7 @@ export default function Dashboard() {
             <Kpi label="Turn duration p50 / p95" value={`${fmtDuration(overview.turn_duration_ms.p50)} / ${fmtDuration(overview.turn_duration_ms.p95)}`} sub={`${overview.turn_duration_ms.count} turns`} />
             <Kpi label="Total tokens" value={fmtTokens(overview.total_tokens)} sub={`${fmtTokens(overview.tokens.input + overview.tokens.output)} non-cache`} />
             <TokenBreakdownKpi t={overview.tokens} />
+            {security && <SecurityKpi s={security} />}
           </div>
 
           <div className="cards">

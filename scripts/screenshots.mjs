@@ -127,6 +127,19 @@ async function main() {
   await page.waitForTimeout(400);
   await shot("workflow.png", { fullPage: true });
 
+  // 6) Security page — the browsable findings list, severity KPIs, framework anchors, and the
+  //    "what & why" reference accordion (ADR-017).
+  await go("/security");
+  await page.waitForSelector("table.findings-table, .sev-kpis");
+  await page.waitForTimeout(200);
+  await shot("security.png", { fullPage: true });
+
+  // 7) Security findings inline in a transcript — per-tool severity badges + the session banner.
+  await go("/session/sc-security-0011");
+  await page.waitForSelector(".security-banner");
+  await expandTools();
+  await shot("security-session.png", { fullPage: true });
+
   await browser.close();
   console.log("screenshots: done →", IMG);
 }

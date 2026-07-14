@@ -56,7 +56,7 @@ export default function App() {
   // Layout-heavy pages — the dashboard's chart grid and a skill's body+sessions two-column — opt into
   // a wider container instead (note: "/skills" list stays narrow; only "/skill/<name>" detail widens).
   const { pathname } = useLocation();
-  const wide = pathname === "/dashboard" || pathname.startsWith("/skill/");
+  const wide = pathname === "/dashboard" || pathname === "/security" || pathname.startsWith("/skill/");
   return (
     <div className="app">
       <a className="skip-link" href="#main">
@@ -72,6 +72,9 @@ export default function App() {
           </NavLink>
           <NavLink to="/skills" className={({ isActive }) => (isActive ? "nav-link active" : "nav-link")}>
             Skills
+          </NavLink>
+          <NavLink to="/security" className={({ isActive }) => (isActive ? "nav-link active" : "nav-link")}>
+            Security
           </NavLink>
           <NavLink to="/dashboard" className={({ isActive }) => (isActive ? "nav-link active" : "nav-link")}>
             Dashboard

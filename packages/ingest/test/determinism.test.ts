@@ -15,6 +15,7 @@ import type { SourceFile } from "@agent-lens/core";
 import { openDb } from "../dist/db.js";
 import { prepareStatements, ingestFile, rebuildDerived, newStats } from "../dist/pipeline.js";
 import { classify } from "../dist/classify.js";
+import { detect } from "../dist/detect.js";
 import { ClaudeCodeAdapter } from "../dist/adapters/claude-code.js";
 
 const CORPUS = join(dirname(fileURLToPath(import.meta.url)), "../../../test/fixtures/corpus");
@@ -56,6 +57,7 @@ function snapshot(db: any): string {
     dump("SELECT target_id, category, complexity_score, complexity_band FROM classifications ORDER BY target_id"),
     dump("SELECT event_uuid, turn_id FROM token_usage ORDER BY event_uuid"),
     dump("SELECT id, session_id, turn_id, tool_name, spawned_session_id FROM tool_calls ORDER BY id"),
+    dump("SELECT id, session_id, tool_call_id, rule_id, category, severity FROM findings ORDER BY id"),
   ].join("\n");
 }
 
@@ -67,6 +69,7 @@ describe("pipeline determinism over the committed corpus", () => {
     ingest(db, stmts, adapter, allFiles);
     rebuildDerived(db); // full
     classify(db); // full
+    detect(db); // full
     fullSnap = snapshot(db);
   });
 
@@ -78,10 +81,12 @@ describe("pipeline determinism over the committed corpus", () => {
     ingest(db, stmts, adapter, mains);
     const e1 = rebuildDerived(db, sessionIdsOf(mains));
     classify(db, e1);
+    detect(db, e1);
     // Run 2: subagents arrive later; expansion must pull their spawning parents back in.
     ingest(db, stmts, adapter, subs);
     const e2 = rebuildDerived(db, sessionIdsOf(subs));
     classify(db, e2);
+    detect(db, e2);
     expect(snapshot(db)).toBe(fullSnap);
   });
 
@@ -90,10 +95,12 @@ describe("pipeline determinism over the committed corpus", () => {
     ingest(db, stmts, adapter, allFiles);
     rebuildDerived(db);
     classify(db);
+    detect(db);
     const before = snapshot(db);
     const stats2 = ingest(db, stmts, adapter, allFiles); // second pass, identical content
     rebuildDerived(db);
     classify(db);
+    detect(db);
     expect(stats2.newEvents).toBe(0); // ON CONFLICT DO NOTHING — nothing new
     expect(snapshot(db)).toBe(before);
   });

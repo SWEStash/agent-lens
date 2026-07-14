@@ -77,7 +77,7 @@ function skillVersionId(name: string, body: string): string {
 /**
  * Remove every session whose project path is in `excludedPaths` — plus its subagent descendants —
  * along with all dependent rows (events → FTS via trigger, token_usage, tool_calls, turns,
- * classifications) and the ingest_state for its files. This is what makes the global exclude list
+ * classifications, findings) and the ingest_state for its files. This is what makes the global exclude list
  * take effect on the NEXT ingest, incremental or full: add a project and its data leaves the DB.
  * Matches projects.path exactly or by path-prefix. Returns the number of sessions pruned.
  */
@@ -112,6 +112,7 @@ export function pruneExcluded(db: DB, excludedPaths: string[]): number {
 
   db.pragma("foreign_keys = OFF");
   db.transaction(() => {
+    db.exec("DELETE FROM findings WHERE session_id IN (SELECT id FROM _prune)");
     for (const t of ["token_usage", "tool_calls", "turns", "events"]) db.exec(`DELETE FROM ${t} WHERE session_id IN (SELECT id FROM _prune)`);
     db.exec("DELETE FROM classifications WHERE scope = 'session' AND target_id IN (SELECT id FROM _prune)");
     db.exec("DELETE FROM sessions WHERE id IN (SELECT id FROM _prune)");
@@ -407,6 +408,9 @@ export function rebuildDerived(db: DB, dirty?: Set<string> | null): Set<string> 
   // (kept global — it is one row per session and must catch any now-missing target).
   db.exec(`DELETE FROM sessions WHERE event_count = 0${andId}`);
   db.exec("DELETE FROM classifications WHERE scope = 'session' AND target_id NOT IN (SELECT id FROM sessions)");
+  // Security findings for a now-missing session (kept global — detect() runs after this rebuild and
+  // only rescans the dirty scope, so a vanished non-dirty session's rows must be swept here).
+  db.exec("DELETE FROM findings WHERE session_id NOT IN (SELECT id FROM sessions)");
   // Sweep skill versions no longer referenced by any tool_call. Full path only: an incremental run
   // only re-derives dirty sessions, so a version could still be referenced by a non-dirty session.
   if (!incremental) {

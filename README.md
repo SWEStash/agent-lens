@@ -57,7 +57,7 @@ agent-lens-ingest: files=312 skipped=298 new_events=1840 malformed=0
 **3 · Browse** — a local dashboard + transcript browser on `127.0.0.1`:
 
 ```text
- ◐ Agent Lens          Sessions · Dashboard            local agent session explorer
+ ◐ Agent Lens    Sessions · Skills · Security · Dashboard    local agent session explorer
  ┌ tokens ──────┐ ┌ est. cost ───┐ ┌ sessions ────┐ ┌ cache read ──┐
  │ 128.5 M      │ │ $842.17      │ │ 312          │ │ 92.6 %       │
  └──────────────┘ └──────────────┘ └──────────────┘ └──────────────┘
@@ -71,6 +71,7 @@ agent-lens-ingest: files=312 skipped=298 new_events=1840 malformed=0
 - Which sessions were big features vs. quick fixes? *(heuristic category + complexity)*
 - Which skills and subagents do I actually use, and how often?
 - What exactly happened in that session three weeks ago? *(full transcript + full-text search)*
+- Did the agent do anything risky on my host — delete data, touch secrets, exfiltrate, escalate? *(security findings, triageable)*
 
 ## Features
 
@@ -96,6 +97,14 @@ agent-lens-ingest: files=312 skipped=298 new_events=1840 malformed=0
   and breakdowns by model, task category, complexity, tool, skill, and subagent type.
 - **Heuristic classification** — deterministic, **no-AI** task category + complexity per session,
   with every input signal stored for transparency.
+- **Security findings** — deterministic, **no-AI** rules flag risky operations the agent performed
+  (destructive/data-loss, secret access, exfiltration, privilege/guardrail bypass), classified by
+  severity and anchored to OWASP Agentic / MITRE ATLAS. A browsable **Security** page, inline
+  transcript badges, and a dashboard KPI surface them — retrospective awareness, not runtime blocking
+  ([ADR-017](docs/decisions/ADR-017-security-findings.md)). **Triage** the noise: mark findings safe
+  (single/batch), mute a whole rule, and filter by status/date; open counts drive the KPIs so real
+  ones stand out. Triage persists in a separate store that survives full rebuilds
+  ([ADR-018](docs/decisions/ADR-018-security-triage-store.md)).
 - **Subagent call tree** — sidechain (subagent) sessions are linked back to the spawning parent turn.
 - **Multi-account** — collect several Claude installs side by side, each tagged by source.
 - **Strictly local** — loopback-only server, gitignored data, zero outbound network calls.
@@ -121,6 +130,12 @@ runs with a phase graph:
 **Sessions browser** — a filterable, full-text-searchable index across every collected source:
 
 ![The Agent Lens sessions list with source/model filters and full-text search across all sources](docs/img/sessions.png)
+
+**Security findings** — risky operations the agent performed, flagged by deterministic rules and
+classified by severity (anchored to OWASP Agentic / MITRE ATLAS), with a browsable list, severity
+filters, and a "what & why" reference; findings also appear inline in the transcript:
+
+![The Agent Lens security page: severity KPI tiles (critical/high/medium), a findings table listing each risky operation with its rule, framework anchor, evidence, and session, plus a risk-category reference accordion](docs/img/security.png)
 
 > ▶ The colored `Edit` diffs, plan / `AskUserQuestion` cards, the workflow phase graph, and the
 > classifier "why" panel are all best explored in the

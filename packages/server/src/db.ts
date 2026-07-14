@@ -1,5 +1,5 @@
 import Database from "better-sqlite3";
-import { costForUsage, SCHEMA_VERSION, unpackRaw } from "@agent-lens/core";
+import { costForUsage, SCHEMA_VERSION, unpackRaw, severityRank, SECURITY_CATEGORIES } from "@agent-lens/core";
 
 export type DB = Database.Database;
 
@@ -125,8 +125,9 @@ export function listSessions(db: DB, f: SessionFilters) {
   const params: any[] = [];
   if (f.source) (where.push("s.source_id = ?"), params.push(f.source));
   if (f.project) (where.push("s.project_id = ?"), params.push(f.project));
-  if (f.from) (where.push("s.started_at >= ?"), params.push(f.from));
-  if (f.to) (where.push("s.started_at <= ?"), params.push(f.to));
+  // Date-inclusive on both ends (see findingWhere): a picked `to` day must include that day's sessions.
+  if (f.from) (where.push("date(s.started_at) >= date(?)"), params.push(f.from));
+  if (f.to) (where.push("date(s.started_at) <= date(?)"), params.push(f.to));
   if (f.kind === "main") where.push("s.is_sidechain = 0");
   if (f.kind === "subagent") where.push("s.is_sidechain = 1");
   if (f.model) {
@@ -275,6 +276,40 @@ export function getSession(db: DB, id: string) {
     }
   }
 
+  // Security findings (ADR-017): attach each tool call's findings inline (for the transcript severity
+  // badge + "why" panel) and collect a session-level list for the header summary. Guarded for a
+  // read-only pre-ingest DB whose schema predates the findings table.
+  const sessionFindings: any[] = [];
+  if (tableExists(db, "findings")) {
+    const findingRows = db
+      .prepare(
+        `SELECT id, tool_call_id, event_uuid, turn_id, rule_id, category, framework_ref, severity, title, evidence, signals_json
+         FROM findings WHERE session_id = ?`,
+      )
+      .all(id) as any[];
+    const byToolCall = new Map<string, any[]>();
+    for (const fr of findingRows) {
+      const f = {
+        id: fr.id,
+        tool_call_id: fr.tool_call_id,
+        event_uuid: fr.event_uuid,
+        turn_id: fr.turn_id,
+        rule_id: fr.rule_id,
+        category: fr.category,
+        framework_ref: fr.framework_ref,
+        severity: fr.severity,
+        title: fr.title,
+        evidence: fr.evidence,
+        signals: safeJson(fr.signals_json),
+      };
+      sessionFindings.push(f);
+      if (fr.tool_call_id) (byToolCall.get(fr.tool_call_id) ?? byToolCall.set(fr.tool_call_id, []).get(fr.tool_call_id))!.push(f);
+    }
+    for (const t of toolRows) t.findings = byToolCall.get(t.id) ?? [];
+    // Most-severe first so a session banner can lead with the worst.
+    sessionFindings.sort((a, b) => severityRank(b.severity) - severityRank(a.severity));
+  }
+
   const toolsByEvent = new Map<string, any[]>();
   for (const t of toolRows) {
     if (!t.event_uuid) continue;
@@ -414,7 +449,7 @@ export function getSession(db: DB, id: string) {
     )
     .all(id) as any[];
 
-  return { session, turns, events, classification, parent, children, workflow_runs };
+  return { session, turns, events, classification, parent, children, workflow_runs, findings: sessionFindings };
 }
 
 /**
@@ -666,4 +701,159 @@ export function getSkill(db: DB, name: string) {
   for (const s of sessions) s.title = s.ai_title || s.slug || null;
   const call_count = sessions.reduce((a, s) => a + (s.fire_count as number), 0);
   return { name, versions, sessions, call_count };
+}
+
+// ---- Security findings (ADR-017) + triage (ADR-018) ----------------------
+
+export interface FindingFilters {
+  severity?: string;
+  category?: string;
+  rule?: string;
+  session?: string;
+  source?: string;
+  project?: string;
+  from?: string;
+  to?: string;
+  /** open (default; excludes dismissed + muted) | dismissed | muted | all. */
+  status?: "open" | "dismissed" | "muted" | "all";
+  /** Sort the whole filtered list before pagination. Defaults to "severity" (most-severe first). */
+  sort?: "severity" | "session" | "rule" | "category" | "time";
+  dir?: "asc" | "desc";
+  limit: number;
+  offset: number;
+}
+
+// Rank severities inside SQL so the list can be severity-ordered and paginated without materializing
+// everything (mirrors SEVERITY_ORDER in core: info=1 … critical=5).
+const SEVERITY_RANK_SQL =
+  "CASE f.severity WHEN 'critical' THEN 5 WHEN 'high' THEN 4 WHEN 'medium' THEN 3 WHEN 'low' THEN 2 WHEN 'info' THEN 1 ELSE 0 END";
+
+// A finding is muted when a muted_rules row matches its rule at global/project/source scope. Only valid
+// when the triage DB is ATTACHed (createApp does this); guarded by triageAttached() everywhere it's used.
+const MUTED_SQL = `EXISTS (SELECT 1 FROM triage.muted_rules m WHERE m.rule_id = f.rule_id
+   AND (m.scope='global' OR (m.scope='project' AND m.scope_id = s.project_id) OR (m.scope='source' AND m.scope_id = s.source_id)))`;
+
+/** Whether the writable triage store is ATTACHed to this (read) connection — gates all triage SQL. */
+export function triageAttached(db: DB): boolean {
+  return (db.prepare("PRAGMA database_list").all() as Array<{ name: string }>).some((r) => r.name === "triage");
+}
+
+/** WHERE fragments shared by list + summary: user filters (no status) over findings f / sessions s. */
+function findingWhere(f: FindingFilters): { sql: string[]; params: any[] } {
+  const sql: string[] = [];
+  const params: any[] = [];
+  if (f.severity) (sql.push("f.severity = ?"), params.push(f.severity));
+  if (f.category) (sql.push("f.category = ?"), params.push(f.category));
+  if (f.rule) (sql.push("f.rule_id = ?"), params.push(f.rule));
+  if (f.session) (sql.push("f.session_id = ?"), params.push(f.session));
+  if (f.source) (sql.push("s.source_id = ?"), params.push(f.source));
+  if (f.project) (sql.push("s.project_id = ?"), params.push(f.project));
+  // Compare on the DATE part so a picked day is inclusive on both ends — `to = 2026-07-14` must include
+  // 2026-07-14 events (a plain `started_at <= '2026-07-14'` would exclude that whole day's timestamps).
+  if (f.from) (sql.push("date(s.started_at) >= date(?)"), params.push(f.from));
+  if (f.to) (sql.push("date(s.started_at) <= date(?)"), params.push(f.to));
+  return { sql, params };
+}
+
+/** Status → WHERE fragment over the dismissed LEFT JOIN (`d`) + MUTED_SQL. Empty when triage absent. */
+function statusWhere(status: FindingFilters["status"], attached: boolean): string {
+  if (!attached) return status === "dismissed" || status === "muted" ? "1 = 0" : ""; // no triage → nothing dismissed/muted
+  switch (status) {
+    case "dismissed":
+      return "d.finding_id IS NOT NULL";
+    case "muted":
+      return `d.finding_id IS NULL AND ${MUTED_SQL}`;
+    case "all":
+      return "";
+    default: // open
+      return `d.finding_id IS NULL AND NOT ${MUTED_SQL}`;
+  }
+}
+
+/**
+ * The browsable findings list (GET /api/security/findings), filtered/sorted/paged. Each row carries
+ * enough session context (title, project, source, when) to render and link without a second fetch, plus
+ * its triage state (dismissed flag/note/when) when the triage store is attached. Default status hides
+ * dismissed + muted so real, un-triaged findings surface. Guarded for a pre-ingest read-only DB.
+ */
+export function listFindings(db: DB, f: FindingFilters) {
+  if (!tableExists(db, "findings")) return { total: 0, findings: [] };
+  const attached = triageAttached(db);
+
+  const w = findingWhere(f);
+  const st = statusWhere(f.status ?? "open", attached);
+  const where = [...w.sql, ...(st ? [st] : [])];
+  const whereSql = where.length ? `WHERE ${where.join(" AND ")}` : "";
+  const dismissJoin = attached ? "LEFT JOIN triage.dismissed_findings d ON d.finding_id = f.id" : "";
+  const triageCols = attached
+    ? `, (d.finding_id IS NOT NULL) AS dismissed, d.note AS dismiss_note, d.dismissed_at, ${MUTED_SQL} AS muted`
+    : `, 0 AS dismissed, NULL AS dismiss_note, NULL AS dismissed_at, 0 AS muted`;
+
+  const total = (
+    db
+      .prepare(`SELECT COUNT(*) n FROM findings f JOIN sessions s ON s.id = f.session_id ${dismissJoin} ${whereSql}`)
+      .get(...w.params) as any
+  ).n;
+
+  const ORDER: Record<string, string> = {
+    severity: SEVERITY_RANK_SQL,
+    session: "f.session_id",
+    rule: "f.rule_id",
+    category: "f.category",
+    time: "s.started_at",
+  };
+  const orderCol = ORDER[f.sort ?? "severity"] ?? SEVERITY_RANK_SQL;
+  const dir = f.dir === "asc" ? "ASC" : "DESC";
+
+  const findings = db
+    .prepare(
+      `SELECT f.id, f.session_id, f.tool_call_id, f.event_uuid, f.turn_id, f.rule_id, f.category,
+              f.framework_ref, f.severity, f.title, f.evidence, tc.tool_name,
+              COALESCE(s.ai_title, s.slug) AS session_title, s.source_id, s.is_sidechain,
+              s.started_at, p.path AS project_path, s.project_id ${triageCols}
+       FROM findings f
+       JOIN sessions s ON s.id = f.session_id
+       LEFT JOIN projects p ON p.id = s.project_id
+       LEFT JOIN tool_calls tc ON tc.id = f.tool_call_id
+       ${dismissJoin}
+       ${whereSql}
+       ORDER BY ${orderCol} ${dir}, ${SEVERITY_RANK_SQL} DESC, f.id ASC
+       LIMIT ? OFFSET ?`,
+    )
+    .all(...w.params, f.limit, f.offset);
+
+  return { total, findings };
+}
+
+/**
+ * Roll-up for the /security page header + the Dashboard KPI. Counts (by severity/category/rule,
+ * sessions flagged) are computed over **open** findings — dismissed + muted excluded — so the KPIs show
+ * what still needs review; `dismissed` and `muted` totals ride along for the triage affordances. The
+ * framework reference content (core) powers the "what & why" explainers. Guarded for a pre-ingest DB.
+ */
+export function securitySummary(db: DB) {
+  const categories = SECURITY_CATEGORIES;
+  if (!tableExists(db, "findings")) {
+    return { total: 0, sessions_flagged: 0, dismissed: 0, muted: 0, by_severity: [], by_category: [], by_rule: [], categories };
+  }
+  const attached = triageAttached(db);
+  const dismissJoin = attached ? "LEFT JOIN triage.dismissed_findings d ON d.finding_id = f.id" : "";
+  const base = `FROM findings f JOIN sessions s ON s.id = f.session_id ${dismissJoin}`;
+  const openWhere = attached ? `WHERE d.finding_id IS NULL AND NOT ${MUTED_SQL}` : "";
+
+  const scalar = (sql: string) => (db.prepare(sql).get() as any).n as number;
+  const total = scalar(`SELECT COUNT(*) n ${base} ${openWhere}`);
+  const sessions_flagged = scalar(`SELECT COUNT(DISTINCT f.session_id) n ${base} ${openWhere}`);
+  const dismissed = attached ? scalar(`SELECT COUNT(*) n FROM findings f LEFT JOIN triage.dismissed_findings d ON d.finding_id = f.id WHERE d.finding_id IS NOT NULL`) : 0;
+  const muted = attached ? scalar(`SELECT COUNT(*) n ${base} WHERE d.finding_id IS NULL AND ${MUTED_SQL}`) : 0;
+
+  const by_severity = db.prepare(`SELECT f.severity AS severity, COUNT(*) n ${base} ${openWhere} GROUP BY f.severity ORDER BY ${SEVERITY_RANK_SQL} DESC`).all();
+  const by_category = db.prepare(`SELECT f.category AS category, COUNT(*) n ${base} ${openWhere} GROUP BY f.category ORDER BY n DESC`).all();
+  const by_rule = db
+    .prepare(
+      `SELECT f.rule_id AS rule_id, f.category AS category, f.title AS title, COUNT(*) n, MAX(${SEVERITY_RANK_SQL}) AS rank
+       ${base} ${openWhere} GROUP BY f.rule_id ORDER BY rank DESC, n DESC`,
+    )
+    .all();
+  return { total, sessions_flagged, dismissed, muted, by_severity, by_category, by_rule, categories };
 }
