@@ -197,6 +197,58 @@ describe("privilege / guardrail-bypass rules (OWASP LLM06)", () => {
     expect(bashFindings("chmod 777 /srv/app").some((f) => f.rule_id === "privilege.chmod_777")).toBe(true);
   });
 
+  const hasRule = (cmd: string, id: string) => bashFindings(cmd).some((f) => f.rule_id === id);
+
+  it("does NOT flag dangerous tokens that are only printed (echo/printf) or commented (v5)", () => {
+    // The reported case: `sudo` appears only inside an echo string advising the user, not executed.
+    expect(hasRule(`rmdir d 2>/dev/null || echo "could NOT remove d (root-owned; needs: sudo rm -rf d)"`, "privilege.sudo")).toBe(false);
+    // Same neutralization across the other command-pattern rules, for both echo strings and comments.
+    expect(hasRule(`echo "run: sudo reboot"`, "privilege.sudo")).toBe(false);
+    expect(hasRule(`echo "then: rm -rf /"`, "destructive.rm_rf")).toBe(false);
+    expect(hasRule(`echo "chmod 777 all the things"`, "privilege.chmod_777")).toBe(false);
+    expect(hasRule(`ls # remember to run sudo make install`, "privilege.sudo")).toBe(false);
+    expect(hasRule(`git status # was going to git reset --hard`, "destructive.git_reset_hard")).toBe(false);
+    // `sudo` as a package name/argument is not a root escalation.
+    expect(hasRule("apt-get install sudo -y", "privilege.sudo")).toBe(false);
+  });
+
+  it("does NOT flag dangerous tokens inside quoted arguments or heredoc bodies (data, not shell code)", () => {
+    // Tokens inside a quoted arg are data passed to a program, not shell command words.
+    expect(hasRule(`node -e 'const t = ["echo hi; sudo reboot", "x; rm -rf /"]; run(t)'`, "privilege.sudo")).toBe(false);
+    expect(hasRule(`node -e 'const t = ["x; rm -rf /"]'`, "destructive.rm_rf")).toBe(false);
+    expect(hasRule(`grep -rn "sudo" packages/`, "privilege.sudo")).toBe(false);
+    expect(hasRule(`git commit -m "docs: how to sudo and rm -rf safely"`, "privilege.sudo")).toBe(false);
+    // A heredoc body is written, not executed — inert unless the file is then run.
+    expect(hasRule("cat > setup.sh <<'EOF'\n#!/bin/bash\nsudo apt update\nEOF", "privilege.sudo")).toBe(false);
+    // But SQL executed via `psql -c "…"` (code inside quotes, actually run) is still detected.
+    expect(hasRule(`psql -c "DROP TABLE users"`, "destructive.sql_drop")).toBe(true);
+  });
+
+  it("does NOT mistake a redirect/tee target for script execution", () => {
+    // `tee /etc/hosts` names the file as an argument, not an invocation — not the write-then-run pattern.
+    expect(hasRule("cat pw | sudo -S tee /etc/hosts", "privilege.exec_generated_script")).toBe(false);
+    expect(hasRule("make build > /tmp/out.log 2>&1; cat /tmp/out.log", "privilege.exec_generated_script")).toBe(false);
+  });
+
+  it("STILL flags genuinely executed dangerous commands (no false negatives from v5)", () => {
+    expect(hasRule("sudo rm -rf /var/data", "privilege.sudo")).toBe(true);
+    expect(hasRule("cd /x && sudo make install", "privilege.sudo")).toBe(true); // command position after &&
+    expect(hasRule("cat log | sudo tee /etc/hosts", "privilege.sudo")).toBe(true); // command position after |
+    expect(hasRule("rm -rf /tmp/build", "destructive.rm_rf")).toBe(true);
+    // SQL passed via `psql -c "…"` is executed code inside quotes — must NOT be neutralized like echo.
+    expect(hasRule(`psql -c "DROP TABLE users"`, "destructive.sql_drop")).toBe(true);
+  });
+
+  it("flags writing a command into a script and executing it (privilege.exec_generated_script)", () => {
+    // echo → file → run: the printed text becomes live code. Critical when the payload is destructive.
+    const inj = bashFindings(`echo "sudo rm -rf /" > f.sh; sh f.sh`).find((f) => f.rule_id === "privilege.exec_generated_script");
+    expect(inj?.severity).toBe("critical");
+    expect(hasRule(`printf 'echo hi' > x.sh && chmod +x x.sh && ./x.sh`, "privilege.exec_generated_script")).toBe(true);
+    expect(hasRule(`echo "aliases" >> setup.sh; source setup.sh`, "privilege.exec_generated_script")).toBe(true);
+    // Writing a file WITHOUT executing it is not this pattern.
+    expect(hasRule(`echo "sudo rm -rf /" > notes.txt; cat notes.txt`, "privilege.exec_generated_script")).toBe(false);
+  });
+
   it("flags a write outside the project dir (high under a system path)", () => {
     const db = freshDb();
     addSession(db, "s", "/home/u/proj");
