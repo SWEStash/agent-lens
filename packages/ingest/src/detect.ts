@@ -20,8 +20,12 @@ import type { DB } from "./db.js";
 // the agent writing to its own config/work dir (e.g. a plan file under ~/.claude/plans) or a temp dir
 // is not flagged as an out-of-project write. v3: exclude .env.example / config templates from
 // credential-access, require a real content-read verb (ls/file/stat no longer flag), raise `sudo` to
-// high. Finding ids are independent of this version, so a bump doesn't invalidate user triage state.
-export const DETECTOR_VERSION = 3;
+// high. v4: fix template exclusion when the path is followed by shell text (.env.example | …); score
+// secret reads per pipeline segment so `file/ls … | grep` no longer counts as a content read; derive
+// the agent-owned config roots from the configured sources' `config_dir` (covers ~/.claude-isf and
+// any relocated install) instead of a hardcoded `.claude` pattern. Finding ids are independent of this
+// version, so a bump doesn't invalidate user triage state.
+export const DETECTOR_VERSION = 4;
 
 // Severity model + category taxonomy are shared from core (packages/core/src/security.ts) so the
 // server and web agree on ordering and keys. Re-exported for tests that drive this module directly.
@@ -47,6 +51,7 @@ export interface RuleContext {
   resultSummary: string | null;
   status: string | null; // success | error | ...
   projectPath: string | null; // the session's cwd, for outside-project checks
+  ownedConfigDirs: string[]; // agent config roots (from the `sources` table) the agent legitimately owns
 }
 
 export interface RuleMatch {
@@ -77,7 +82,10 @@ const SECRET_FILE =
 
 // Non-secret config *templates* (e.g. .env.example, secrets.sample.yaml) — reading these is expected
 // and carries no real secret, so exclude them from credential-access even though they match SECRET_FILE.
-const EXAMPLE_FILE = /\.(example|sample|template|dist)($|\.)/i;
+// The trailing (?![\w-]) matches the end of the ".example" token whether the token ends the string
+// (a Read filePath) or is followed by more shell text (`… .env.example | head`) — a plain `$` anchor
+// only handled the former and let the Bash-command case slip through.
+const EXAMPLE_FILE = /\.(example|sample|template|dist)(?![\w-])/i;
 
 // Commands that read file *contents* — the actual credential-access signal. Listing/stat commands
 // (ls, file, stat, find, …) are deliberately absent: naming a secret path in an `ls`/`file` doesn't
@@ -96,22 +104,29 @@ const SECRET_VALUE_PATTERNS: Array<{ re: RegExp; label: string; critical?: boole
 
 const isBash = (t: string) => t === "Bash";
 
-// Paths the agent legitimately owns, so writing there is expected, not a finding: its own config/work
-// dir (Claude Code's ~/.claude/** — plans, memory, todos, projects, settings, skills) and temp dirs
-// (including the per-session scratchpad under /tmp/…). Neutralizes the biggest write_outside_project
-// false-positive source. A documented constant for now; config-driven extension can come later.
-const AGENT_CONFIG_PATH = /(^|\/)\.claude\//;
+// Temp dirs (including the per-session scratchpad under /tmp/…) are always agent-owned regardless of
+// which agent/config produced them.
 const TEMP_PATH = /^(\/tmp\/|\/var\/folders\/|\/private\/var\/folders\/)/;
-export function isAgentOwnedPath(p: string): boolean {
-  if (AGENT_CONFIG_PATH.test(p) || TEMP_PATH.test(p)) return true;
+
+/**
+ * Paths the agent legitimately owns, so writing there is expected, not a finding: its own config/work
+ * dir (e.g. plans, memory, todos, projects, settings, skills) and temp dirs. The config roots are the
+ * `config_dir`s of the configured sources (the `sources` table, seeded from the project config file),
+ * NOT a hardcoded `.claude` pattern — that way side-by-side installs (~/.claude, ~/.claude-isf, …) and
+ * any relocated config dir are covered from a single source of truth. Neutralizes the biggest
+ * write_outside_project false-positive source.
+ */
+export function isAgentOwnedPath(p: string, configDirs: string[]): boolean {
+  if (TEMP_PATH.test(p)) return true;
+  if (configDirs.some((d) => p === d || p.startsWith(d + "/"))) return true;
   const tmp = process.env.TMPDIR;
   return !!tmp && p.startsWith(tmp.replace(/\/$/, "") + "/");
 }
 
 /** Does an absolute file path fall outside the session's project directory? (null-safe.) */
-function outsideProject(filePath: string | null, projectPath: string | null): boolean {
+function outsideProject(filePath: string | null, projectPath: string | null, configDirs: string[]): boolean {
   if (!filePath || !filePath.startsWith("/")) return false; // relative paths are project-local
-  if (isAgentOwnedPath(filePath)) return false; // agent's own config/work dir + temp → expected
+  if (isAgentOwnedPath(filePath, configDirs)) return false; // agent's own config/work dir + temp → expected
   if (!projectPath) return false; // unknown project → don't guess
   return filePath !== projectPath && !filePath.startsWith(projectPath.replace(/\/$/, "") + "/");
 }
@@ -215,12 +230,25 @@ const RULES: Rule[] = [
     tools: ["Read", "Bash"],
     baseSeverity: "high",
     test(ctx) {
-      const hay = ctx.toolName === "Read" ? ctx.filePath : ctx.command;
-      if (!hay || !SECRET_FILE.test(hay) || EXAMPLE_FILE.test(hay)) return null; // skip .env.example & templates
-      // For Bash, only flag an actual content read (cat/less/grep/…); a bare `ls`/`file`/`stat` that
-      // merely names the path lists metadata, it doesn't read the secret.
-      if (isBash(ctx.toolName) && !CONTENT_READ_CMD.test(hay)) return null;
-      return { evidence: evidence(hay) };
+      if (isBash(ctx.toolName)) {
+        const cmd = ctx.command;
+        if (!cmd) return null;
+        // Evaluate each pipeline/command segment independently: a secret file is only *read* when a
+        // content-read command (cat/grep/…) and the secret path occur in the SAME segment. A bare
+        // `ls`/`file`/`stat` that merely names the path lists metadata; piping its OUTPUT into a
+        // `grep`/`head` in a later segment (e.g. `file ~/.ssh/id_* | grep -v .pub`) exposes no secret
+        // content — the read command never touches the file. Splitting first avoids matching the
+        // read command against the wrong segment.
+        const segments = cmd.split(/\|\||&&|[|;\n]/);
+        const reads = segments.some(
+          (seg) => SECRET_FILE.test(seg) && !EXAMPLE_FILE.test(seg) && CONTENT_READ_CMD.test(seg),
+        );
+        return reads ? { evidence: evidence(cmd) } : null;
+      }
+      // Read tool: the filePath itself is the target (no command to segment).
+      const f = ctx.filePath;
+      if (!f || !SECRET_FILE.test(f) || EXAMPLE_FILE.test(f)) return null; // skip .env.example & templates
+      return { evidence: evidence(f) };
     },
   },
   {
@@ -370,7 +398,7 @@ const RULES: Rule[] = [
     baseSeverity: "medium",
     test(ctx) {
       const f = ctx.filePath;
-      if (!outsideProject(f, ctx.projectPath)) return null;
+      if (!outsideProject(f, ctx.projectPath, ctx.ownedConfigDirs)) return null;
       const system = !!f && SYSTEM_PATH.test(f);
       return { evidence: evidence(f!), severity: system ? "high" : "medium", mods: { project: ctx.projectPath, system_path: system } };
     },
@@ -386,6 +414,7 @@ function appliesTo(rule: Rule, toolName: string): boolean {
 function buildContext(
   row: { tool_name: string; input_json: string | null; result_summary: string | null; status: string | null },
   projectPath: string | null,
+  ownedConfigDirs: string[],
 ): RuleContext {
   let input: any = null;
   try {
@@ -395,7 +424,7 @@ function buildContext(
   }
   const command = typeof input?.command === "string" ? input.command : null;
   const filePath = typeof input?.file_path === "string" ? input.file_path : null;
-  return { toolName: row.tool_name, command, filePath, input, resultSummary: row.result_summary, status: row.status, projectPath };
+  return { toolName: row.tool_name, command, filePath, input, resultSummary: row.result_summary, status: row.status, projectPath, ownedConfigDirs };
 }
 
 interface ToolRow {
@@ -425,6 +454,13 @@ export function detect(db: DB, dirty?: Set<string> | null): { count: number; ver
     })(dirty);
   }
   const scope = incremental ? " WHERE tc.session_id IN (SELECT id FROM _dirty_sec)" : "";
+
+  // Agent-owned config roots — the configured sources' `config_dir`s (seeded from the project config
+  // file at ingest). Single source of truth for the write_outside_project allowlist, so relocated or
+  // side-by-side installs (~/.claude, ~/.claude-isf, …) are covered without a hardcoded path pattern.
+  const ownedConfigDirs = (db.prepare("SELECT config_dir FROM sources WHERE config_dir IS NOT NULL").all() as Array<{ config_dir: string }>)
+    .map((r) => r.config_dir.replace(/\/$/, ""))
+    .filter(Boolean);
 
   // Project path per (scoped) session — for outside-project checks.
   const projPath = new Map<string, string>();
@@ -457,7 +493,7 @@ export function detect(db: DB, dirty?: Set<string> | null): { count: number; ver
   const tx = db.transaction(() => {
     db.exec(delScope);
     for (const row of rows) {
-      const ctx = buildContext(row, projPath.get(row.session_id) ?? null);
+      const ctx = buildContext(row, projPath.get(row.session_id) ?? null, ownedConfigDirs);
       for (const rule of RULES) {
         if (!appliesTo(rule, ctx.toolName)) continue;
         const m = rule.test(ctx);

@@ -41,7 +41,9 @@ beforeAll(() => {
   for (const file of listJsonl(CORPUS)) {
     const label = relative(CORPUS, file).split("/")[0]!; // team-a | team-b | scenarios
     if (!labels.has(label)) {
-      stmts.insSource.run({ id: label, label, agent_id: "claude-code", config_dir: null });
+      // The demo corpus lives under /home/demo; its config root is /home/demo/.claude. detect() reads
+      // this to allowlist the agent's own config-dir writes (plan files) — see the /.claude/ assertion.
+      stmts.insSource.run({ id: label, label, agent_id: "claude-code", config_dir: "/home/demo/.claude" });
       labels.add(label);
     }
     const sf: SourceFile = { path: file, sessionId: basename(file, ".jsonl"), encodedDir: basename(dirname(file)), isVersion: file.includes("/.versions/"), sourceId: label, parentSessionId: parentSessionFromPath(file), workflowRunId: workflowRunFromPath(file) };

@@ -120,6 +120,14 @@ describe("credential access rules", () => {
 
   it("does NOT flag config templates (.env.example / .sample), even when read", () => {
     expect(bashFindings("cat .env.example").some((f) => f.rule_id === "credential.secret_file_access")).toBe(false);
+    // Template path followed by more shell text (pipe, `;`, other args) must still be excluded —
+    // the exclusion anchor must not assume the template token ends the command.
+    expect(
+      bashFindings("grep -n IMAGE /repo/.env.example | head -30; echo ===; ls tests").some(
+        (f) => f.rule_id === "credential.secret_file_access",
+      ),
+    ).toBe(false);
+    expect(bashFindings("cat secrets.sample.yaml | grep KEY").some((f) => f.rule_id === "credential.secret_file_access")).toBe(false);
     const db = freshDb();
     addSession(db, "s");
     const id = addTool(db, "s", "Read", { input: { file_path: "/repo/.env.example" } });
@@ -132,6 +140,17 @@ describe("credential access rules", () => {
       expect(bashFindings(cmd).some((f) => f.rule_id === "credential.secret_file_access")).toBe(false);
     // A genuine content read of the same path IS flagged.
     expect(bashFindings("cat ~/.ssh/id_rsa").some((f) => f.rule_id === "credential.secret_file_access")).toBe(true);
+  });
+
+  it("does NOT flag a metadata command piped into grep/head — the read command filters output, not the file", () => {
+    for (const cmd of [
+      `file /home/u/.ssh/id_* 2>/dev/null | grep -v "\\.pub"`, // the reported false positive
+      "ls ~/.ssh/id_rsa | grep -v pub",
+      "stat ~/.aws/credentials | head -1",
+    ])
+      expect(bashFindings(cmd).some((f) => f.rule_id === "credential.secret_file_access")).toBe(false);
+    // grep/cat reading the secret file DIRECTLY (path is the read command's operand) still flags.
+    expect(bashFindings("grep password ~/.ssh/id_rsa").some((f) => f.rule_id === "credential.secret_file_access")).toBe(true);
   });
 
   it("flags a private key appearing in a tool result as critical", () => {
@@ -191,15 +210,26 @@ describe("privilege / guardrail-bypass rules (OWASP LLM06)", () => {
 
   it("does NOT flag writes to the agent's own config dir or temp (allowlist, v2)", () => {
     const db = freshDb();
+    // Owned config roots come from the configured sources' config_dir (seeded from the project config),
+    // not a hardcoded pattern — two side-by-side installs here (~/.claude and ~/.claude-isf).
+    db.prepare(`INSERT INTO sources (id, label, agent_id, config_dir) VALUES ('personal','personal','claude-code','/home/u/.claude')`).run();
+    db.prepare(`INSERT INTO sources (id, label, agent_id, config_dir) VALUES ('isf','isf','claude-code','/home/u/.claude-isf')`).run();
     addSession(db, "s", "/home/u/proj");
     const plan = addTool(db, "s", "Write", { input: { file_path: "/home/u/.claude/plans/my-plan.md", content: "x" } });
+    // A side-by-side install with its own config root (~/.claude-isf/**) is just as owned.
+    const planIsf = addTool(db, "s", "Write", { input: { file_path: "/home/u/.claude-isf/plans/peppy-yawning-noodle.md", content: "x" } });
     const scratch = addTool(db, "s", "Write", { input: { file_path: "/tmp/claude-1000/abc/scratchpad/note.txt", content: "x" } });
     const etc = addTool(db, "s", "Write", { input: { file_path: "/etc/acme/agent.conf", content: "x" } });
+    // A .claude-looking dir that is NOT a configured source is still flagged — proves the allowlist is
+    // driven by the sources' config_dir, not a hardcoded .claude pattern (the old regex allowed this).
+    const notASource = addTool(db, "s", "Write", { input: { file_path: "/home/u/.claude-other/plans/x.md", content: "x" } });
     detect(db);
     expect(findingsFor(db, plan).some((f) => f.rule_id === "privilege.write_outside_project")).toBe(false);
+    expect(findingsFor(db, planIsf).some((f) => f.rule_id === "privilege.write_outside_project")).toBe(false);
     expect(findingsFor(db, scratch).some((f) => f.rule_id === "privilege.write_outside_project")).toBe(false);
     // A genuine system-dir write is still flagged — the allowlist is scoped, not a blanket off-switch.
     expect(findingsFor(db, etc).some((f) => f.rule_id === "privilege.write_outside_project")).toBe(true);
+    expect(findingsFor(db, notASource).some((f) => f.rule_id === "privilege.write_outside_project")).toBe(true);
   });
 });
 
