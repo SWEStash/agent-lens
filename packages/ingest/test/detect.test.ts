@@ -120,6 +120,14 @@ describe("credential access rules", () => {
 
   it("does NOT flag config templates (.env.example / .sample), even when read", () => {
     expect(bashFindings("cat .env.example").some((f) => f.rule_id === "credential.secret_file_access")).toBe(false);
+    // Template path followed by more shell text (pipe, `;`, other args) must still be excluded —
+    // the exclusion anchor must not assume the template token ends the command.
+    expect(
+      bashFindings("grep -n IMAGE /repo/.env.example | head -30; echo ===; ls tests").some(
+        (f) => f.rule_id === "credential.secret_file_access",
+      ),
+    ).toBe(false);
+    expect(bashFindings("cat secrets.sample.yaml | grep KEY").some((f) => f.rule_id === "credential.secret_file_access")).toBe(false);
     const db = freshDb();
     addSession(db, "s");
     const id = addTool(db, "s", "Read", { input: { file_path: "/repo/.env.example" } });
@@ -132,6 +140,17 @@ describe("credential access rules", () => {
       expect(bashFindings(cmd).some((f) => f.rule_id === "credential.secret_file_access")).toBe(false);
     // A genuine content read of the same path IS flagged.
     expect(bashFindings("cat ~/.ssh/id_rsa").some((f) => f.rule_id === "credential.secret_file_access")).toBe(true);
+  });
+
+  it("does NOT flag a metadata command piped into grep/head — the read command filters output, not the file", () => {
+    for (const cmd of [
+      `file /home/u/.ssh/id_* 2>/dev/null | grep -v "\\.pub"`, // the reported false positive
+      "ls ~/.ssh/id_rsa | grep -v pub",
+      "stat ~/.aws/credentials | head -1",
+    ])
+      expect(bashFindings(cmd).some((f) => f.rule_id === "credential.secret_file_access")).toBe(false);
+    // grep/cat reading the secret file DIRECTLY (path is the read command's operand) still flags.
+    expect(bashFindings("grep password ~/.ssh/id_rsa").some((f) => f.rule_id === "credential.secret_file_access")).toBe(true);
   });
 
   it("flags a private key appearing in a tool result as critical", () => {
@@ -178,6 +197,58 @@ describe("privilege / guardrail-bypass rules (OWASP LLM06)", () => {
     expect(bashFindings("chmod 777 /srv/app").some((f) => f.rule_id === "privilege.chmod_777")).toBe(true);
   });
 
+  const hasRule = (cmd: string, id: string) => bashFindings(cmd).some((f) => f.rule_id === id);
+
+  it("does NOT flag dangerous tokens that are only printed (echo/printf) or commented (v5)", () => {
+    // The reported case: `sudo` appears only inside an echo string advising the user, not executed.
+    expect(hasRule(`rmdir d 2>/dev/null || echo "could NOT remove d (root-owned; needs: sudo rm -rf d)"`, "privilege.sudo")).toBe(false);
+    // Same neutralization across the other command-pattern rules, for both echo strings and comments.
+    expect(hasRule(`echo "run: sudo reboot"`, "privilege.sudo")).toBe(false);
+    expect(hasRule(`echo "then: rm -rf /"`, "destructive.rm_rf")).toBe(false);
+    expect(hasRule(`echo "chmod 777 all the things"`, "privilege.chmod_777")).toBe(false);
+    expect(hasRule(`ls # remember to run sudo make install`, "privilege.sudo")).toBe(false);
+    expect(hasRule(`git status # was going to git reset --hard`, "destructive.git_reset_hard")).toBe(false);
+    // `sudo` as a package name/argument is not a root escalation.
+    expect(hasRule("apt-get install sudo -y", "privilege.sudo")).toBe(false);
+  });
+
+  it("does NOT flag dangerous tokens inside quoted arguments or heredoc bodies (data, not shell code)", () => {
+    // Tokens inside a quoted arg are data passed to a program, not shell command words.
+    expect(hasRule(`node -e 'const t = ["echo hi; sudo reboot", "x; rm -rf /"]; run(t)'`, "privilege.sudo")).toBe(false);
+    expect(hasRule(`node -e 'const t = ["x; rm -rf /"]'`, "destructive.rm_rf")).toBe(false);
+    expect(hasRule(`grep -rn "sudo" packages/`, "privilege.sudo")).toBe(false);
+    expect(hasRule(`git commit -m "docs: how to sudo and rm -rf safely"`, "privilege.sudo")).toBe(false);
+    // A heredoc body is written, not executed — inert unless the file is then run.
+    expect(hasRule("cat > setup.sh <<'EOF'\n#!/bin/bash\nsudo apt update\nEOF", "privilege.sudo")).toBe(false);
+    // But SQL executed via `psql -c "…"` (code inside quotes, actually run) is still detected.
+    expect(hasRule(`psql -c "DROP TABLE users"`, "destructive.sql_drop")).toBe(true);
+  });
+
+  it("does NOT mistake a redirect/tee target for script execution", () => {
+    // `tee /etc/hosts` names the file as an argument, not an invocation — not the write-then-run pattern.
+    expect(hasRule("cat pw | sudo -S tee /etc/hosts", "privilege.exec_generated_script")).toBe(false);
+    expect(hasRule("make build > /tmp/out.log 2>&1; cat /tmp/out.log", "privilege.exec_generated_script")).toBe(false);
+  });
+
+  it("STILL flags genuinely executed dangerous commands (no false negatives from v5)", () => {
+    expect(hasRule("sudo rm -rf /var/data", "privilege.sudo")).toBe(true);
+    expect(hasRule("cd /x && sudo make install", "privilege.sudo")).toBe(true); // command position after &&
+    expect(hasRule("cat log | sudo tee /etc/hosts", "privilege.sudo")).toBe(true); // command position after |
+    expect(hasRule("rm -rf /tmp/build", "destructive.rm_rf")).toBe(true);
+    // SQL passed via `psql -c "…"` is executed code inside quotes — must NOT be neutralized like echo.
+    expect(hasRule(`psql -c "DROP TABLE users"`, "destructive.sql_drop")).toBe(true);
+  });
+
+  it("flags writing a command into a script and executing it (privilege.exec_generated_script)", () => {
+    // echo → file → run: the printed text becomes live code. Critical when the payload is destructive.
+    const inj = bashFindings(`echo "sudo rm -rf /" > f.sh; sh f.sh`).find((f) => f.rule_id === "privilege.exec_generated_script");
+    expect(inj?.severity).toBe("critical");
+    expect(hasRule(`printf 'echo hi' > x.sh && chmod +x x.sh && ./x.sh`, "privilege.exec_generated_script")).toBe(true);
+    expect(hasRule(`echo "aliases" >> setup.sh; source setup.sh`, "privilege.exec_generated_script")).toBe(true);
+    // Writing a file WITHOUT executing it is not this pattern.
+    expect(hasRule(`echo "sudo rm -rf /" > notes.txt; cat notes.txt`, "privilege.exec_generated_script")).toBe(false);
+  });
+
   it("flags a write outside the project dir (high under a system path)", () => {
     const db = freshDb();
     addSession(db, "s", "/home/u/proj");
@@ -191,15 +262,26 @@ describe("privilege / guardrail-bypass rules (OWASP LLM06)", () => {
 
   it("does NOT flag writes to the agent's own config dir or temp (allowlist, v2)", () => {
     const db = freshDb();
+    // Owned config roots come from the configured sources' config_dir (seeded from the project config),
+    // not a hardcoded pattern — two side-by-side installs here (~/.claude and ~/.claude-isf).
+    db.prepare(`INSERT INTO sources (id, label, agent_id, config_dir) VALUES ('personal','personal','claude-code','/home/u/.claude')`).run();
+    db.prepare(`INSERT INTO sources (id, label, agent_id, config_dir) VALUES ('isf','isf','claude-code','/home/u/.claude-isf')`).run();
     addSession(db, "s", "/home/u/proj");
     const plan = addTool(db, "s", "Write", { input: { file_path: "/home/u/.claude/plans/my-plan.md", content: "x" } });
+    // A side-by-side install with its own config root (~/.claude-isf/**) is just as owned.
+    const planIsf = addTool(db, "s", "Write", { input: { file_path: "/home/u/.claude-isf/plans/peppy-yawning-noodle.md", content: "x" } });
     const scratch = addTool(db, "s", "Write", { input: { file_path: "/tmp/claude-1000/abc/scratchpad/note.txt", content: "x" } });
     const etc = addTool(db, "s", "Write", { input: { file_path: "/etc/acme/agent.conf", content: "x" } });
+    // A .claude-looking dir that is NOT a configured source is still flagged — proves the allowlist is
+    // driven by the sources' config_dir, not a hardcoded .claude pattern (the old regex allowed this).
+    const notASource = addTool(db, "s", "Write", { input: { file_path: "/home/u/.claude-other/plans/x.md", content: "x" } });
     detect(db);
     expect(findingsFor(db, plan).some((f) => f.rule_id === "privilege.write_outside_project")).toBe(false);
+    expect(findingsFor(db, planIsf).some((f) => f.rule_id === "privilege.write_outside_project")).toBe(false);
     expect(findingsFor(db, scratch).some((f) => f.rule_id === "privilege.write_outside_project")).toBe(false);
     // A genuine system-dir write is still flagged — the allowlist is scoped, not a blanket off-switch.
     expect(findingsFor(db, etc).some((f) => f.rule_id === "privilege.write_outside_project")).toBe(true);
+    expect(findingsFor(db, notASource).some((f) => f.rule_id === "privilege.write_outside_project")).toBe(true);
   });
 });
 

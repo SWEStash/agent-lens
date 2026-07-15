@@ -20,8 +20,17 @@ import type { DB } from "./db.js";
 // the agent writing to its own config/work dir (e.g. a plan file under ~/.claude/plans) or a temp dir
 // is not flagged as an out-of-project write. v3: exclude .env.example / config templates from
 // credential-access, require a real content-read verb (ls/file/stat no longer flag), raise `sudo` to
-// high. Finding ids are independent of this version, so a bump doesn't invalidate user triage state.
-export const DETECTOR_VERSION = 3;
+// high. v4: fix template exclusion when the path is followed by shell text (.env.example | …); score
+// secret reads per pipeline segment so `file/ls … | grep` no longer counts as a content read; derive
+// the agent-owned config roots from the configured sources' `config_dir` (covers ~/.claude-isf and
+// any relocated install) instead of a hardcoded `.claude` pattern. v5: match command-pattern rules
+// against an "executed view" of the command (codeOf — comments stripped, echo/printf output
+// neutralized) so a dangerous token that is only printed, commented, quoted (`node -e '… sudo …'`,
+// `grep "sudo"`), or inside a heredoc body no longer flags; scope `sudo` to command position (ignores
+// `apt install sudo`); add privilege.exec_generated_script for the write-a-script-then-run-it pattern
+// that makes echoed/heredoc'd text live. Finding ids are independent of this
+// version, so a bump doesn't invalidate user triage state.
+export const DETECTOR_VERSION = 5;
 
 // Severity model + category taxonomy are shared from core (packages/core/src/security.ts) so the
 // server and web agree on ordering and keys. Re-exported for tests that drive this module directly.
@@ -41,12 +50,15 @@ function findingId(toolCallId: string, ruleId: string): string {
 
 export interface RuleContext {
   toolName: string;
-  command: string | null; // Bash command string, if any
+  command: string | null; // Bash command string, verbatim (for evidence + value scanning)
+  commandCode: string | null; // executed view, quotes INTACT (comments/heredoc/echo-output neutralized) — for sql_drop
+  commandBare: string | null; // commandCode + quoted-string contents blanked — for command-verb rules (sudo, rm, …)
   filePath: string | null; // Read/Write/Edit file_path, if any
   input: any; // parsed input_json (may be null)
   resultSummary: string | null;
   status: string | null; // success | error | ...
   projectPath: string | null; // the session's cwd, for outside-project checks
+  ownedConfigDirs: string[]; // agent config roots (from the `sources` table) the agent legitimately owns
 }
 
 export interface RuleMatch {
@@ -77,7 +89,10 @@ const SECRET_FILE =
 
 // Non-secret config *templates* (e.g. .env.example, secrets.sample.yaml) — reading these is expected
 // and carries no real secret, so exclude them from credential-access even though they match SECRET_FILE.
-const EXAMPLE_FILE = /\.(example|sample|template|dist)($|\.)/i;
+// The trailing (?![\w-]) matches the end of the ".example" token whether the token ends the string
+// (a Read filePath) or is followed by more shell text (`… .env.example | head`) — a plain `$` anchor
+// only handled the former and let the Bash-command case slip through.
+const EXAMPLE_FILE = /\.(example|sample|template|dist)(?![\w-])/i;
 
 // Commands that read file *contents* — the actual credential-access signal. Listing/stat commands
 // (ls, file, stat, find, …) are deliberately absent: naming a secret path in an `ls`/`file` doesn't
@@ -96,22 +111,81 @@ const SECRET_VALUE_PATTERNS: Array<{ re: RegExp; label: string; critical?: boole
 
 const isBash = (t: string) => t === "Bash";
 
-// Paths the agent legitimately owns, so writing there is expected, not a finding: its own config/work
-// dir (Claude Code's ~/.claude/** — plans, memory, todos, projects, settings, skills) and temp dirs
-// (including the per-session scratchpad under /tmp/…). Neutralizes the biggest write_outside_project
-// false-positive source. A documented constant for now; config-driven extension can come later.
-const AGENT_CONFIG_PATH = /(^|\/)\.claude\//;
+// ---- Command sanitization ------------------------------------------------
+// Command-pattern rules ("did the agent run a dangerous command?") must match the *executed* code,
+// not text that is merely printed or commented. `codeOf()` produces that executed view:
+//   • strips shell comments (`# …` never runs), and
+//   • neutralizes the arguments of the print builtins echo/printf — their quoted/plain text is data
+//     sent to stdout, so `sudo`/`rm -rf`/… inside it is inert. Quoted strings are consumed as whole
+//     units, so separators (`;` `|`) inside a printed string never leak out as fake command breaks.
+// NOTE: this intentionally does NOT blank all quoted strings — `psql -c "DROP …"`, `sh -c "…"` carry
+// executed code inside quotes, which must still be detected. Value-scanning rules (secret_in_data)
+// keep using the raw command, since a secret value is exposed whether or not it was "executed".
+const stripComments = (c: string): string => c.replace(/(^|\s)#[^\n]*/g, "$1");
+const neutralizeEcho = (c: string): string =>
+  c.replace(/((?:^|[;&|\n(])\s*)(?:echo|printf)\b(?:"(?:[^"\\]|\\.)*"|'[^']*'|[^;&|\n])*/gi, "$1echo");
+// A heredoc body (`cmd <<EOF … EOF`) is data written to a file/stdin, not commands the shell runs, so a
+// `sudo`/`rm -rf` line inside it is inert (unless the resulting file is then executed — see
+// execGeneratedScript). Replace the whole heredoc, body included, with a placeholder.
+const blankHeredoc = (c: string): string => c.replace(/<<-?\s*(['"]?)(\w+)\1[\s\S]*?\n\s*\2\b/g, "<<HEREDOC");
+// `codeOf`: quotes INTACT (so `psql -c "DROP …"` — executed code inside quotes — still matches), with
+// comments, heredoc bodies, and echo/printf output neutralized.
+const codeOf = (c: string): string => neutralizeEcho(stripComments(blankHeredoc(c)));
+// Blank the CONTENTS of quoted string literals. A dangerous token inside a quoted *argument*
+// (`node -e '… sudo …'`, `grep "sudo"`, `git commit -m "… rm -rf …"`) is data passed to a program,
+// not a shell command word — so the command-verb rules must not match it. (Tradeoff: a command truly
+// executed via `sh -c "sudo …"` is missed; that inline form is rare and worth the far fewer false
+// positives.) codeOf runs first so in-string separators are already gone from the parts we keep.
+const blankQuoted = (c: string): string => c.replace(/"(?:[^"\\]|\\.)*"/g, '""').replace(/'[^']*'/g, "''");
+const bareOf = (c: string): string => blankQuoted(codeOf(c));
+
+// A file is "executed" when passed to an interpreter (sh/bash/…), sourced (`source`/`.`), or invoked
+// as a path (`./f`, `/abs/f`). Detects the write-a-script-then-run-it pattern (`echo … > f.sh; sh f.sh`)
+// that turns otherwise-inert printed text into live code. Returns the offending file, or null.
+function execGeneratedScript(cmd: string): string | null {
+  const targets = new Set<string>();
+  for (const m of cmd.matchAll(/(?:>>?|\btee\b\s+(?:-a\s+)?)\s*["']?([A-Za-z0-9._/~-]+)/g)) {
+    if (m[1] && !m[1].startsWith("/dev/")) targets.add(m[1]);
+  }
+  for (const t of targets) {
+    const e = t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    // Interpreter/source invocation: `sh FILE`, `bash FILE`, `source FILE`, `. FILE` (the interpreter is
+    // the command word, so FILE may sit anywhere after it).
+    const interp = new RegExp(`\\b(?:sh|bash|zsh|ksh|dash|source)\\s+["']?${e}\\b|(?:^|[\\n;|&(])\\s*\\.\\s+["']?${e}\\b`);
+    // FILE run directly — must be at COMMAND POSITION (start or after a separator), NOT an argument slot,
+    // otherwise the redirect/`tee FILE` target matches its own occurrence (`… | tee /etc/hosts`).
+    const hasPath = /^(\.\/|\/|~\/)/.test(t);
+    const path = hasPath
+      ? new RegExp(`(?:^|[\\n;|&(])\\s*${e}(?:\\s|$|[;&|<>])`)
+      : new RegExp(`(?:^|[\\n;|&(])\\s*\\.\\/${e}\\b`);
+    if (interp.test(cmd) || path.test(cmd)) return t;
+  }
+  return null;
+}
+
+// Temp dirs (including the per-session scratchpad under /tmp/…) are always agent-owned regardless of
+// which agent/config produced them.
 const TEMP_PATH = /^(\/tmp\/|\/var\/folders\/|\/private\/var\/folders\/)/;
-export function isAgentOwnedPath(p: string): boolean {
-  if (AGENT_CONFIG_PATH.test(p) || TEMP_PATH.test(p)) return true;
+
+/**
+ * Paths the agent legitimately owns, so writing there is expected, not a finding: its own config/work
+ * dir (e.g. plans, memory, todos, projects, settings, skills) and temp dirs. The config roots are the
+ * `config_dir`s of the configured sources (the `sources` table, seeded from the project config file),
+ * NOT a hardcoded `.claude` pattern — that way side-by-side installs (~/.claude, ~/.claude-isf, …) and
+ * any relocated config dir are covered from a single source of truth. Neutralizes the biggest
+ * write_outside_project false-positive source.
+ */
+export function isAgentOwnedPath(p: string, configDirs: string[]): boolean {
+  if (TEMP_PATH.test(p)) return true;
+  if (configDirs.some((d) => p === d || p.startsWith(d + "/"))) return true;
   const tmp = process.env.TMPDIR;
   return !!tmp && p.startsWith(tmp.replace(/\/$/, "") + "/");
 }
 
 /** Does an absolute file path fall outside the session's project directory? (null-safe.) */
-function outsideProject(filePath: string | null, projectPath: string | null): boolean {
+function outsideProject(filePath: string | null, projectPath: string | null, configDirs: string[]): boolean {
   if (!filePath || !filePath.startsWith("/")) return false; // relative paths are project-local
-  if (isAgentOwnedPath(filePath)) return false; // agent's own config/work dir + temp → expected
+  if (isAgentOwnedPath(filePath, configDirs)) return false; // agent's own config/work dir + temp → expected
   if (!projectPath) return false; // unknown project → don't guess
   return filePath !== projectPath && !filePath.startsWith(projectPath.replace(/\/$/, "") + "/");
 }
@@ -129,13 +203,13 @@ const RULES: Rule[] = [
     tools: ["Bash"],
     baseSeverity: "high",
     test(ctx) {
-      const c = ctx.command;
+      const c = ctx.commandBare;
       if (!c) return null;
       // rm with both a recursive and a force flag, in either order (-rf, -fr, -r -f, --recursive --force).
       const rf = /\brm\s+[^|;&\n]*(-[a-z]*r[a-z]*f|-[a-z]*f[a-z]*r|--recursive[^|;&\n]*--force|--force[^|;&\n]*--recursive)/i;
       if (!rf.test(c)) return null;
       const dangerousTarget = HOME_OR_ROOT_TARGET.test(c) || /\s\/(?:\s|$)/.test(c) || /\brm\b[^|;&\n]*\*/.test(c);
-      return { evidence: evidence(c), severity: dangerousTarget ? "critical" : "high", mods: { dangerous_target: dangerousTarget } };
+      return { evidence: evidence(ctx.command!), severity: dangerousTarget ? "critical" : "high", mods: { dangerous_target: dangerousTarget } };
     },
   },
   {
@@ -146,9 +220,9 @@ const RULES: Rule[] = [
     tools: ["Bash"],
     baseSeverity: "medium",
     test(ctx) {
-      const c = ctx.command;
+      const c = ctx.commandBare;
       if (!c || !/\bgit\s+reset\s+--hard\b/i.test(c)) return null;
-      return { evidence: evidence(c) };
+      return { evidence: evidence(ctx.command!) };
     },
   },
   {
@@ -159,10 +233,10 @@ const RULES: Rule[] = [
     tools: ["Bash"],
     baseSeverity: "medium",
     test(ctx) {
-      const c = ctx.command;
+      const c = ctx.commandBare;
       if (!c || !/\bgit\s+push\b[^|;&\n]*(--force\b|--force-with-lease\b|\s-f\b)/i.test(c)) return null;
       const mainBranch = /\b(main|master|release)\b/.test(c);
-      return { evidence: evidence(c), severity: mainBranch ? "high" : "medium", mods: { protected_branch: mainBranch } };
+      return { evidence: evidence(ctx.command!), severity: mainBranch ? "high" : "medium", mods: { protected_branch: mainBranch } };
     },
   },
   {
@@ -173,9 +247,10 @@ const RULES: Rule[] = [
     tools: "*",
     baseSeverity: "high",
     test(ctx) {
-      const hay = ctx.command ?? (typeof ctx.input?.query === "string" ? ctx.input.query : null);
+      const query = typeof ctx.input?.query === "string" ? ctx.input.query : null;
+      const hay = ctx.commandCode ?? query;
       if (!hay || !/\b(DROP\s+(TABLE|DATABASE|SCHEMA)|TRUNCATE(\s+TABLE)?)\b/i.test(hay)) return null;
-      return { evidence: evidence(hay) };
+      return { evidence: evidence(ctx.command ?? query!) };
     },
   },
   {
@@ -186,9 +261,9 @@ const RULES: Rule[] = [
     tools: ["Bash"],
     baseSeverity: "high",
     test(ctx) {
-      const c = ctx.command;
+      const c = ctx.commandBare;
       if (!c || !/(\bdd\s+if=|\bmkfs(\.\w+)?\b|\bshred\b)/i.test(c)) return null;
-      return { evidence: evidence(c) };
+      return { evidence: evidence(ctx.command!) };
     },
   },
   {
@@ -215,12 +290,25 @@ const RULES: Rule[] = [
     tools: ["Read", "Bash"],
     baseSeverity: "high",
     test(ctx) {
-      const hay = ctx.toolName === "Read" ? ctx.filePath : ctx.command;
-      if (!hay || !SECRET_FILE.test(hay) || EXAMPLE_FILE.test(hay)) return null; // skip .env.example & templates
-      // For Bash, only flag an actual content read (cat/less/grep/…); a bare `ls`/`file`/`stat` that
-      // merely names the path lists metadata, it doesn't read the secret.
-      if (isBash(ctx.toolName) && !CONTENT_READ_CMD.test(hay)) return null;
-      return { evidence: evidence(hay) };
+      if (isBash(ctx.toolName)) {
+        const cmd = ctx.commandBare; // executed view: a secret named only in a comment / echo / quoted arg isn't read
+        if (!cmd) return null;
+        // Evaluate each pipeline/command segment independently: a secret file is only *read* when a
+        // content-read command (cat/grep/…) and the secret path occur in the SAME segment. A bare
+        // `ls`/`file`/`stat` that merely names the path lists metadata; piping its OUTPUT into a
+        // `grep`/`head` in a later segment (e.g. `file ~/.ssh/id_* | grep -v .pub`) exposes no secret
+        // content — the read command never touches the file. Splitting first avoids matching the
+        // read command against the wrong segment.
+        const segments = cmd.split(/\|\||&&|[|;\n]/);
+        const reads = segments.some(
+          (seg) => SECRET_FILE.test(seg) && !EXAMPLE_FILE.test(seg) && CONTENT_READ_CMD.test(seg),
+        );
+        return reads ? { evidence: evidence(ctx.command!) } : null;
+      }
+      // Read tool: the filePath itself is the target (no command to segment).
+      const f = ctx.filePath;
+      if (!f || !SECRET_FILE.test(f) || EXAMPLE_FILE.test(f)) return null; // skip .env.example & templates
+      return { evidence: evidence(f) };
     },
   },
   {
@@ -250,12 +338,12 @@ const RULES: Rule[] = [
     tools: ["Bash"],
     baseSeverity: "critical",
     test(ctx) {
-      const c = ctx.command;
+      const c = ctx.commandBare;
       if (!c) return null;
       // e.g. `cat secrets | curl …`, `tar … | nc host port`, `… | curl -d @-`
       if (!/(\||<)\s*(sudo\s+)?(curl|wget|nc|ncat|netcat|ssh|scp)\b/i.test(c)) return null;
       if (!/\b(cat|tar|zip|gzip|base64|env|printenv|cat\s|<)\b/i.test(c)) return null;
-      return { evidence: evidence(c) };
+      return { evidence: evidence(ctx.command!) };
     },
   },
   {
@@ -266,14 +354,14 @@ const RULES: Rule[] = [
     tools: ["Bash"],
     baseSeverity: "high",
     test(ctx) {
-      const c = ctx.command;
+      const c = ctx.commandBare;
       if (!c) return null;
       const upload = /\b(curl|wget)\b[^|;&\n]*(-X\s*POST|--data\b|--data-\w+\b|\s-d\b|-T\b|--upload-file\b|-F\b|--form\b)/i.test(c);
       if (!upload) return null;
       const external = /https?:\/\/(?!(localhost|127\.0\.0\.1|0\.0\.0\.0))/i.test(c);
       const withFile = /(@[^\s'"]+|--upload-file|\s-T\b)/.test(c);
       return {
-        evidence: evidence(c),
+        evidence: evidence(ctx.command!),
         severity: withFile && external ? "critical" : "high",
         mods: { external, with_file: withFile },
       };
@@ -287,10 +375,10 @@ const RULES: Rule[] = [
     tools: ["Bash"],
     baseSeverity: "critical",
     test(ctx) {
-      const c = ctx.command;
+      const c = ctx.commandBare;
       if (!c) return null;
       if (!/\b(nc|ncat|netcat)\b[^|;&\n]*(-e\b|-c\b|\d{2,5})|\/dev\/tcp\/|bash\s+-i\b/i.test(c)) return null;
-      return { evidence: evidence(c) };
+      return { evidence: evidence(ctx.command!) };
     },
   },
 
@@ -303,9 +391,9 @@ const RULES: Rule[] = [
     tools: "*",
     baseSeverity: "high",
     test(ctx) {
-      const c = ctx.command;
+      const c = ctx.commandBare;
       if (!c || !/--dangerously-skip-permissions\b|--yolo\b|--dangerously-skip\b/i.test(c)) return null;
-      return { evidence: evidence(c) };
+      return { evidence: evidence(ctx.command!) };
     },
   },
   {
@@ -316,9 +404,9 @@ const RULES: Rule[] = [
     tools: ["Bash"],
     baseSeverity: "high",
     test(ctx) {
-      const c = ctx.command;
+      const c = ctx.commandBare;
       if (!c || !/\b(curl|wget)\b[^|]*\|\s*(sudo\s+)?(sh|bash|zsh|python\d?|node)\b/i.test(c)) return null;
-      return { evidence: evidence(c) };
+      return { evidence: evidence(ctx.command!) };
     },
   },
   {
@@ -329,9 +417,31 @@ const RULES: Rule[] = [
     tools: ["Bash"],
     baseSeverity: "high", // root escalation removes a real safety barrier — higher than an in-project op
     test(ctx) {
-      const c = ctx.command;
-      if (!c || !/(^|\s|\|)sudo\s+/i.test(c)) return null;
-      return { evidence: evidence(c) };
+      const c = ctx.commandBare;
+      // sudo must be in *command position* — start of the command or right after a separator (; | && ( ).
+      // This ignores `sudo` as an argument (e.g. `apt install sudo`) and, via codeOf, inside echo/comments.
+      if (!c || !/(?:^|[\n;|&(])\s*sudo\b/i.test(c)) return null;
+      return { evidence: evidence(ctx.command!) };
+    },
+  },
+  {
+    id: "privilege.exec_generated_script",
+    category: "privilege-bypass",
+    framework_ref: "OWASP LLM06",
+    title: "Writes a shell script from inline output and executes it",
+    tools: ["Bash"],
+    baseSeverity: "high",
+    test(ctx) {
+      const raw = ctx.command;
+      if (!raw) return null;
+      // Echoing a command into a file that is then run/sourced turns otherwise-inert printed text into
+      // live code (e.g. `echo "sudo rm -rf /" > f.sh; sh f.sh`) — the reason we don't just ignore
+      // dangerous tokens inside echo strings. Detect on the comment-stripped raw command.
+      const file = execGeneratedScript(stripComments(raw));
+      if (!file) return null;
+      // Escalate when the generated script itself carries a destructive/privileged payload.
+      const critical = /(?:^|["'\s;|&(])sudo\b|\brm\s+[^|;&\n]*-[a-z]*r[a-z]*f|\bchmod\s+0?777\b|\bmkfs|\bdd\s+if=/i.test(raw);
+      return { evidence: evidence(raw), severity: critical ? "critical" : "high", mods: { script_file: file } };
     },
   },
   {
@@ -342,9 +452,9 @@ const RULES: Rule[] = [
     tools: ["Bash"],
     baseSeverity: "medium",
     test(ctx) {
-      const c = ctx.command;
+      const c = ctx.commandBare;
       if (!c || !/\bchmod\s+(-[a-zA-Z]+\s+)*0?777\b/i.test(c)) return null;
-      return { evidence: evidence(c) };
+      return { evidence: evidence(ctx.command!) };
     },
   },
   {
@@ -355,10 +465,10 @@ const RULES: Rule[] = [
     tools: ["Bash"],
     baseSeverity: "high",
     test(ctx) {
-      const c = ctx.command;
+      const c = ctx.commandBare;
       if (!c) return null;
       if (!/\bcrontab\s+-|\bsystemctl\s+enable\b|\blaunchctl\s+load\b|>>\s*~\/\.(bashrc|zshrc|profile|bash_profile)\b|\/etc\/(cron|systemd|rc\.local)/i.test(c)) return null;
-      return { evidence: evidence(c) };
+      return { evidence: evidence(ctx.command!) };
     },
   },
   {
@@ -370,7 +480,7 @@ const RULES: Rule[] = [
     baseSeverity: "medium",
     test(ctx) {
       const f = ctx.filePath;
-      if (!outsideProject(f, ctx.projectPath)) return null;
+      if (!outsideProject(f, ctx.projectPath, ctx.ownedConfigDirs)) return null;
       const system = !!f && SYSTEM_PATH.test(f);
       return { evidence: evidence(f!), severity: system ? "high" : "medium", mods: { project: ctx.projectPath, system_path: system } };
     },
@@ -386,6 +496,7 @@ function appliesTo(rule: Rule, toolName: string): boolean {
 function buildContext(
   row: { tool_name: string; input_json: string | null; result_summary: string | null; status: string | null },
   projectPath: string | null,
+  ownedConfigDirs: string[],
 ): RuleContext {
   let input: any = null;
   try {
@@ -394,8 +505,10 @@ function buildContext(
     input = null;
   }
   const command = typeof input?.command === "string" ? input.command : null;
+  const commandCode = command != null ? codeOf(command) : null;
+  const commandBare = command != null ? bareOf(command) : null;
   const filePath = typeof input?.file_path === "string" ? input.file_path : null;
-  return { toolName: row.tool_name, command, filePath, input, resultSummary: row.result_summary, status: row.status, projectPath };
+  return { toolName: row.tool_name, command, commandCode, commandBare, filePath, input, resultSummary: row.result_summary, status: row.status, projectPath, ownedConfigDirs };
 }
 
 interface ToolRow {
@@ -425,6 +538,13 @@ export function detect(db: DB, dirty?: Set<string> | null): { count: number; ver
     })(dirty);
   }
   const scope = incremental ? " WHERE tc.session_id IN (SELECT id FROM _dirty_sec)" : "";
+
+  // Agent-owned config roots — the configured sources' `config_dir`s (seeded from the project config
+  // file at ingest). Single source of truth for the write_outside_project allowlist, so relocated or
+  // side-by-side installs (~/.claude, ~/.claude-isf, …) are covered without a hardcoded path pattern.
+  const ownedConfigDirs = (db.prepare("SELECT config_dir FROM sources WHERE config_dir IS NOT NULL").all() as Array<{ config_dir: string }>)
+    .map((r) => r.config_dir.replace(/\/$/, ""))
+    .filter(Boolean);
 
   // Project path per (scoped) session — for outside-project checks.
   const projPath = new Map<string, string>();
@@ -457,7 +577,7 @@ export function detect(db: DB, dirty?: Set<string> | null): { count: number; ver
   const tx = db.transaction(() => {
     db.exec(delScope);
     for (const row of rows) {
-      const ctx = buildContext(row, projPath.get(row.session_id) ?? null);
+      const ctx = buildContext(row, projPath.get(row.session_id) ?? null, ownedConfigDirs);
       for (const rule of RULES) {
         if (!appliesTo(rule, ctx.toolName)) continue;
         const m = rule.test(ctx);

@@ -1,5 +1,5 @@
-import { createContext, useContext, useEffect, useId, useMemo, useState } from "react";
-import { Link, useParams } from "react-router-dom";
+import { createContext, useContext, useEffect, useId, useMemo, useRef, useState } from "react";
+import { Link, useLocation, useParams } from "react-router-dom";
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { api, exportUrl, type Classification, type ClassificationSignals, type EventNode, type Finding, type SessionChild, type SessionDetail, type ToolCall } from "./api";
@@ -23,6 +23,9 @@ const WorkflowMapContext = createContext<Map<string, string>>(new Map());
  * reads as just the human-facing conversation. Plans and AskUserQuestion Q&A are kept regardless —
  * they're part of that conversation, not tool noise. */
 const HideToolsContext = createContext<boolean>(false);
+// event uuid of a deep-linked message to flash (from #ev-<uuid>); null = none. Owned by SessionView so
+// the highlight survives re-renders (e.g. expanding the target's turn).
+const FlashContext = createContext<string | null>(null);
 
 const FORMAT_KEY = "agentlens.msgFormat";
 function loadFormat(): MsgFormat {
@@ -1136,6 +1139,7 @@ function EventBlock({ e }: { e: EventNode }) {
   const [showThinking, setShowThinking] = useState(false);
   const thinkId = useId();
   const hideTools = useContext(HideToolsContext);
+  const flashUuid = useContext(FlashContext);
   const who = e.role || e.type;
   const icon = who === "user" ? "👤" : who === "assistant" ? "🤖" : "⚙️";
   const visibleTools = e.toolCalls.filter((t) => toolVisible(t, hideTools));
@@ -1146,7 +1150,8 @@ function EventBlock({ e }: { e: EventNode }) {
   // What the message-level copy button grabs: the visible body, else the thinking text.
   const copyText = e.text || e.thinking || "";
   return (
-    <div className={"event ev-" + who}>
+    // id lets a security finding (or any deep link) anchor to the exact message via #ev-<event_uuid>.
+    <div id={"ev-" + e.uuid} className={"event ev-" + who + (flashUuid === e.uuid ? " ev-flagged" : "")}>
       <div className="ev-meta">
         <span className="ev-who">
           {icon} {who}
@@ -1244,6 +1249,7 @@ function SubagentPanel({ d }: { d: SessionDetail }) {
 
 export default function SessionView() {
   const { id } = useParams();
+  const { hash } = useLocation();
   const [d, setD] = useState<SessionDetail | null>(null);
   const [error, setError] = useState<string | null>(null);
   // Turn ids that are collapsed. Empty = all expanded (preserves the prior always-open behavior).
@@ -1281,6 +1287,40 @@ export default function SessionView() {
       .then(setD)
       .catch((e) => setError(String(e)));
   }, [id]);
+
+  // Deep link `#ev-<event_uuid>` (e.g. from a security finding row) → scroll the flagged message into
+  // view and flash it. Runs once per hash, after the transcript renders; if the target message sits in
+  // a collapsed turn, expand that turn first and let the re-render bring the element into the DOM. The
+  // flash is React-owned (via FlashContext) so it survives the re-render the expansion triggers.
+  const [flashUuid, setFlashUuid] = useState<string | null>(null);
+  const scrolledFor = useRef<string | null>(null);
+  useEffect(() => {
+    if (!d) return;
+    const m = /^#ev-(.+)$/.exec(hash);
+    if (!m) {
+      scrolledFor.current = null;
+      return;
+    }
+    if (scrolledFor.current === hash) return;
+    const uuid = m[1];
+    const ev = d.events.find((e) => e.uuid === uuid);
+    if (ev?.turn_id && collapsed.has(ev.turn_id)) {
+      const turnId = ev.turn_id;
+      setCollapsed((prev) => {
+        const next = new Set(prev);
+        next.delete(turnId);
+        return next;
+      });
+      return; // re-render with the turn open, then this effect re-runs and scrolls
+    }
+    const el = document.getElementById("ev-" + uuid);
+    if (!el) return;
+    scrolledFor.current = hash;
+    el.scrollIntoView({ block: "center", behavior: "smooth" });
+    setFlashUuid(uuid);
+    const t = window.setTimeout(() => setFlashUuid(null), 2400);
+    return () => window.clearTimeout(t);
+  }, [d, hash, collapsed]);
 
   // tool-use-id → workflow run id, so a `<task-notification>` can link to its workflow detail page.
   const wfMap = useMemo(() => {
@@ -1386,6 +1426,7 @@ export default function SessionView() {
       <WorkflowMapContext.Provider value={wfMap}>
       <FormatContext.Provider value={format}>
       <HideToolsContext.Provider value={hideTools}>
+      <FlashContext.Provider value={flashUuid}>
       <div className="transcript">
         {renderable.length === 0 && (
           <div className="muted pad" role="status">
@@ -1410,6 +1451,7 @@ export default function SessionView() {
           ),
         )}
       </div>
+      </FlashContext.Provider>
       </HideToolsContext.Provider>
       </FormatContext.Provider>
       </WorkflowMapContext.Provider>
