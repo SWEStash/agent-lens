@@ -1,3 +1,12 @@
+## [0.5.1](https://github.com/SWEStash/agent-lens/compare/v0.5.0...v0.5.1) (2026-07-15)
+
+
+### Bug Fixes
+
+* **security:** eliminate credential/privilege detector false positives ([6472cbd](https://github.com/SWEStash/agent-lens/commit/6472cbde7b015645a67de3a36d9c500218c15293))
+* **security:** treat commented / printed / quoted commands as inert (detector v5) ([5ec0b26](https://github.com/SWEStash/agent-lens/commit/5ec0b262fdd6d97cdfaf3328cc9c7732285a5c71))
+* **web:** scroll to and highlight the flagged message from a security finding ([e22e771](https://github.com/SWEStash/agent-lens/commit/e22e771bc76070ba640441ebd90b52b777d48930))
+
 # [0.5.0](https://github.com/SWEStash/agent-lens/compare/v0.4.0...v0.5.0) (2026-07-14)
 
 
