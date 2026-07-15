@@ -1,3 +1,10 @@
+## [0.5.2](https://github.com/SWEStash/agent-lens/compare/v0.5.1...v0.5.2) (2026-07-15)
+
+
+### Bug Fixes
+
+* **security:** tier detector findings by scope, cut false positives ([#5](https://github.com/SWEStash/agent-lens/issues/5)) ([70ff181](https://github.com/SWEStash/agent-lens/commit/70ff1816811f08f7224046ab2348f4b66387e682))
+
 ## [0.5.1](https://github.com/SWEStash/agent-lens/compare/v0.5.0...v0.5.1) (2026-07-15)
 
 

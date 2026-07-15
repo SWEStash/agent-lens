@@ -1,6 +1,6 @@
 {
   "name": "@swestash/agent-lens",
-  "version": "0.5.1",
+  "version": "0.5.2",
   "type": "module",
   "description": "Local-only tool that passively collects, browses, and analyzes Claude Code CLI session traces.",
   "license": "MIT",
