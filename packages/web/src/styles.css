@@ -355,9 +355,16 @@ table.sessions { width: 100%; border-collapse: collapse; }
 .turn-stats { margin-left: auto; flex: none; }
 .turn-body { display: flex; flex-direction: column; gap: 10px; }
 .turn-body:empty { display: none; }
-.event { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 12px; }
+.event { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 12px; scroll-margin-top: 16px; }
 .event.ev-user { border-left: 3px solid var(--user); }
 .event.ev-assistant { border-left: 3px solid var(--assistant); }
+/* Flash a message that was deep-linked to (e.g. from a security finding row) so it's easy to spot. */
+.event.ev-flagged { animation: agentlens-flag 2.4s ease-out; }
+@keyframes agentlens-flag {
+  0%, 30% { box-shadow: 0 0 0 2px var(--accent); background: color-mix(in srgb, var(--accent) 16%, var(--panel)); }
+  100% { box-shadow: 0 0 0 0 transparent; background: var(--panel); }
+}
+@media (prefers-reduced-motion: reduce) { .event.ev-flagged { animation: none; box-shadow: 0 0 0 2px var(--accent); } }
 .ev-meta { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; font-size: 12px; }
 .ev-who { font-weight: 600; }
 .ev-time { margin-left: auto; }
