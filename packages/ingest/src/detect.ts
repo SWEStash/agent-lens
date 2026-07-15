@@ -28,9 +28,22 @@ import type { DB } from "./db.js";
 // neutralized) so a dangerous token that is only printed, commented, quoted (`node -e '… sudo …'`,
 // `grep "sudo"`), or inside a heredoc body no longer flags; scope `sudo` to command position (ignores
 // `apt install sudo`); add privilege.exec_generated_script for the write-a-script-then-run-it pattern
-// that makes echoed/heredoc'd text live. Finding ids are independent of this
-// version, so a bump doesn't invalidate user triage state.
-export const DETECTOR_VERSION = 5;
+// that makes echoed/heredoc'd text live. v6: exfil.network_upload scores curl/wget uploads by
+// destination scope instead of always-high — external host = high (critical with a file), private/
+// internal host (RFC1918 / link-local / .local / bare service name) = low, loopback = info; a real file
+// (@file / -T / --upload-file) bumps the internal/loopback tiers one step. The host is classified on the
+// verbatim command (commandBare blanks quoted URLs, hiding the host) with -H/--header args stripped so a
+// URL in an Origin/Referer header can't pose as the target; and the upload-flag match is now case-
+// SENSITIVE so curl's -D/-f/-t (dump-header/fail/…) no longer read as -d/-F/-T uploads. v6 also re-tiers
+// several routine ops out of the crowded medium bucket: write_outside_project (non-system) and
+// git_reset_hard / non-protected git_force_push drop to low, and overwrite_critical splits — lockfile
+// churn is low while a CI-config overwrite stays medium (poisoned pipeline is a supply-chain risk);
+// system-path writes and protected-branch force-push keep their high. And curl_pipe_shell no longer
+// flags `curl … | node -e`/`python -c`/`python -m` (the interpreter runs inline code and the piped
+// output is just data, e.g. parsing an API response) — only a shell or a bare node/python that executes
+// the downloaded body still flags. Finding ids are independent of this version, so a bump doesn't
+// invalidate user triage state.
+export const DETECTOR_VERSION = 6;
 
 // Severity model + category taxonomy are shared from core (packages/core/src/security.ts) so the
 // server and web agree on ordering and keys. Re-exported for tests that drive this module directly.
@@ -190,6 +203,46 @@ function outsideProject(filePath: string | null, projectPath: string | null, con
   return filePath !== projectPath && !filePath.startsWith(projectPath.replace(/\/$/, "") + "/");
 }
 
+// Classify the destination host(s) of a curl/wget command for exfil scoring. Runs on the VERBATIM
+// command (not commandBare) so quoted URLs are visible, and strips -H/--header args so a URL sitting
+// in an Origin/Referer header is never mistaken for the request target. Returns the most-severe scope
+// present: external > internal > loopback; "unknown" when no host is recognizable (e.g. the target is
+// a shell variable) — treated as external-ish so we don't under-report an unprovable destination.
+type NetScope = "external" | "internal" | "loopback" | "unknown";
+const SCOPE_RANK: Record<NetScope, number> = { unknown: 0, loopback: 1, internal: 2, external: 3 };
+function netTargetScope(rawCommand: string): NetScope {
+  const s = rawCommand
+    .replace(/(?:-H|--header)\s+(['"]).*?\1/gi, " ") // quoted header value (Origin/Referer/…)
+    .replace(/(?:-H|--header)\s+[^\s'"]+/gi, " "); // bare header token
+  const authorities: string[] = [];
+  // scheme URLs: http(s)://host  (host may be a bracketed IPv6 literal)
+  for (const m of s.matchAll(/\bhttps?:\/\/(\[[0-9a-fA-F:]+\]|[^/\s"'<>|]+)/gi)) authorities.push(m[1]);
+  // bare host:port targets (curl localhost:4477, curl 10.0.0.5:8080) — require a numeric port so we
+  // never mistake a file path or a `key:value` token for a network destination.
+  for (const m of s.matchAll(/(?:^|[\s"'=(])(\[[0-9a-fA-F:]+\]|[A-Za-z0-9.-]+):\d{2,5}(?=[/\s"']|$)/g)) authorities.push(m[1]);
+  let scope: NetScope = "unknown";
+  for (let host of authorities) {
+    host = host.replace(/^\[|\]$/g, "").replace(/^[^@/]*@/, "").toLowerCase(); // drop brackets + userinfo
+    if (!host.includes("::")) host = host.replace(/:\d+$/, ""); // drop :port (but not the ::1 in IPv6)
+    let hs: NetScope;
+    if (host === "localhost" || /^127\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(host) || host === "0.0.0.0" || host === "::1")
+      hs = "loopback";
+    else if (
+      /^10\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(host) || // RFC1918
+      /^192\.168\.\d{1,3}\.\d{1,3}$/.test(host) ||
+      /^172\.(1[6-9]|2\d|3[01])\.\d{1,3}\.\d{1,3}$/.test(host) ||
+      /^169\.254\.\d{1,3}\.\d{1,3}$/.test(host) || // link-local
+      host.endsWith(".local") ||
+      host.endsWith(".internal") ||
+      !host.includes(".") // single-label host (a service name, not a public domain)
+    )
+      hs = "internal";
+    else hs = "external";
+    if (SCOPE_RANK[hs] > SCOPE_RANK[scope]) scope = hs;
+  }
+  return scope;
+}
+
 // ---- The rule set (v1) ----------------------------------------------------
 // Representative, not exhaustive; grouped by framework-anchored category. New rules just append here.
 
@@ -218,7 +271,7 @@ const RULES: Rule[] = [
     framework_ref: "OWASP ASI02",
     title: "Discards local changes (git reset --hard)",
     tools: ["Bash"],
-    baseSeverity: "medium",
+    baseSeverity: "low", // routine dev op — only uncommitted working-tree changes are lost; commits survive in reflog
     test(ctx) {
       const c = ctx.commandBare;
       if (!c || !/\bgit\s+reset\s+--hard\b/i.test(c)) return null;
@@ -231,12 +284,12 @@ const RULES: Rule[] = [
     framework_ref: "OWASP ASI02",
     title: "Force-push rewrites remote history",
     tools: ["Bash"],
-    baseSeverity: "medium",
+    baseSeverity: "low", // feature-branch force-push is routine; only a protected branch (below) is high
     test(ctx) {
       const c = ctx.commandBare;
       if (!c || !/\bgit\s+push\b[^|;&\n]*(--force\b|--force-with-lease\b|\s-f\b)/i.test(c)) return null;
       const mainBranch = /\b(main|master|release)\b/.test(c);
-      return { evidence: evidence(ctx.command!), severity: mainBranch ? "high" : "medium", mods: { protected_branch: mainBranch } };
+      return { evidence: evidence(ctx.command!), severity: mainBranch ? "high" : "low", mods: { protected_branch: mainBranch } };
     },
   },
   {
@@ -272,12 +325,16 @@ const RULES: Rule[] = [
     framework_ref: "OWASP ASI02",
     title: "Overwrites a critical project file",
     tools: ["Write", "Edit", "MultiEdit"],
-    baseSeverity: "medium",
+    baseSeverity: "low",
     test(ctx) {
       const f = ctx.filePath;
       if (!f) return null;
-      if (!/(^|\/)(package-lock\.json|pnpm-lock\.ya?ml|yarn\.lock|Cargo\.lock|go\.sum|\.github\/workflows\/|\.gitlab-ci\.ya?ml)\b/.test(f)) return null;
-      return { evidence: evidence(f) };
+      const lock = /(^|\/)(package-lock\.json|pnpm-lock\.ya?ml|yarn\.lock|Cargo\.lock|go\.sum)\b/.test(f);
+      // A CI-pipeline file is more sensitive than a lockfile: modifying it can run arbitrary code or
+      // exfiltrate secrets in CI (a supply-chain risk), so it stays medium while lockfile churn is low.
+      const ci = /(^|\/)(\.github\/workflows\/|\.gitlab-ci\.ya?ml)\b/.test(f);
+      if (!lock && !ci) return null;
+      return { evidence: evidence(f), severity: ci ? "medium" : "low", mods: { kind: ci ? "ci-config" : "lockfile" } };
     },
   },
 
@@ -350,20 +407,33 @@ const RULES: Rule[] = [
     id: "exfil.network_upload",
     category: "exfiltration",
     framework_ref: "MITRE ATLAS AML.T0086",
-    title: "Uploads data to an external host",
+    title: "Uploads data to a network host",
     tools: ["Bash"],
     baseSeverity: "high",
     test(ctx) {
       const c = ctx.commandBare;
       if (!c) return null;
-      const upload = /\b(curl|wget)\b[^|;&\n]*(-X\s*POST|--data\b|--data-\w+\b|\s-d\b|-T\b|--upload-file\b|-F\b|--form\b)/i.test(c);
+      // Upload-shaped curl/wget. NOTE: no /i flag — the short flags here are case-SENSITIVE (curl's -d
+      // is data but -D is dump-header, -F is form but -f is --fail, -T is upload but -t is unrelated), so
+      // matching case-insensitively turned plain GET smoke tests (`curl -sf`, `curl -D -`) into uploads.
+      const upload = /\b(curl|wget)\b[^|;&\n]*(-X\s*POST|--data\b|--data-\w+\b|\s-d\b|-T\b|--upload-file\b|-F\b|--form\b)/.test(c);
       if (!upload) return null;
-      const external = /https?:\/\/(?!(localhost|127\.0\.0\.1|0\.0\.0\.0))/i.test(c);
+      // `@file` / --upload-file / -T means a real file is being sent (matched on commandBare so an `@`
+      // inside a quoted arg — e.g. an email in a header value — doesn't count as a file).
       const withFile = /(@[^\s'"]+|--upload-file|\s-T\b)/.test(c);
+      // Score by destination: external host = high (critical with a file); a private/internal host is a
+      // lesser concern (low); a loopback call is local IPC / a dev server (info). Sending an actual file
+      // bumps the internal/loopback tiers one step. An unrecognizable target (shell var) can't be shown
+      // local, so it stays high. Classified on the verbatim command so quoted URLs are visible.
+      const scope = netTargetScope(ctx.command!);
+      let severity: Severity;
+      if (scope === "external") severity = withFile ? "critical" : "high";
+      else if (scope === "unknown") severity = "high";
+      else severity = withFile ? bumpSeverity(scope === "loopback" ? "info" : "low", 1) : scope === "loopback" ? "info" : "low";
       return {
         evidence: evidence(ctx.command!),
-        severity: withFile && external ? "critical" : "high",
-        mods: { external, with_file: withFile },
+        severity,
+        mods: { target_scope: scope, with_file: withFile },
       };
     },
   },
@@ -405,7 +475,17 @@ const RULES: Rule[] = [
     baseSeverity: "high",
     test(ctx) {
       const c = ctx.commandBare;
-      if (!c || !/\b(curl|wget)\b[^|]*\|\s*(sudo\s+)?(sh|bash|zsh|python\d?|node)\b/i.test(c)) return null;
+      if (!c) return null;
+      const m = /\b(?:curl|wget)\b[^|]*\|\s*(?:sudo\s+)?(sh|bash|zsh|python\d?|node)\b([^|;&]*)/i.exec(c);
+      if (!m) return null;
+      // The danger is the interpreter executing the *downloaded body* piped to its stdin. A shell always
+      // does. node/python execute piped stdin as a script only when NOT handed an inline program or
+      // module — `curl … | node -e '…'`, `python -c '…'`, `python -m json.tool` just consume the output
+      // as DATA (e.g. parsing an API response), which is not remote-script execution and must not flag.
+      const interp = m[1].toLowerCase();
+      const args = m[2] || "";
+      if (/^(?:node|python)/.test(interp) && /(?:^|\s)-(?:e|c|m|p)\b|(?:^|\s)--(?:eval|command|module|print)\b/.test(args))
+        return null;
       return { evidence: evidence(ctx.command!) };
     },
   },
@@ -477,12 +557,12 @@ const RULES: Rule[] = [
     framework_ref: "OWASP LLM06",
     title: "Writes a file outside the working project",
     tools: ["Write", "Edit", "MultiEdit"],
-    baseSeverity: "medium",
+    baseSeverity: "low", // writing to /tmp, scratch dirs, adjacent repos is routine; only a system path (below) is high
     test(ctx) {
       const f = ctx.filePath;
       if (!outsideProject(f, ctx.projectPath, ctx.ownedConfigDirs)) return null;
       const system = !!f && SYSTEM_PATH.test(f);
-      return { evidence: evidence(f!), severity: system ? "high" : "medium", mods: { project: ctx.projectPath, system_path: system } };
+      return { evidence: evidence(f!), severity: system ? "high" : "low", mods: { project: ctx.projectPath, system_path: system } };
     },
   },
 ];

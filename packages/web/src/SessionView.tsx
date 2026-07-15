@@ -1318,7 +1318,7 @@ export default function SessionView() {
     scrolledFor.current = hash;
     el.scrollIntoView({ block: "center", behavior: "smooth" });
     setFlashUuid(uuid);
-    const t = window.setTimeout(() => setFlashUuid(null), 2400);
+    const t = window.setTimeout(() => setFlashUuid(null), 3000);
     return () => window.clearTimeout(t);
   }, [d, hash, collapsed]);
 
