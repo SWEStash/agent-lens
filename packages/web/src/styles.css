@@ -822,7 +822,8 @@ button.small { padding: 2px 8px; font-size: 12px; }
 .event:hover .copy-hover,
 .copy-hover:focus-visible { opacity: 1; }
 .ev-copy { margin-left: auto; }
-/* A copy button pinned to the top-right corner of a code block. */
+/* A copy button pinned to the top-right corner of a code block. Hidden at rest so it never overlaps the
+ * command/code text underneath; revealed on hover of the block (or keyboard focus). */
 .code-block { position: relative; }
 .code-block .copy-corner {
   position: absolute;
@@ -830,7 +831,8 @@ button.small { padding: 2px 8px; font-size: 12px; }
   right: 6px;
   z-index: 1;
   background: var(--panel2);
-  opacity: 0.65;
+  opacity: 0;
+  transition: opacity 0.12s;
 }
 .code-block:hover .copy-corner,
 .code-block .copy-corner:focus-visible { opacity: 1; }
