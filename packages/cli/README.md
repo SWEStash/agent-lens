@@ -1,6 +1,6 @@
 # Agent Lens
 
-> Passively collect, browse, and analyze your Claude Code CLI session traces — **100% local**.
+> Passively collect, search, and audit your Claude Code CLI session traces — **100% local**.
 
 [![npm](https://img.shields.io/npm/v/@swestash/agent-lens)](https://www.npmjs.com/package/@swestash/agent-lens)
 ![Node](https://img.shields.io/badge/node-%E2%89%A524-brightgreen)
@@ -9,8 +9,9 @@
 
 Claude Code records rich per-session telemetry under `~/.claude/`, but prunes it on a rolling
 **30-day window**. Agent Lens continuously copies that data out before it's lost, normalizes it into
-a queryable SQLite store, and gives you a browsable transcript viewer plus analytics dashboards —
-**without a single byte leaving your machine**.
+a queryable SQLite store, and gives you three things over it — a searchable transcript browser,
+usage/cost dashboards, and a deterministic, no-AI **audit of what the agent actually did on your
+machine** — **without a single byte leaving your machine**.
 
 ## Install
 

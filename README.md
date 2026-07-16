@@ -3,7 +3,7 @@
   <h1>Agent Lens</h1>
 </div>
 
-> Passively collect, browse, and analyze your Claude Code CLI session traces — **100% local**.
+> Passively collect, search, and audit your Claude Code CLI session traces — **100% local**.
 
 [![npm](https://img.shields.io/npm/v/@swestash/agent-lens)](https://www.npmjs.com/package/@swestash/agent-lens)
 [![CI](https://github.com/SWEStash/agent-lens/actions/workflows/ci.yml/badge.svg)](https://github.com/SWEStash/agent-lens/actions/workflows/ci.yml)
@@ -14,8 +14,9 @@
 
 Claude Code records rich per-session telemetry under `~/.claude/`, but prunes it on a rolling
 **30-day window**. Agent Lens continuously copies that data out before it's lost, normalizes it into
-a queryable SQLite store, and gives you a browsable transcript viewer plus analytics dashboards —
-without a single byte leaving your machine.
+a queryable SQLite store, and gives you three things over it — a searchable transcript browser,
+usage/cost dashboards, and a deterministic, no-AI **audit of what the agent actually did on your
+machine** — without a single byte leaving your machine.
 
 ## Table of contents
 
@@ -67,11 +68,11 @@ agent-lens-ingest: files=312 skipped=298 new_events=1840 malformed=0
 
 …so you can answer, entirely offline:
 
+- What exactly happened in that session three weeks ago? *(full transcript + full-text search)*
+- Did the agent do anything risky on my host — delete data, touch secrets, exfiltrate, escalate? *(deterministic security findings; retrospective + triageable)*
 - Where did my tokens and spend go — by day, model, or project?
 - Which sessions were big features vs. quick fixes? *(heuristic category + complexity)*
 - Which skills and subagents do I actually use, and how often?
-- What exactly happened in that session three weeks ago? *(full transcript + full-text search)*
-- Did the agent do anything risky on my host — delete data, touch secrets, exfiltrate, escalate? *(security findings, triageable)*
 
 ## Features
 
