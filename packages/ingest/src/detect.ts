@@ -42,8 +42,16 @@ import type { DB } from "./db.js";
 // flags `curl … | node -e`/`python -c`/`python -m` (the interpreter runs inline code and the piped
 // output is just data, e.g. parsing an API response) — only a shell or a bare node/python that executes
 // the downloaded body still flags. Finding ids are independent of this version, so a bump doesn't
-// invalidate user triage state.
-export const DETECTOR_VERSION = 6;
+// invalidate user triage state. v7 cuts three destructive false positives: sql_drop now requires a real
+// database-client invocation (psql/mysql/sqlite3/…) for the Bash path, so a DROP/TRUNCATE keyword that
+// only appears as text — a `grep "…\|truncate"` search pattern, an echoed string — no longer flags (the
+// structured input.query path is unchanged). rm_rf no longer treats `git rm` (a tracked-file removal
+// recoverable from history) as a filesystem `rm -rf`, and matches its recursive/force flags as
+// whitespace-bounded letter clusters so a path token like `reports/…-software-engineer…` is never
+// mistaken for `-fr` flags. And an rm -rf whose targets are all under a temp dir (/tmp, /var/folders)
+// drops from high to low — temp dirs are agent-owned scratch (writes there aren't flagged at all), so a
+// cleanup delete is routine; a home/root/glob target still escalates to critical.
+export const DETECTOR_VERSION = 7;
 
 // Severity model + category taxonomy are shared from core (packages/core/src/security.ts) so the
 // server and web agree on ordering and keys. Re-exported for tests that drive this module directly.
@@ -123,6 +131,13 @@ const SECRET_VALUE_PATTERNS: Array<{ re: RegExp; label: string; critical?: boole
 ];
 
 const isBash = (t: string) => t === "Bash";
+
+// SQL keywords that irreversibly drop/empty a database object.
+const SQL_DESTRUCTIVE = /\b(DROP\s+(TABLE|DATABASE|SCHEMA)|TRUNCATE(\s+TABLE)?)\b/i;
+// Database-client command words. A DROP/TRUNCATE in a *Bash* command is only executed SQL when one of
+// these runs it; without a client the keyword is inert text (a `grep "…\|truncate"` search pattern, an
+// echoed help string, a log line), so it must not flag. The structured input.query path needs no client.
+const SQL_CLIENT = /\b(psql|pgcli|mysql|mysqladmin|mariadb|sqlite3?|sqlcmd|usql|mongo|mongosh|clickhouse-client|cockroach|snowsql|bq)\b/i;
 
 // ---- Command sanitization ------------------------------------------------
 // Command-pattern rules ("did the agent run a dangerous command?") must match the *executed* code,
@@ -256,13 +271,28 @@ const RULES: Rule[] = [
     tools: ["Bash"],
     baseSeverity: "high",
     test(ctx) {
-      const c = ctx.commandBare;
-      if (!c) return null;
-      // rm with both a recursive and a force flag, in either order (-rf, -fr, -r -f, --recursive --force).
-      const rf = /\brm\s+[^|;&\n]*(-[a-z]*r[a-z]*f|-[a-z]*f[a-z]*r|--recursive[^|;&\n]*--force|--force[^|;&\n]*--recursive)/i;
-      if (!rf.test(c)) return null;
+      if (!ctx.commandBare) return null;
+      // `git rm` (even `git rm -rf`) removes *tracked* files and is recoverable from git history — it's
+      // not a filesystem `rm -rf`. Neutralize it (glued to `git` so the `rm` word boundary is gone) so it
+      // never matches, while a real `rm -rf` elsewhere in the same command still does.
+      const c = ctx.commandBare.replace(/\bgit\s+rm\b/gi, "gitrm");
+      // Isolate the `rm` command's own segment (up to the next |;&\n) so flags/targets from a later
+      // command don't leak in.
+      const rmSeg = c.match(/\brm\b[^|;&\n]*/i)?.[0];
+      if (!rmSeg) return null;
+      // rm needs both a recursive and a force flag. Flag tokens are matched as whitespace-bounded
+      // letter-only clusters (`-rf`, `-fr`, `-r -f`, `--recursive --force`) so a path token that merely
+      // contains an f before an r — e.g. `reports/…-software-engineer…` — isn't mistaken for `-fr`.
+      const combined = /(?:^|\s)-(?=[a-zA-Z]*[rR])(?=[a-zA-Z]*f)[a-zA-Z]+(?=\s|$)/.test(rmSeg);
+      const recursive = /(?:^|\s)(?:-[a-zA-Z]*[rR][a-zA-Z]*|--recursive)(?=\s|$)/.test(rmSeg);
+      const force = /(?:^|\s)(?:-[a-zA-Z]*f[a-zA-Z]*|--force)(?=\s|$)/.test(rmSeg);
+      if (!combined && !(recursive && force)) return null;
       const dangerousTarget = HOME_OR_ROOT_TARGET.test(c) || /\s\/(?:\s|$)/.test(c) || /\brm\b[^|;&\n]*\*/.test(c);
-      return { evidence: evidence(ctx.command!), severity: dangerousTarget ? "critical" : "high", mods: { dangerous_target: dangerousTarget } };
+      // Every non-flag target under a temp dir → routine scratch cleanup, demote to low.
+      const targets = rmSeg.split(/\s+/).slice(1).filter((a) => a && !a.startsWith("-"));
+      const tempOnly = targets.length > 0 && targets.every((t) => TEMP_PATH.test(t));
+      const severity: Severity = dangerousTarget ? "critical" : tempOnly ? "low" : "high";
+      return { evidence: evidence(ctx.command!), severity, mods: { dangerous_target: dangerousTarget, temp_target: tempOnly } };
     },
   },
   {
@@ -301,9 +331,13 @@ const RULES: Rule[] = [
     baseSeverity: "high",
     test(ctx) {
       const query = typeof ctx.input?.query === "string" ? ctx.input.query : null;
-      const hay = ctx.commandCode ?? query;
-      if (!hay || !/\b(DROP\s+(TABLE|DATABASE|SCHEMA)|TRUNCATE(\s+TABLE)?)\b/i.test(hay)) return null;
-      return { evidence: evidence(ctx.command ?? query!) };
+      // A structured DB tool call (input.query) is SQL by definition — flag on the keyword alone.
+      if (query && SQL_DESTRUCTIVE.test(query)) return { evidence: evidence(ctx.command ?? query) };
+      // A Bash command only executes SQL when a database client runs it; otherwise DROP/TRUNCATE is just
+      // text (e.g. a `grep "…\|truncate"` search pattern) and inert, so require both a client and the keyword.
+      const code = ctx.commandCode;
+      if (code && SQL_CLIENT.test(code) && SQL_DESTRUCTIVE.test(code)) return { evidence: evidence(ctx.command!) };
+      return null;
     },
   },
   {
