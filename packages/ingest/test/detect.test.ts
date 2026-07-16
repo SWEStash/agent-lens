@@ -83,6 +83,28 @@ describe("destructive / data-loss rules (OWASP ASI02)", () => {
     expect(bashFindings("rm file.txt").some((f) => f.rule_id === "destructive.rm_rf")).toBe(false);
   });
 
+  it("does NOT flag `git rm` (tracked-file removal, recoverable from history)", () => {
+    // Regression for ev-18eab0f2: `-software-engineer-…` in the path contains f-before-r and used to
+    // read as `-fr` flags, so a `git rm` looked like a filesystem `rm -rf`.
+    const cmd =
+      'git rm reports/runs/2026-05-24-software-engineer-methodology_rpi-aebfd5fb.md && echo "--- orphan ---" && ls reports/raw/';
+    expect(bashFindings(cmd).some((f) => f.rule_id === "destructive.rm_rf")).toBe(false);
+    // A real `rm -rf` alongside a `git rm` in the same command is still caught.
+    expect(bashFindings("git rm old.md && rm -rf ./build").some((f) => f.rule_id === "destructive.rm_rf")).toBe(true);
+  });
+
+  it("does NOT mistake a path token containing f…r for rm flags", () => {
+    expect(bashFindings("rm reports/2026-software-engineer.md").some((f) => f.rule_id === "destructive.rm_rf")).toBe(false);
+  });
+
+  it("demotes an rm -rf whose targets are all under a temp dir to low", () => {
+    expect(bashFindings("rm -rf /tmp/build").find((f) => f.rule_id === "destructive.rm_rf")?.severity).toBe("low");
+    expect(bashFindings("rm -rf /var/folders/xy/scratch").find((f) => f.rule_id === "destructive.rm_rf")?.severity).toBe("low");
+    // A non-temp target keeps high; a temp path mixed with a real one is not demoted.
+    expect(bashFindings("rm -rf ./build").find((f) => f.rule_id === "destructive.rm_rf")?.severity).toBe("high");
+    expect(bashFindings("rm -rf /tmp/build /etc/nginx").find((f) => f.rule_id === "destructive.rm_rf")?.severity).toBe("high");
+  });
+
   it("flags git reset --hard as low (routine; commits survive in reflog)", () => {
     expect(bashFindings("git reset --hard HEAD~3").find((f) => f.rule_id === "destructive.git_reset_hard")?.severity).toBe("low");
   });
@@ -94,6 +116,23 @@ describe("destructive / data-loss rules (OWASP ASI02)", () => {
 
   it("flags SQL DROP/TRUNCATE from any tool", () => {
     expect(bashFindings('psql -c "DROP TABLE users"').some((f) => f.rule_id === "destructive.sql_drop")).toBe(true);
+    expect(bashFindings('sqlite3 app.db "TRUNCATE TABLE logs"').some((f) => f.rule_id === "destructive.sql_drop")).toBe(true);
+    // A structured DB tool call (input.query) is SQL by definition — flagged without a client word.
+    const db = freshDb();
+    addSession(db, "s");
+    const q = addTool(db, "s", "postgres", { input: { query: "DROP TABLE users" } });
+    detect(db);
+    expect(findingsFor(db, q).some((f) => f.rule_id === "destructive.sql_drop")).toBe(true);
+  });
+
+  it("does NOT flag a DROP/TRUNCATE keyword that is only text (a grep search pattern), not run by a DB client", () => {
+    // Regression for ev-c362e1e6: `grep -n "…\|truncate" file.ts` is a search, not a database truncate.
+    expect(
+      bashFindings('grep -n "size\\|summarize\\|guard\\|truncate" /repo/src/validator.ts').some(
+        (f) => f.rule_id === "destructive.sql_drop",
+      ),
+    ).toBe(false);
+    expect(bashFindings('echo "run TRUNCATE TABLE logs to reset"').some((f) => f.rule_id === "destructive.sql_drop")).toBe(false);
   });
 
   it("flags a lockfile overwrite low, but a CI-config overwrite medium (poisoned pipeline is worse)", () => {
