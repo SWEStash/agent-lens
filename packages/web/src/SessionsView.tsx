@@ -1,10 +1,11 @@
-import { Fragment, useEffect, useState } from "react";
+import { Fragment, useEffect, useRef, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { api, type Project, type SessionSummary } from "./api";
 import { fmtCost, fmtDate, fmtDuration, fmtTokens, shortModel, tokenSplitTitle } from "./format";
 import { FilterSelect } from "./FilterSelect";
 import { Pager } from "./Pager";
 import { SortHeader, type SortDir } from "./sort";
+import { loadPrefLocal, fetchPref, savePref } from "./prefs";
 
 type SessionSortKey = "title" | "turns" | "tokens" | "cost" | "duration" | "started" | "errors" | "security";
 
@@ -132,22 +133,20 @@ const COLUMNS: ColumnDef[] = [
 ];
 
 const TOGGLEABLE = COLUMNS.filter((c) => c.toggleable);
-const COLS_STORAGE_KEY = "agentlens.sessions.columns";
+// Pref key (localStorage cache lands at `agentlens.sessions.columns`, unchanged) — persisted to the
+// server's writable store too, so the choice survives a cache-clear (see prefs.ts).
+const COLS_PREF_KEY = "sessions.columns";
 
-/** Load the persisted set of visible toggleable-column ids, falling back to each column's default.
- * Guards against a malformed/stale value and unknown ids so the table always renders. */
+/** Normalize a stored id list to a valid visible-set, dropping unknown ids; null/non-array → defaults. */
+function normalizeCols(ids: unknown): Set<string> {
+  if (!Array.isArray(ids)) return new Set(TOGGLEABLE.filter((c) => c.defaultVisible).map((c) => c.id));
+  const known = new Set(TOGGLEABLE.map((c) => c.id));
+  return new Set(ids.filter((id): id is string => typeof id === "string" && known.has(id)));
+}
+
+/** First-paint visible set from the localStorage cache (reconciled with the server on mount). */
 function loadVisibleCols(): Set<string> {
-  const fallback = () => new Set(TOGGLEABLE.filter((c) => c.defaultVisible).map((c) => c.id));
-  try {
-    const raw = localStorage.getItem(COLS_STORAGE_KEY);
-    if (!raw) return fallback();
-    const ids = JSON.parse(raw);
-    if (!Array.isArray(ids)) return fallback();
-    const known = new Set(TOGGLEABLE.map((c) => c.id));
-    return new Set(ids.filter((id): id is string => typeof id === "string" && known.has(id)));
-  } catch {
-    return fallback();
-  }
+  return normalizeCols(loadPrefLocal<unknown>(COLS_PREF_KEY, null));
 }
 
 const PAGE = 50;
@@ -170,6 +169,24 @@ const ERROR_TYPE_OPTIONS: Array<{ value: string; label: string }> = [
   { value: "guardrail-blocked", label: "guardrail blocked" },
 ];
 
+/** A native <details> gives keyboard/focus behaviour for free but stays open on outside clicks.
+ * This hook closes it (clears `open`) when a mousedown lands outside the element — matching the
+ * FilterSelect dropdown's dismiss-on-outside-click behaviour. We only listen for `mousedown`: a
+ * document-level `focusin` listener crashes Chrome's renderer (SIGILL) during the synthetic focus a
+ * <label> click forwards to its checkbox inside a <details>. */
+function useDetailsAutoClose() {
+  const ref = useRef<HTMLDetailsElement>(null);
+  useEffect(() => {
+    const onDoc = (e: Event) => {
+      const el = ref.current;
+      if (el?.open && !el.contains(e.target as Node)) el.open = false;
+    };
+    document.addEventListener("mousedown", onDoc);
+    return () => document.removeEventListener("mousedown", onDoc);
+  }, []);
+  return ref;
+}
+
 /** A labeled multi-select filter: a <details> dropdown of checkboxes. Value is the selected `value`s;
  * empty = no filter. Mirrors the column-customizer dropdown (shares the `.col-menu` panel styles). */
 function MultiSelect({
@@ -190,8 +207,9 @@ function MultiSelect({
     // Preserve the option order so URL state is stable regardless of click order.
     onChange(options.map((o) => o.value).filter((v) => set.has(v)));
   }
+  const ref = useDetailsAutoClose();
   return (
-    <details className="multi-select">
+    <details className="multi-select" ref={ref}>
       <summary aria-label={label}>
         {label}
         {selected.length ? ` (${selected.length})` : ""} ▾
@@ -217,8 +235,9 @@ function MultiSelect({
  * show/hide the toggleable columns. Uses a native <details> so open/close and keyboard/focus behaviour
  * come for free. */
 function ColumnCustomizer({ visible, onToggle }: { visible: Set<string>; onToggle: (id: string, on: boolean) => void }) {
+  const ref = useDetailsAutoClose();
   return (
-    <details className="col-customizer">
+    <details className="col-customizer" ref={ref}>
       <summary aria-label="Show or hide columns" title="Show/hide columns">⚙</summary>
       <div className="col-menu" role="group" aria-label="Toggle columns">
         {TOGGLEABLE.map((c) => (
@@ -249,6 +268,9 @@ export default function SessionsView() {
     api<Source[]>("/sources").then(setSources).catch(() => {});
     api<Project[]>("/projects").then(setProjects).catch(() => {});
     api<string[]>("/models").then(setModels).catch(() => {});
+    // Reconcile the localStorage-cached column choice with the server's stored value (source of truth
+    // when a writable store is configured); no-op when it returns null.
+    fetchPref<unknown>(COLS_PREF_KEY).then((ids) => ids != null && setVisibleCols(normalizeCols(ids)));
   }, []);
 
   useEffect(() => {
@@ -290,11 +312,7 @@ export default function SessionsView() {
       const next = new Set(prev);
       if (on) next.add(id);
       else next.delete(id);
-      try {
-        localStorage.setItem(COLS_STORAGE_KEY, JSON.stringify([...next]));
-      } catch {
-        /* private-mode / disabled storage: keep the in-memory choice for this session */
-      }
+      savePref(COLS_PREF_KEY, [...next]); // writes the localStorage cache + through to the server
       return next;
     });
   }

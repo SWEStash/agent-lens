@@ -48,6 +48,58 @@ function pct(sorted: number[], p: number): number {
   return sorted[Math.min(Math.max(rank, 0), sorted.length - 1)]!;
 }
 
+function tableExists(db: DB, name: string): boolean {
+  return !!db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name = ?").get(name);
+}
+
+/** WHERE over `workflow_results` own columns (its own source_id / started_at, not the sessions alias). */
+function workflowWhere(f: DashFilters): { sql: string; params: any[] } {
+  const where: string[] = [];
+  const params: any[] = [];
+  if (f.source) (where.push("source_id = ?"), params.push(f.source));
+  if (f.from) (where.push("date(started_at) >= date(?)"), params.push(f.from));
+  if (f.to) (where.push("date(started_at) <= date(?)"), params.push(f.to));
+  return { sql: where.length ? `WHERE ${where.join(" AND ")}` : "", params };
+}
+
+/** Aggregate the async-workflow runs (schema v9+): counts by status, success rate over decided runs
+ * (completed vs failed; in-flight `running` excluded from the denominator), and token/duration rollups.
+ * Guarded so a pre-v9 DB (no `workflow_results` table) returns an all-zero shape instead of throwing. */
+function workflowAgg(db: DB, f: DashFilters) {
+  const empty = { total: 0, by_status: [] as Array<{ status: string; n: number }>, completed: 0, failed: 0, success_rate: 0, total_tokens: 0, avg_duration_ms: 0 };
+  if (!tableExists(db, "workflow_results")) return empty;
+  const ww = workflowWhere(f);
+  const rows = db
+    .prepare(
+      `SELECT COALESCE(status, '(unknown)') status, COUNT(*) n,
+              SUM(COALESCE(total_tokens, 0)) tokens,
+              SUM(COALESCE(duration_ms, 0)) dur,
+              SUM(CASE WHEN duration_ms IS NOT NULL THEN 1 ELSE 0 END) dur_n
+       FROM workflow_results ${ww.sql} GROUP BY status ORDER BY n DESC`,
+    )
+    .all(...ww.params) as any[];
+  let total = 0, completed = 0, failed = 0, tokens = 0, durSum = 0, durN = 0;
+  const by_status = rows.map((r) => {
+    total += r.n;
+    if (r.status === "completed") completed += r.n;
+    else if (r.status === "failed") failed += r.n;
+    tokens += r.tokens ?? 0;
+    durSum += r.dur ?? 0;
+    durN += r.dur_n ?? 0;
+    return { status: r.status as string, n: r.n as number };
+  });
+  const decided = completed + failed;
+  return {
+    total,
+    by_status,
+    completed,
+    failed,
+    success_rate: decided ? completed / decided : 0,
+    total_tokens: tokens,
+    avg_duration_ms: durN ? Math.round(durSum / durN) : 0,
+  };
+}
+
 export function dashboardOverview(db: DB, f: DashFilters) {
   const w = sessionWhere(f);
 
@@ -98,6 +150,17 @@ export function dashboardOverview(db: DB, f: DashFilters) {
       .all(...w.params) as any[]
   ).map((r) => r.d as number);
 
+  // Session-length percentiles over MAIN sessions only (subagents share the parent's wall clock),
+  // excluding null durations. Complements the per-turn cadence with an end-to-end task-length view.
+  const sessDurs = (
+    db
+      .prepare(
+        `SELECT s.duration_ms d FROM sessions s
+         ${w.sql ? w.sql + " AND" : "WHERE"} s.is_sidechain = 0 AND s.duration_ms IS NOT NULL ORDER BY s.duration_ms`,
+      )
+      .all(...w.params) as any[]
+  ).map((r) => r.d as number);
+
   return {
     range: { from: f.from ?? null, to: f.to ?? null, source: f.source ?? null },
     sessions: counts.sessions ?? 0,
@@ -112,6 +175,8 @@ export function dashboardOverview(db: DB, f: DashFilters) {
     cost: Number(cost.toFixed(4)),
     unpriced_models: [...new Set(unpriced)].sort(),
     turn_duration_ms: { p50: pct(durs, 50), p95: pct(durs, 95), count: durs.length },
+    session_duration_ms: { p50: pct(sessDurs, 50), p95: pct(sessDurs, 95), count: sessDurs.length },
+    workflows: workflowAgg(db, f),
   };
 }
 

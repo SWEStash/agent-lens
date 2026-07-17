@@ -406,6 +406,18 @@ export interface DashOverview {
   cost: number;
   unpriced_models: string[];
   turn_duration_ms: { p50: number; p95: number; count: number };
+  /** End-to-end session-length percentiles over main sessions (excludes subagents & null durations). */
+  session_duration_ms: { p50: number; p95: number; count: number };
+  /** Async-workflow run rollup: outcomes by status, success rate over decided runs, token/duration sums. */
+  workflows: {
+    total: number;
+    by_status: Array<{ status: string; n: number }>;
+    completed: number;
+    failed: number;
+    success_rate: number;
+    total_tokens: number;
+    avg_duration_ms: number;
+  };
 }
 
 export interface TimeseriesPoint extends TokenSplit {
