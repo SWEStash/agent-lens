@@ -49,6 +49,11 @@ export interface SessionSummary {
   tokens: number;
   token_split: TokenSplit;
   cost: number;
+  /** Tool-call roll-ups for the sessions-list Errors + Security columns. */
+  tool_call_count: number;
+  tool_error_count: number;
+  finding_count: number;
+  worst_severity: Severity | null;
 }
 
 export interface Project {
@@ -408,6 +413,9 @@ export interface TimeseriesPoint extends TokenSplit {
   cost: number;
   sessions: number;
   turns: number;
+  /** Errored tool calls in this bucket, split into genuine failures vs user/guardrail rejections. */
+  failures: number;
+  rejections: number;
 }
 export interface DashTimeseries {
   bucket: "day" | "week" | "month";
@@ -428,5 +436,11 @@ export interface DashBreakdowns {
     total_spawns: number;
     max_per_session: number;
     avg_per_session: number;
+  };
+  /** Errored tool calls by heuristic error_type (raw count authoritative, bucket heuristic — see errors.ts). */
+  error_types: {
+    by_type: Array<{ type: string; kind: "failure" | "rejection"; n: number }>;
+    failures: number;
+    rejections: number;
   };
 }

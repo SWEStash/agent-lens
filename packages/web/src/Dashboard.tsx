@@ -158,6 +158,7 @@ export default function Dashboard() {
     value: bd?.by_complexity.find((b) => b.band === band)?.n ?? 0,
   })).filter((d) => d.value > 0);
   const modelData = (bd?.by_model ?? []).map((m) => ({ name: shortModel(m.model), tokens: m.total_tokens, cost: m.cost }));
+  const errorTypeData = (bd?.error_types?.by_type ?? []).map((e) => ({ name: e.type, n: e.n, kind: e.kind }));
   // Group skill versions under each skill name for the bar's hover breakdown (bars show the per-name total).
   const versionsByName = new Map<string, SkillVersionRow[]>();
   for (const v of bd?.skill_versions ?? []) {
@@ -268,6 +269,46 @@ export default function Dashboard() {
                   <Bar dataKey="turns" fill={C.green} />
                 </BarChart>
               </ResponsiveContainer>
+            </ChartCard>
+
+            <ChartCard
+              title="Tool errors over time"
+              hint="failed tool calls per bucket · rejections/blocks kept separate (not agent failures)"
+            >
+              <ResponsiveContainer width="100%" height={220}>
+                <BarChart data={ts?.series ?? []} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
+                  <CartesianGrid {...gridProps} />
+                  <XAxis dataKey="bucket" {...axisProps} minTickGap={24} />
+                  <YAxis {...axisProps} width={36} allowDecimals={false} />
+                  <Tooltip {...tooltipStyle} />
+                  <Legend wrapperStyle={{ fontSize: 12 }} />
+                  <Bar dataKey="failures" name="failures" stackId="e" fill={C.red} />
+                  <Bar dataKey="rejections" name="rejected/blocked" stackId="e" fill={C.muted} />
+                </BarChart>
+              </ResponsiveContainer>
+            </ChartCard>
+
+            <ChartCard
+              title="Error types"
+              hint="heuristic buckets from the tool result text · rejections/blocks are not agent failures"
+            >
+              {bd && errorTypeData.length === 0 ? (
+                <div className="empty">No errored tool calls in range.</div>
+              ) : (
+                <ResponsiveContainer width="100%" height={Math.max(160, errorTypeData.length * 28)}>
+                  <BarChart data={errorTypeData} layout="vertical" margin={{ top: 4, right: 8, left: 24, bottom: 0 }}>
+                    <CartesianGrid {...gridProps} horizontal={false} />
+                    <XAxis type="number" {...axisProps} allowDecimals={false} />
+                    <YAxis type="category" dataKey="name" {...axisProps} width={130} />
+                    <Tooltip {...tooltipStyle} formatter={(v: any, _n: any, p: any) => [`${v} (${p.payload.kind})`, "count"]} />
+                    <Bar dataKey="n">
+                      {errorTypeData.map((d, i) => (
+                        <Cell key={i} fill={d.kind === "rejection" ? C.muted : C.red} />
+                      ))}
+                    </Bar>
+                  </BarChart>
+                </ResponsiveContainer>
+              )}
             </ChartCard>
 
             <ChartCard title="Tokens by model" hint="total tokens; cost in tooltip">

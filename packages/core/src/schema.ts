@@ -17,7 +17,7 @@
  * (Phase 2). Bump SCHEMA_VERSION on any DDL change.
  */
 
-export const SCHEMA_VERSION = 12;
+export const SCHEMA_VERSION = 13;
 
 export const SCHEMA_SQL = /* sql */ `
 PRAGMA journal_mode = WAL;
@@ -137,7 +137,8 @@ CREATE TABLE IF NOT EXISTS tool_calls (
   workflow_run_id     TEXT,              -- for Workflow: the run id (toolUseResult.runId, e.g. wf_<id>) — ties the run to its subagents
   workflow_name       TEXT,              -- for Workflow: the workflow name (toolUseResult.workflowName)
   resolved_model      TEXT,
-  status              TEXT,              -- success | error | ...
+  status              TEXT,              -- success | error | ... ('error' when the tool_result had is_error)
+  error_type          TEXT,             -- heuristic bucket for status='error' rows (see errors.ts); NULL otherwise
   total_duration_ms   INTEGER,
   total_tokens        INTEGER,
   total_tool_use_count INTEGER,
@@ -150,6 +151,7 @@ CREATE INDEX IF NOT EXISTS idx_tool_calls_skill ON tool_calls(skill_name);
 CREATE INDEX IF NOT EXISTS idx_tool_calls_skill_id ON tool_calls(skill_id);
 CREATE INDEX IF NOT EXISTS idx_tool_calls_spawned ON tool_calls(spawned_session_id);
 CREATE INDEX IF NOT EXISTS idx_tool_calls_workflow_run ON tool_calls(workflow_run_id);
+CREATE INDEX IF NOT EXISTS idx_tool_calls_error_type ON tool_calls(error_type);
 
 -- Skill *versions* (content-addressed). A skill firing injects the full SKILL.md body into the
 -- transcript as an isMeta user event (begins "Base directory for this skill: …", then the body,

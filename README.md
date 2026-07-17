@@ -1,5 +1,5 @@
 <div align="center">
-  <img src="assets/brand/logo-transparent.png" alt="Agent Lens" width="96">
+  <img src="assets/brand/logo-card.png" alt="Agent Lens" width="200">
   <h1>Agent Lens</h1>
 </div>
 
@@ -106,6 +106,12 @@ agent-lens-ingest: files=312 skipped=298 new_events=1840 malformed=0
   (single/batch), mute a whole rule, and filter by status/date; open counts drive the KPIs so real
   ones stand out. Triage persists in a separate store that survives full rebuilds
   ([ADR-018](docs/decisions/ADR-018-security-triage-store.md)).
+- **Tool-error observability** — deterministic, **no-AI** classification of failed tool calls: a
+  per-session error summary, a sortable **Errors** column + filter on the sessions list, and dashboard
+  *"tool errors over time"* / *"error types"* breakdowns. Genuine failures are separated from
+  **user-rejections / guardrail-blocks** — the raw `is_error` count is authoritative; the type buckets
+  and the failure-vs-rejection split are a labeled heuristic over the tool result text
+  ([ADR-019](docs/decisions/ADR-019-tool-error-observability.md)).
 - **Subagent call tree** — sidechain (subagent) sessions are linked back to the spawning parent turn.
 - **Multi-account** — collect several Claude installs side by side, each tagged by source.
 - **Strictly local** — loopback-only server, gitignored data, zero outbound network calls.

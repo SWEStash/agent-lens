@@ -5,7 +5,7 @@
  * (input / output / cache-creation / cache-read); cache-read is never folded into a single
  * "tokens" number because it dominates and misleads. Cost is derived via the shared pricing table.
  */
-import { costForUsage, rateForModel } from "@agent-lens/core";
+import { costForUsage, rateForModel, errorKind } from "@agent-lens/core";
 import type { DB } from "./db.js";
 
 export interface DashFilters {
@@ -141,12 +141,12 @@ export function dashboardTimeseries(db: DB, f: DashFilters, bucketParam?: string
   const w = sessionWhere(f);
   const expr = BUCKET_EXPR[bucket];
 
-  type Row = { bucket: string } & Split & { cost: number; sessions: number; turns: number };
+  type Row = { bucket: string } & Split & { cost: number; sessions: number; turns: number; failures: number; rejections: number };
   const byBucket = new Map<string, Row>();
   const get = (b: string): Row => {
     let r = byBucket.get(b);
     if (!r) {
-      r = { bucket: b, ...zeroSplit(), cost: 0, sessions: 0, turns: 0 };
+      r = { bucket: b, ...zeroSplit(), cost: 0, sessions: 0, turns: 0, failures: 0, rejections: 0 };
       byBucket.set(b, r);
     }
     return r;
@@ -172,6 +172,19 @@ export function dashboardTimeseries(db: DB, f: DashFilters, bucketParam?: string
     .prepare(`SELECT ${expr} b, COUNT(*) n FROM turns tn JOIN sessions s ON s.id = tn.session_id ${w.sql} GROUP BY b`)
     .all(...w.params) as any[]) {
     if (t.b) get(t.b).turns = t.n;
+  }
+  // Errored tool calls per bucket, split into genuine failures vs user/guardrail rejections (kind
+  // derived from the stored error_type). Bucketed by the session's date, same as every other series.
+  for (const e of db
+    .prepare(
+      `SELECT ${expr} b, tc.error_type et, COUNT(*) n FROM tool_calls tc JOIN sessions s ON s.id = tc.session_id
+       ${w.sql ? w.sql + " AND" : "WHERE"} tc.status = 'error' GROUP BY b, tc.error_type`,
+    )
+    .all(...w.params) as any[]) {
+    if (!e.b) continue;
+    const r = get(e.b);
+    if (e.et && errorKind(e.et) === "rejection") r.rejections += e.n;
+    else r.failures += e.n;
   }
 
   const series = [...byBucket.values()].sort((a, b) => a.bucket.localeCompare(b.bucket));
@@ -273,5 +286,24 @@ export function dashboardBreakdowns(db: DB, f: DashFilters) {
     avg_per_session: counts.length ? Number((counts.reduce((a, b) => a + b, 0) / counts.length).toFixed(2)) : 0,
   };
 
-  return { by_model: byModel, by_source: bySource, by_category: byCategory, by_complexity: byComplexity, tools, skills, skill_versions: skillVersions, subagent_fanout: subagentFanout };
+  // Errored tool calls by heuristic error_type, with failures-vs-rejections totals. error_type is
+  // populated only for status='error' rows (see errors.ts); the raw count is authoritative, the bucket
+  // is the heuristic. Ordered most-frequent first.
+  const errorRows = db
+    .prepare(
+      `SELECT COALESCE(tc.error_type, 'other') type, COUNT(*) n FROM tool_calls tc JOIN sessions s ON s.id = tc.session_id
+       ${w.sql ? w.sql + " AND" : "WHERE"} tc.status = 'error' GROUP BY tc.error_type ORDER BY n DESC`,
+    )
+    .all(...w.params) as Array<{ type: string; n: number }>;
+  let failures = 0;
+  let rejections = 0;
+  const byType = errorRows.map((r) => {
+    const kind = errorKind(r.type as any);
+    if (kind === "rejection") rejections += r.n;
+    else failures += r.n;
+    return { type: r.type, kind, n: r.n };
+  });
+  const errorTypes = { by_type: byType, failures, rejections };
+
+  return { by_model: byModel, by_source: bySource, by_category: byCategory, by_complexity: byComplexity, tools, skills, skill_versions: skillVersions, subagent_fanout: subagentFanout, error_types: errorTypes };
 }

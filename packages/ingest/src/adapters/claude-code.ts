@@ -265,9 +265,14 @@ export class ClaudeCodeAdapter implements SourceAdapter {
             result_summary: isAskUser
               ? JSON.stringify({ answers: tur!.answers, annotations: tur!.annotations ?? {} })
               : summarizeResult(b.content),
+            // Tool failure is signalled by `is_error` on the tool_result block itself — NOT by
+            // toolUseResult.status (whose values are task/lifecycle states like completed/pending/
+            // async_launched and never "error"). Map is_error → status="error" so the error roll-ups,
+            // the transcript `tool-err` styling, and detect.ts's failed-attempt de-escalation all fire.
+            // Non-error results fall back to the toolUseResult lifecycle status when present.
+            status: b.is_error === true ? "error" : tur ? asString(tur.status) : null,
             ...(tur
               ? {
-                  status: asString(tur.status),
                   agent_type: asString(tur.agentType),
                   // Deterministic link: a Task/Agent subagent's transcript is keyed off its agentId
                   // ('agent-'||agentId is the session id assigned by discover()'s filename stem).
