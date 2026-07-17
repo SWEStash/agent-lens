@@ -37,8 +37,11 @@ to reflect changed parser/classifier *logic* — use `--full` for that.
 
 ### When to run `--full`
 
-- After a **`SCHEMA_VERSION` bump** (e.g. the ADR-011 BLOB migration — see below).
-- After changing **parser or classifier** logic and you want it applied to all history.
+- After a **`SCHEMA_VERSION` bump** (e.g. the ADR-011 BLOB migration — see below; or **v13**, which adds
+  `tool_calls.error_type` per [ADR-019](decisions/ADR-019-tool-error-observability.md)).
+- After changing **parser or classifier** logic and you want it applied to all history. This includes the
+  ADR-019 adapter fix that maps a tool result's `is_error` to `status='error'` — existing DBs only pick up
+  the failure `status` (and the derived `error_type`) after a `--full` re-read.
 - To **recover** from any suspected derived-table inconsistency — the archive is the source of truth, so
   `--full` re-derives a clean DB.
 

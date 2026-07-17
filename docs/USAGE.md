@@ -226,11 +226,18 @@ corpus by `node scripts/screenshots.mjs`.
 
 **Sessions** — you can:
 
-- **Filter** by source, project, model, and kind (main vs subagent).
+- **Filter** by source, project, model, and kind (main vs subagent), plus multi-select **Security**
+  (sessions with a finding of a given severity) and **Errors** (sessions with a failed tool call of a
+  given error type — e.g. `command-failed`, `user-rejected`).
 - **Full-text search** across all transcripts.
+- **Sort** by any column, and **customize columns** via the "Columns" control in the table header
+  (show/hide, persisted per browser). Sortable **Security** (worst-severity + finding count) and
+  **Errors** (failed-tool-call count) columns are shown by default; **Cost** is hidden by default
+  (it still shows on the session detail page).
 - Open a session for the **transcript viewer**: turn-segmented, collapsible thinking, expandable
-  tool calls, model/subagent tags, and a **classification badge** (category + complexity) with a
-  collapsible signals panel showing how it was derived.
+  tool calls, model/subagent tags, a **classification badge** (category + complexity) with a
+  collapsible signals panel, and an **error summary** in the header — *"X failed · Y declined/blocked
+  of N tool calls"* (the failed-vs-declined split is a heuristic; see [ADR-019](decisions/ADR-019-tool-error-observability.md)).
 - **Export** any session to Markdown (⬇ button, or `GET /api/sessions/:id/export.md`).
 
 **Dashboard** (`/dashboard`) — server-side aggregates over the whole store (filter by source and a
@@ -242,6 +249,9 @@ date range):
   off the real data span so charts stay bounded as data grows to years.
 - **Breakdowns** — by model, task category, complexity band, tool, skill, and subagent type.
   Category/complexity are scoped to *main* sessions (subagent sessions skew read-heavy — see ADR-004).
+- **Tool errors** — *"Tool errors over time"* (failed tool calls per bucket, with user-rejections /
+  guardrail-blocks kept separate) and an *"Error types"* breakdown. The type buckets and the
+  failure-vs-rejection split are a heuristic over the tool result text — see [ADR-019](decisions/ADR-019-tool-error-observability.md).
 - **Unpriced models** (e.g. `claude-fable-5`) are surfaced explicitly, not silently zeroed, so cost
   reads as a lower bound rather than a wrong number.
 
@@ -372,7 +382,7 @@ macOS) if you need at-rest protection. See `docs/decisions/ADR-009-retention-and
 | `GET /api/sessions/:id/export.md` | Markdown export (attachment) |
 | `GET /api/dashboard/overview` | KPI aggregates (sessions, split token totals, cost) |
 | `GET /api/dashboard/timeseries` | tokens/cost/activity over time (adaptive buckets) |
-| `GET /api/dashboard/breakdowns` | by model / category / complexity / tool / skill / subagent |
+| `GET /api/dashboard/breakdowns` | by model / category / complexity / tool / skill / subagent / error type |
 | `GET /api/workflows/:run_id` | workflow run detail (phase graph, returned result, run log, per-agent rows) |
 | `GET /api/skills` | skills list (optional `q`, `source`, `project` filters) |
 | `GET /api/skills/:name` | skill detail (content-addressed versions + firings) |
@@ -381,7 +391,9 @@ macOS) if you need at-rest protection. See `docs/decisions/ADR-009-retention-and
 | `GET /api/security/mutes` | currently muted rules |
 
 `/api/sessions` query params: `source`, `project`, `model`, `kind` (`main`\|`subagent`),
-`q` (full-text), `from`, `to` (date-inclusive), `limit` (≤200), `offset`.
+`q` (full-text), `from`, `to` (date-inclusive), `severity` (comma-separated; sessions with a finding of
+that severity), `error_type` (comma-separated; sessions with a failed tool call of that error type),
+`sort`, `dir`, `limit` (≤200), `offset`.
 `/api/dashboard/*` query params: `source`, `from`, `to`; `timeseries` also accepts `bucket`
 (`day`\|`week`\|`month`, otherwise chosen adaptively from the data span).
 `/api/security/findings` query params: `severity`, `category`, `rule`, `session`, `source`,

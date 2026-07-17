@@ -85,7 +85,8 @@ flowchart TD
   LOOP --> REBUILD["rebuildDerived(dirty)<br/>expand linkage neighborhood → rebuild turns,<br/>turn_id, parent linkage, aggregates"]
   REBUILD --> CLASSIFY["classify(expanded)<br/>category + complexity bands"]
   CLASSIFY --> DETECT["detect(expanded)<br/>security findings (rules over tool_calls)"]
-  DETECT --> REPORT(["report: files/skipped/new_events, totals, cost, findings"]) 
+  DETECT --> ERRCLS["classifyErrors(expanded)<br/>error_type on failed tool_calls"]
+  ERRCLS --> REPORT(["report: files/skipped/new_events, totals, cost, findings"]) 
 ```
 
 Key properties (full rationale in [ADR-010](decisions/ADR-010-incremental-scalable-ingest.md)):
@@ -96,7 +97,7 @@ Key properties (full rationale in [ADR-010](decisions/ADR-010-incremental-scalab
   and all divergence backups deduplicates to the maximal history (ADR-001/002).
 - **Dirty-session rebuild.** Only sessions touched this run — expanded to their subagent-linkage
   neighborhood (spawned children + spawner parents, by fixpoint) — have their turns/aggregates/linkage,
-  classification, and security findings recomputed. `--full` rebuilds everything.
+  classification, security findings, and tool-error classification recomputed. `--full` rebuilds everything.
 - **Streaming.** Files over 8 MB stream in 64 KB chunks with a boundary-safe `StringDecoder`, bounding
   memory; the streaming hash equals the whole-file hash so skip decisions are path-independent.
 
@@ -141,3 +142,4 @@ erDiagram
 | [016](decisions/ADR-016-npm-release-and-versioning.md) | npm publishing + automated versioning (semantic-release) |
 | [017](decisions/ADR-017-security-findings.md) | Retrospective security findings via a deterministic rule engine |
 | [018](decisions/ADR-018-security-triage-store.md) | Security-finding triage in a separate writable store |
+| [019](decisions/ADR-019-tool-error-observability.md) | Tool-error observability: `is_error` capture + a deterministic error taxonomy |
