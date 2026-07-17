@@ -1,5 +1,5 @@
 import Database from "better-sqlite3";
-import { costForUsage, SCHEMA_VERSION, unpackRaw, severityRank, SECURITY_CATEGORIES } from "@agent-lens/core";
+import { costForUsage, SCHEMA_VERSION, unpackRaw, severityRank, SECURITY_CATEGORIES, errorKind } from "@agent-lens/core";
 
 export type DB = Database.Database;
 
@@ -66,8 +66,12 @@ export interface SessionFilters {
   from?: string;
   to?: string;
   kind?: "main" | "subagent";
+  /** Keep only sessions that have ≥1 finding of one of these severities. */
+  severity?: string[];
+  /** Keep only sessions that have ≥1 errored tool call of one of these error types. */
+  errorType?: string[];
   /** Column to sort the whole filtered list by (before pagination). Defaults to "started". */
-  sort?: "started" | "title" | "turns" | "tokens" | "cost" | "duration";
+  sort?: "started" | "title" | "turns" | "tokens" | "cost" | "duration" | "errors" | "security";
   dir?: "asc" | "desc";
   limit: number;
   offset: number;
@@ -130,6 +134,15 @@ export function listSessions(db: DB, f: SessionFilters) {
   if (f.to) (where.push("date(s.started_at) <= date(?)"), params.push(f.to));
   if (f.kind === "main") where.push("s.is_sidechain = 0");
   if (f.kind === "subagent") where.push("s.is_sidechain = 1");
+  // Multi-select: session has ≥1 finding of any listed severity / ≥1 errored tool call of any listed type.
+  if (f.severity?.length) {
+    where.push(`EXISTS (SELECT 1 FROM findings fd WHERE fd.session_id = s.id AND fd.severity IN (${f.severity.map(() => "?").join(",")}))`);
+    params.push(...f.severity);
+  }
+  if (f.errorType?.length) {
+    where.push(`EXISTS (SELECT 1 FROM tool_calls tc WHERE tc.session_id = s.id AND tc.error_type IN (${f.errorType.map(() => "?").join(",")}))`);
+    params.push(...f.errorType);
+  }
   if (f.model) {
     where.push("EXISTS (SELECT 1 FROM token_usage t WHERE t.session_id = s.id AND t.model = ?)");
     params.push(f.model);
@@ -153,7 +166,13 @@ export function listSessions(db: DB, f: SessionFilters) {
 
   const baseSelect = `SELECT s.id, s.ai_title, s.slug, s.source_id, s.is_sidechain, s.started_at, s.ended_at,
               s.duration_ms, s.event_count, s.turn_count, p.path AS project_path,
-              (SELECT GROUP_CONCAT(DISTINCT model) FROM token_usage t WHERE t.session_id = s.id) AS models
+              (SELECT GROUP_CONCAT(DISTINCT model) FROM token_usage t WHERE t.session_id = s.id) AS models,
+              (SELECT COUNT(*) FROM tool_calls tc WHERE tc.session_id = s.id) AS tool_call_count,
+              (SELECT COUNT(*) FROM tool_calls tc WHERE tc.session_id = s.id AND tc.status = 'error') AS tool_error_count,
+              (SELECT COUNT(*) FROM findings fd WHERE fd.session_id = s.id) AS finding_count,
+              (SELECT fd.severity FROM findings fd WHERE fd.session_id = s.id
+                 ORDER BY CASE fd.severity WHEN 'critical' THEN 4 WHEN 'high' THEN 3 WHEN 'medium' THEN 2 WHEN 'low' THEN 1 WHEN 'info' THEN 0 ELSE -1 END DESC
+                 LIMIT 1) AS worst_severity
        FROM sessions s LEFT JOIN projects p ON p.id = s.project_id
        ${whereSql}`;
 
@@ -169,16 +188,29 @@ export function listSessions(db: DB, f: SessionFilters) {
   const sortKey = f.sort ?? "started";
   const sqlDir = f.dir === "asc" ? "ASC" : "DESC";
 
+  // Columns sorted in JS over the whole matching set (derived/subquery metrics that the paged SQL
+  // ORDER BY can't reach consistently): tokens/cost (costed below) plus the error/finding roll-ups.
+  const JS_SORT = new Set(["tokens", "cost", "errors", "security"]);
   let rows: any[];
-  if (sortKey === "tokens" || sortKey === "cost") {
+  if (JS_SORT.has(sortKey)) {
     // Whole-list sort by a derived metric: materialize every matching session, cost them all, sort,
     // then take the page. Heavier than the SQL path but the only way to page a JS-computed column
     // consistently. Fine at this tool's scale (personal analytics).
     const all = db.prepare(baseSelect).all(...params) as any[];
     attachSessionCost(db, all);
     const sign = f.dir === "asc" ? 1 : -1;
+    const metric = (r: any): number => {
+      switch (sortKey) {
+        case "tokens": return r.tokens;
+        case "cost": return r.cost;
+        case "errors": return r.tool_error_count ?? 0;
+        // Security: rank by worst severity (info=0 … critical=4; none = -1), finding count as tiebreak.
+        case "security": return (severityRank(r.worst_severity ?? "") + 1) * 1e6 + (r.finding_count ?? 0);
+        default: return 0;
+      }
+    };
     all.sort((a, b) => {
-      const c = (sortKey === "tokens" ? a.tokens - b.tokens : a.cost - b.cost) * sign;
+      const c = (metric(a) - metric(b)) * sign;
       return c !== 0 ? c : String(a.id).localeCompare(String(b.id));
     });
     rows = all.slice(f.offset, f.offset + f.limit);
@@ -256,7 +288,7 @@ export function getSession(db: DB, id: string) {
   const toolRows = db
     .prepare(
       `SELECT id, event_uuid, tool_name, skill_name, skill_id, agent_type, spawned_session_id,
-              workflow_run_id, workflow_name, status,
+              workflow_run_id, workflow_name, status, error_type,
               total_duration_ms, total_tokens, input_json, result_summary,
               (SELECT COUNT(*) FROM sessions s WHERE s.workflow_run_id = tool_calls.workflow_run_id) AS workflow_agent_count
        FROM tool_calls WHERE session_id = ?`,
@@ -448,6 +480,14 @@ export function getSession(db: DB, id: string) {
        ORDER BY t.seq`,
     )
     .all(id) as any[];
+
+  // Tool-call error roll-up for the detail header. Computed from the already-fetched toolRows so no extra
+  // query is needed. The raw error count is authoritative; the failure-vs-rejection split uses the stored
+  // heuristic error_type (rejection = the user/guardrail declined the call, not an agent failure).
+  session.tool_call_count = toolRows.length;
+  session.tool_error_count = toolRows.filter((t) => t.status === "error").length;
+  session.tool_rejection_count = toolRows.filter((t) => t.status === "error" && t.error_type && errorKind(t.error_type) === "rejection").length;
+  session.tool_failure_count = session.tool_error_count - session.tool_rejection_count;
 
   return { session, turns, events, classification, parent, children, workflow_runs, findings: sessionFindings };
 }
