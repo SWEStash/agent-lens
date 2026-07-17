@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { Fragment, useEffect, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { api, type Project, type SessionSummary } from "./api";
 import { fmtCost, fmtDate, fmtDuration, fmtTokens, shortModel, tokenSplitTitle } from "./format";
@@ -6,7 +6,7 @@ import { FilterSelect } from "./FilterSelect";
 import { Pager } from "./Pager";
 import { SortHeader, type SortDir } from "./sort";
 
-type SessionSortKey = "title" | "turns" | "tokens" | "cost" | "duration" | "started";
+type SessionSortKey = "title" | "turns" | "tokens" | "cost" | "duration" | "started" | "errors" | "security";
 
 interface Source {
   id: string;
@@ -14,7 +14,223 @@ interface Source {
   session_count: number;
 }
 
+/** A sessions-table column. `toggleable` columns can be hidden via the "Columns" customizer and their
+ * visibility persists in localStorage; non-toggleable ones (Session) always render. `sortKey` (when
+ * set) makes the header a server-side sort control. Defined once, module-level, so the registry is the
+ * single source of truth for both the header row and the body cells (they can't drift out of sync). */
+interface ColumnDef {
+  id: string;
+  label: string;
+  toggleable: boolean;
+  defaultVisible: boolean;
+  sortKey?: SessionSortKey;
+  sortDefaultDir?: SortDir;
+  thClassName?: string;
+  cell: (s: SessionSummary) => React.ReactNode;
+}
+
+const COLUMNS: ColumnDef[] = [
+  {
+    id: "session",
+    label: "Session",
+    toggleable: false,
+    defaultVisible: true,
+    sortKey: "title",
+    sortDefaultDir: "asc",
+    cell: (s) => (
+      <td>
+        <Link to={`/session/${s.id}`} className="title">
+          {s.title || <span className="muted">{s.id.slice(0, 12)}</span>}
+        </Link>
+        <div className="sub">
+          {s.is_sidechain ? <span className="tag subagent">subagent</span> : null}
+          {(s.models ?? "").split(",").filter(Boolean).slice(0, 3).map((m) => (
+            <span key={m} className="tag">
+              {shortModel(m)}
+            </span>
+          ))}
+        </div>
+      </td>
+    ),
+  },
+  { id: "source", label: "Source", toggleable: true, defaultVisible: true, cell: (s) => <td>{s.source_id}</td> },
+  {
+    id: "project",
+    label: "Project",
+    toggleable: true,
+    defaultVisible: true,
+    cell: (s) => <td className="path">{s.project_path?.replace(/^.*\//, "") ?? "—"}</td>,
+  },
+  { id: "turns", label: "Turns", toggleable: true, defaultVisible: true, sortKey: "turns", thClassName: "num", cell: (s) => <td className="num">{s.turn_count}</td> },
+  {
+    id: "tokens",
+    label: "Tokens",
+    toggleable: true,
+    defaultVisible: true,
+    sortKey: "tokens",
+    thClassName: "num",
+    cell: (s) => <td className="num" title={tokenSplitTitle(s.token_split)}>{fmtTokens(s.tokens)}</td>,
+  },
+  {
+    id: "security",
+    label: "Security",
+    toggleable: true,
+    defaultVisible: true,
+    sortKey: "security",
+    thClassName: "num",
+    cell: (s) => (
+      <td className="num">
+        {s.finding_count > 0 && s.worst_severity ? (
+          // A colored dot conveys the highest severity ("how bad"); the number is the total finding
+          // count ("how many"). Keeping them visually distinct avoids reading "critical 40" as "40
+          // critical findings". The full meaning is in the aria-label/title for SR + hover.
+          <span
+            className="sec-count"
+            aria-label={`${s.finding_count} finding${s.finding_count === 1 ? "" : "s"}, highest severity ${s.worst_severity}`}
+            title={`${s.finding_count} finding${s.finding_count === 1 ? "" : "s"} · highest severity: ${s.worst_severity}`}
+          >
+            <span className={"sev-dot sev-" + s.worst_severity} aria-hidden="true" />
+            {s.finding_count}
+          </span>
+        ) : (
+          <span className="muted">—</span>
+        )}
+      </td>
+    ),
+  },
+  {
+    id: "errors",
+    label: "Errors",
+    toggleable: true,
+    defaultVisible: true,
+    sortKey: "errors",
+    thClassName: "num",
+    cell: (s) => (
+      <td
+        className="num"
+        title={
+          s.tool_call_count > 0
+            ? `${s.tool_error_count}/${s.tool_call_count} tool calls returned an error (includes user-rejected/guardrail-blocked; see the session for the failure vs declined split)`
+            : "no tool calls"
+        }
+      >
+        {s.tool_error_count > 0 ? <span className="tool-err-stat">{s.tool_error_count}</span> : <span className="muted">—</span>}
+      </td>
+    ),
+  },
+  { id: "duration", label: "Duration", toggleable: true, defaultVisible: true, sortKey: "duration", thClassName: "num", cell: (s) => <td className="num">{fmtDuration(s.duration_ms)}</td> },
+  {
+    id: "cost",
+    label: "Cost",
+    toggleable: true,
+    defaultVisible: false, // opt-in: cost lives on the session detail page; ccusage owns the cost story
+    sortKey: "cost",
+    thClassName: "num",
+    cell: (s) => <td className="num" title="Estimated at API list prices (cache-aware)">{fmtCost(s.cost)}</td>,
+  },
+  { id: "started", label: "Started", toggleable: true, defaultVisible: true, sortKey: "started", cell: (s) => <td>{fmtDate(s.started_at)}</td> },
+];
+
+const TOGGLEABLE = COLUMNS.filter((c) => c.toggleable);
+const COLS_STORAGE_KEY = "agentlens.sessions.columns";
+
+/** Load the persisted set of visible toggleable-column ids, falling back to each column's default.
+ * Guards against a malformed/stale value and unknown ids so the table always renders. */
+function loadVisibleCols(): Set<string> {
+  const fallback = () => new Set(TOGGLEABLE.filter((c) => c.defaultVisible).map((c) => c.id));
+  try {
+    const raw = localStorage.getItem(COLS_STORAGE_KEY);
+    if (!raw) return fallback();
+    const ids = JSON.parse(raw);
+    if (!Array.isArray(ids)) return fallback();
+    const known = new Set(TOGGLEABLE.map((c) => c.id));
+    return new Set(ids.filter((id): id is string => typeof id === "string" && known.has(id)));
+  } catch {
+    return fallback();
+  }
+}
+
 const PAGE = 50;
+
+// Filter option lists. Severity most-severe-first; error types grouped failures then rejections.
+const SEVERITY_OPTIONS: Array<{ value: string; label: string }> = [
+  { value: "critical", label: "critical" },
+  { value: "high", label: "high" },
+  { value: "medium", label: "medium" },
+  { value: "low", label: "low" },
+  { value: "info", label: "info" },
+];
+const ERROR_TYPE_OPTIONS: Array<{ value: string; label: string }> = [
+  { value: "command-failed", label: "command failed" },
+  { value: "file-state", label: "file state" },
+  { value: "string-not-found", label: "string not found" },
+  { value: "token-limit", label: "token limit" },
+  { value: "other", label: "other" },
+  { value: "user-rejected", label: "user rejected" },
+  { value: "guardrail-blocked", label: "guardrail blocked" },
+];
+
+/** A labeled multi-select filter: a <details> dropdown of checkboxes. Value is the selected `value`s;
+ * empty = no filter. Mirrors the column-customizer dropdown (shares the `.col-menu` panel styles). */
+function MultiSelect({
+  label,
+  options,
+  selected,
+  onChange,
+}: {
+  label: string;
+  options: Array<{ value: string; label: string }>;
+  selected: string[];
+  onChange: (next: string[]) => void;
+}) {
+  function toggle(value: string, on: boolean) {
+    const set = new Set(selected);
+    if (on) set.add(value);
+    else set.delete(value);
+    // Preserve the option order so URL state is stable regardless of click order.
+    onChange(options.map((o) => o.value).filter((v) => set.has(v)));
+  }
+  return (
+    <details className="multi-select">
+      <summary aria-label={label}>
+        {label}
+        {selected.length ? ` (${selected.length})` : ""} ▾
+      </summary>
+      <div className="col-menu" role="group" aria-label={label}>
+        {options.map((o) => (
+          <label key={o.value}>
+            <input type="checkbox" checked={selected.includes(o.value)} onChange={(e) => toggle(o.value, e.target.checked)} />
+            {o.label}
+          </label>
+        ))}
+        {selected.length > 0 && (
+          <button type="button" className="ghost small ms-clear" onClick={() => onChange([])}>
+            clear
+          </button>
+        )}
+      </div>
+    </details>
+  );
+}
+
+/** Compact gear control that lives in the last header cell of the table; opens a checkbox menu to
+ * show/hide the toggleable columns. Uses a native <details> so open/close and keyboard/focus behaviour
+ * come for free. */
+function ColumnCustomizer({ visible, onToggle }: { visible: Set<string>; onToggle: (id: string, on: boolean) => void }) {
+  return (
+    <details className="col-customizer">
+      <summary aria-label="Show or hide columns" title="Show/hide columns">⚙</summary>
+      <div className="col-menu" role="group" aria-label="Toggle columns">
+        {TOGGLEABLE.map((c) => (
+          <label key={c.id}>
+            <input type="checkbox" checked={visible.has(c.id)} onChange={(e) => onToggle(c.id, e.target.checked)} />
+            {c.label}
+          </label>
+        ))}
+      </div>
+    </details>
+  );
+}
 
 export default function SessionsView() {
   const [params, setParams] = useSearchParams();
@@ -25,6 +241,7 @@ export default function SessionsView() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [qInput, setQInput] = useState(params.get("q") ?? "");
+  const [visibleCols, setVisibleCols] = useState<Set<string>>(loadVisibleCols);
 
   const offset = Number(params.get("offset") ?? 0);
 
@@ -38,7 +255,7 @@ export default function SessionsView() {
     setLoading(true);
     setError(null);
     const qs = new URLSearchParams();
-    for (const k of ["source", "project", "model", "q", "sort", "dir"]) {
+    for (const k of ["source", "project", "model", "q", "sort", "dir", "severity", "error_type"]) {
       const v = params.get(k);
       if (v) qs.set(k, v);
     }
@@ -68,6 +285,20 @@ export default function SessionsView() {
     setParam("q", qInput.trim());
   }
 
+  function toggleColumn(id: string, on: boolean) {
+    setVisibleCols((prev) => {
+      const next = new Set(prev);
+      if (on) next.add(id);
+      else next.delete(id);
+      try {
+        localStorage.setItem(COLS_STORAGE_KEY, JSON.stringify([...next]));
+      } catch {
+        /* private-mode / disabled storage: keep the in-memory choice for this session */
+      }
+      return next;
+    });
+  }
+
   // Sort is server-side (whole list, not just the page) and lives in the URL. Clicking the active
   // column flips direction; a new column adopts its default direction. Changing sort resets to page 1.
   const sortKey = (params.get("sort") ?? "started") as SessionSortKey;
@@ -83,6 +314,9 @@ export default function SessionsView() {
 
   const page = Math.floor(offset / PAGE) + 1;
   const pages = Math.max(1, Math.ceil(data.total / PAGE));
+
+  // Columns to render, in registry order: non-toggleable always, toggleable when enabled.
+  const shownCols = COLUMNS.filter((c) => !c.toggleable || visibleCols.has(c.id));
 
   return (
     <div>
@@ -134,6 +368,18 @@ export default function SessionsView() {
           <option value="all">main + subagents</option>
           <option value="subagent">subagents only</option>
         </select>
+        <MultiSelect
+          label="Security"
+          options={SEVERITY_OPTIONS}
+          selected={(params.get("severity") ?? "").split(",").filter(Boolean)}
+          onChange={(next) => setParam("severity", next.join(","))}
+        />
+        <MultiSelect
+          label="Errors"
+          options={ERROR_TYPE_OPTIONS}
+          selected={(params.get("error_type") ?? "").split(",").filter(Boolean)}
+          onChange={(next) => setParam("error_type", next.join(","))}
+        />
       </div>
 
       {error && <div className="error" role="alert">{error}</div>}
@@ -145,39 +391,36 @@ export default function SessionsView() {
         <table className="sessions">
           <thead>
             <tr>
-              <SortHeader label="Session" sortKey="title" active={sortKey} dir={sortDir} onSort={onSort} defaultDir="asc" />
-              <th>Source</th>
-              <th>Project</th>
-              <SortHeader label="Turns" sortKey="turns" active={sortKey} dir={sortDir} onSort={onSort} className="num" />
-              <SortHeader label="Tokens" sortKey="tokens" active={sortKey} dir={sortDir} onSort={onSort} className="num" />
-              <SortHeader label="Cost" sortKey="cost" active={sortKey} dir={sortDir} onSort={onSort} className="num" />
-              <SortHeader label="Duration" sortKey="duration" active={sortKey} dir={sortDir} onSort={onSort} className="num" />
-              <SortHeader label="Started" sortKey="started" active={sortKey} dir={sortDir} onSort={onSort} />
+              {shownCols.map((c) =>
+                c.sortKey ? (
+                  <SortHeader
+                    key={c.id}
+                    label={c.label}
+                    sortKey={c.sortKey}
+                    active={sortKey}
+                    dir={sortDir}
+                    onSort={onSort}
+                    defaultDir={c.sortDefaultDir ?? "desc"}
+                    className={c.thClassName}
+                  />
+                ) : (
+                  <th key={c.id} className={c.thClassName}>
+                    {c.label}
+                  </th>
+                ),
+              )}
+              <th className="col-th" aria-label="Columns">
+                <ColumnCustomizer visible={visibleCols} onToggle={toggleColumn} />
+              </th>
             </tr>
           </thead>
           <tbody>
             {data.sessions.map((s) => (
               <tr key={s.id}>
-                <td>
-                  <Link to={`/session/${s.id}`} className="title">
-                    {s.title || <span className="muted">{s.id.slice(0, 12)}</span>}
-                  </Link>
-                  <div className="sub">
-                    {s.is_sidechain ? <span className="tag subagent">subagent</span> : null}
-                    {(s.models ?? "").split(",").filter(Boolean).slice(0, 3).map((m) => (
-                      <span key={m} className="tag">
-                        {shortModel(m)}
-                      </span>
-                    ))}
-                  </div>
-                </td>
-                <td>{s.source_id}</td>
-                <td className="path">{s.project_path?.replace(/^.*\//, "") ?? "—"}</td>
-                <td className="num">{s.turn_count}</td>
-                <td className="num" title={tokenSplitTitle(s.token_split)}>{fmtTokens(s.tokens)}</td>
-                <td className="num" title="Estimated at API list prices (cache-aware)">{fmtCost(s.cost)}</td>
-                <td className="num">{fmtDuration(s.duration_ms)}</td>
-                <td>{fmtDate(s.started_at)}</td>
+                {shownCols.map((c) => (
+                  <Fragment key={c.id}>{c.cell(s)}</Fragment>
+                ))}
+                <td className="col-td" />
               </tr>
             ))}
           </tbody>

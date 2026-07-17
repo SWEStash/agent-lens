@@ -1373,6 +1373,21 @@ export default function SessionView() {
           <span>{s.event_count} events</span>
           <span title={tokenSplitTitle(s.token_split)}>{fmtTokens(s.tokens)} tok</span>
           <span title="Estimated at API list prices (cache-aware)">{fmtCost(s.cost)}</span>
+          {s.tool_call_count > 0 && (
+            <span
+              className={s.tool_failure_count > 0 ? "tool-err-stat" : "muted"}
+              title={
+                "Tool calls that returned is_error, of " +
+                s.tool_call_count +
+                ". Failures = the agent's tool errored; declined/blocked = you rejected it or a guardrail blocked it " +
+                "(heuristic split from the result text — not an API-reported distinction)."
+              }
+            >
+              {s.tool_failure_count} failed
+              {s.tool_rejection_count > 0 ? ` · ${s.tool_rejection_count} declined/blocked` : ""}
+              {` of ${s.tool_call_count} tool calls`}
+            </span>
+          )}
           <span>{fmtDuration(s.duration_ms)}</span>
           <span className="muted">{fmtDate(s.started_at)}</span>
           <a className="export" href={exportUrl(s.id)}>

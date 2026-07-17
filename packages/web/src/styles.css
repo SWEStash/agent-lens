@@ -129,6 +129,36 @@ select:focus-visible,
 .content.wide { max-width: min(1600px, 94vw); }
 
 .filters { display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 16px; }
+
+/* Sessions-table column customizer: a compact gear in the last header cell that opens a <details>
+ * dropdown of column checkboxes. */
+.col-th { width: 1%; white-space: nowrap; text-align: right; }
+.col-td { width: 1%; }
+.col-customizer { position: relative; display: inline-block; }
+.col-customizer > summary {
+  cursor: pointer; list-style: none; user-select: none;
+  padding: 2px 6px; border-radius: 6px; color: var(--muted); font-size: 15px; line-height: 1;
+}
+.col-customizer > summary:hover { background: var(--panel2); color: var(--text); }
+.col-customizer[open] > summary { background: var(--panel2); color: var(--text); }
+.col-customizer > summary::-webkit-details-marker { display: none; }
+.col-menu {
+  position: absolute; z-index: 20; top: calc(100% + 4px); right: 0;
+  background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 8px;
+  min-width: 150px; box-shadow: 0 6px 20px rgba(0, 0, 0, 0.28);
+}
+.col-menu label { display: flex; align-items: center; gap: 8px; padding: 4px 6px; font-size: 13px; white-space: nowrap; cursor: pointer; }
+.col-menu .ms-clear { margin-top: 6px; }
+
+/* Multi-select filter dropdown: a labeled <details> pill sharing the .col-menu panel. */
+.multi-select { position: relative; }
+.multi-select > summary {
+  cursor: pointer; list-style: none; user-select: none;
+  padding: 7px 10px; border: 1px solid var(--border); border-radius: 6px; background: var(--panel2); font-size: 14px;
+}
+.multi-select > summary::-webkit-details-marker { display: none; }
+.multi-select[open] > summary { border-color: var(--accent); }
+.multi-select > .col-menu { left: 0; right: auto; }
 .search { display: flex; gap: 6px; flex: 1; min-width: 280px; }
 .search input { flex: 1; }
 .muted { color: var(--muted); }
@@ -471,6 +501,7 @@ table.sessions { width: 100%; border-collapse: collapse; }
 }
 .tool { margin-top: 6px; border: 1px solid var(--border); border-radius: 6px; background: var(--panel2); }
 .tool-err { border-color: var(--err); }
+.tool-err-stat { color: var(--err); }
 .tool-head {
   display: flex;
   align-items: center;
@@ -927,6 +958,20 @@ button.small { padding: 2px 8px; font-size: 12px; }
 .sev-medium { background: #2f2a16; color: #e0b85a; }
 .sev-low { background: #23303f; color: #79c0ff; }
 .sev-info { background: var(--tag); color: var(--muted); }
+
+/* Sessions-list Security cell: worst-severity dot + total finding count (kept visually distinct so
+ * "critical 40" can't be misread as 40 criticals). Dot uses the vivid per-severity color. */
+.sec-count { display: inline-flex; align-items: center; gap: 6px; justify-content: flex-end; }
+.sev-dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; background: var(--muted); flex: none; }
+.sev-dot.sev-critical { background: #ff8f8f; }
+.sev-dot.sev-high { background: #f0a860; }
+.sev-dot.sev-medium { background: #e0b85a; }
+.sev-dot.sev-low { background: #79c0ff; }
+.sev-dot.sev-info { background: var(--muted); }
+:root[data-theme="light"] .sev-dot.sev-critical { background: #b12626; }
+:root[data-theme="light"] .sev-dot.sev-high { background: #b5651d; }
+:root[data-theme="light"] .sev-dot.sev-medium { background: #8a6d1f; }
+:root[data-theme="light"] .sev-dot.sev-low { background: #1a5fa8; }
 /* Framework anchor chip (OWASP/MITRE) — a subtle outlined variant. */
 .tag.framework { background: transparent; border: 1px solid var(--border); color: var(--muted); }
 
