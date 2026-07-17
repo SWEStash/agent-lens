@@ -17,6 +17,7 @@ import { unpackRaw } from "@agent-lens/core";
 import { openDb } from "../dist/db.js";
 import { prepareStatements, ingestFile, rebuildDerived, newStats } from "../dist/pipeline.js";
 import { classify } from "../dist/classify.js";
+import { classifyErrors } from "../dist/errors.js";
 import { ClaudeCodeAdapter, parentSessionFromPath, workflowRunFromPath } from "../dist/adapters/claude-code.js";
 import { sha256, sha256File, streamLines } from "../dist/fileread.js";
 
@@ -550,3 +551,59 @@ describe("validation scenarios: malformed / meta / cross-file dedup / orphan sub
 function stats0() {
   return newStats();
 }
+
+// Tool-failure signal: a tool_result block carries `is_error: true` when the tool failed — NOT
+// toolUseResult.status (whose values are task/lifecycle states and are never "error"). The adapter
+// must map is_error → tool_calls.status = "error" so the error roll-ups (sessions list/detail), the
+// transcript `tool-err` styling, and detect.ts's failed-attempt de-escalation all fire. Regression
+// guard for the 2026-07-16 fix.
+describe("tool_result is_error → status", () => {
+  const ERR = file(
+    "sess-errtool",
+    jsonl(
+      { uuid: "e0", type: "user", timestamp: T(1), cwd: "/tmp/proj", message: { role: "user", content: "run some tools" } },
+      {
+        uuid: "e1", type: "assistant", timestamp: T(2), message: {
+          role: "assistant", model: "claude-opus-4-8", content: [
+            { type: "tool_use", id: "toolu_ok", name: "Bash", input: { command: "echo hi" } },
+            { type: "tool_use", id: "toolu_fail", name: "Bash", input: { command: "false" } },
+            { type: "tool_use", id: "toolu_task", name: "Agent", input: { subagent_type: "Explore", prompt: "x" } },
+          ], usage: { input_tokens: 10, output_tokens: 2, cache_creation_input_tokens: 0, cache_read_input_tokens: 0 },
+        },
+      },
+      // Success: no is_error → no error status (and no toolUseResult → status stays null).
+      { uuid: "e2", type: "user", timestamp: T(3), message: { role: "user", content: [{ type: "tool_result", tool_use_id: "toolu_ok", content: "hi" }] } },
+      // Failure: is_error true on the result block → status must become "error"; the "Exit code" text
+      // classifies as command-failed via classifyErrors (below).
+      { uuid: "e3", type: "user", timestamp: T(4), message: { role: "user", content: [{ type: "tool_result", tool_use_id: "toolu_fail", is_error: true, content: "Exit code 1" }] } },
+      // Lifecycle status still passes through for a non-error result carrying toolUseResult.status.
+      { uuid: "e4", type: "user", timestamp: T(5), message: { role: "user", content: [{ type: "tool_result", tool_use_id: "toolu_task", content: "done" }] }, toolUseResult: { status: "completed" } },
+    ),
+  );
+
+  it("maps is_error:true to status='error', leaves others non-error", () => {
+    const d = openDb(":memory:");
+    const stmts = prepareStatements(d);
+    stmts.insAgent.run(AGENT, "Claude Code CLI");
+    stmts.insSource.run({ id: SOURCE, label: SOURCE, agent_id: AGENT, config_dir: null });
+    ingestFile(d, stmts, new ClaudeCodeAdapter(), ERR.file, ERR.content.split("\n"), { size: ERR.content.length, mtimeMs: 0, hash: "errtool" }, "2026-01-01T00:00:00.000Z", stats0());
+    rebuildDerived(d);
+
+    const status = (id: string) => (d.prepare("SELECT status FROM tool_calls WHERE id = ?").get(id) as any)?.status;
+    expect(status("toolu_fail")).toBe("error");
+    expect(status("toolu_ok")).toBeNull();
+    expect(status("toolu_task")).toBe("completed");
+
+    // The session-list/detail roll-up counts exactly the failed call.
+    const n = (d.prepare("SELECT COUNT(*) n FROM tool_calls WHERE session_id='sess-errtool' AND status='error'").get() as any).n;
+    expect(n).toBe(1);
+
+    // classifyErrors stamps error_type on the errored row (heuristic bucket) and leaves non-errors NULL.
+    classifyErrors(d);
+    const errType = (id: string) => (d.prepare("SELECT error_type FROM tool_calls WHERE id = ?").get(id) as any)?.error_type;
+    expect(errType("toolu_fail")).toBe("command-failed");
+    expect(errType("toolu_ok")).toBeNull();
+    expect(errType("toolu_task")).toBeNull();
+    d.close();
+  });
+});

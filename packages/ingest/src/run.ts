@@ -20,6 +20,7 @@ import { openDb, openRaw, readSchemaVersion, resetSchema } from "./db.js";
 import { ClaudeCodeAdapter } from "./adapters/claude-code.js";
 import { classify, CLASSIFIER_VERSION } from "./classify.js";
 import { detect, DETECTOR_VERSION } from "./detect.js";
+import { classifyErrors } from "./errors.js";
 import { ingestFile, newStats, prepareStatements, pruneExcluded, rebuildDerived } from "./pipeline.js";
 import { ingestWorkflowResults, newWorkflowStats } from "./workflows.js";
 import { ingestSubagentMeta, newMetaStats } from "./meta.js";
@@ -175,6 +176,10 @@ export function runIngest(argv: string[] = process.argv.slice(2)): void {
   // detector reuses the expanded dirty set and delete-then-inserts the touched sessions' findings.
   const detected = detect(db, args.full ? null : expanded);
 
+  // Tool-error classification (error_type on errored tool_calls). Deterministic + re-runnable; reuses
+  // the same expanded dirty set. Powers the sessions error-type filter + dashboard/detail breakdowns.
+  classifyErrors(db, args.full ? null : expanded);
+
   // Report.
   const count = (sql: string) => (db.prepare(sql).get() as any).n as number;
   const sessions = count("SELECT COUNT(*) n FROM sessions");
@@ -227,9 +232,10 @@ export function runMetrics(argv: string[] = process.argv.slice(2)): void {
   const db = openDb(dbPath);
   const r = classify(db);
   const d = detect(db);
+  const e = classifyErrors(db);
   db.close();
   console.log(
     `agent-lens-metrics: classified=${r.count} classifier_version=${CLASSIFIER_VERSION} ` +
-      `findings=${d.count} detector_version=${DETECTOR_VERSION} db=${dbPath}`,
+      `findings=${d.count} detector_version=${DETECTOR_VERSION} errors_classified=${e.count} error_classifier_version=${e.version} db=${dbPath}`,
   );
 }
