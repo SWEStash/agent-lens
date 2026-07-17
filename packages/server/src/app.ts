@@ -12,6 +12,7 @@ import { type DB, lastIngested, schemaStatus, listSources, listProjects, listMod
 import { dashboardOverview, dashboardTimeseries, dashboardBreakdowns, type DashFilters } from "./dashboard.js";
 import { originAllowed, runRefresh } from "./refresh.js";
 import { openTriage, dismiss, reopen, muteRule, unmute, listMutes, type TriageDB, type MuteScope } from "./triage.js";
+import { PREFS_SCHEMA_SQL, getPref, setPref } from "./prefs.js";
 
 export interface CreateAppOpts {
   /** Absolute path to the built web SPA; when present it is served with a history fallback. */
@@ -30,6 +31,7 @@ export async function createApp(db: DB, opts: CreateAppOpts = {}): Promise<Fasti
   let triageDb: TriageDB | null = null;
   if (opts.triageDbPath) {
     triageDb = openTriage(opts.triageDbPath); // creates the file + schema before we ATTACH it
+    triageDb.exec(PREFS_SCHEMA_SQL); // UI-prefs table rides the same writable sidecar (see prefs.ts)
     db.exec(`ATTACH DATABASE '${opts.triageDbPath.replace(/'/g, "''")}' AS triage`);
     app.addHook("onClose", async () => triageDb?.close());
   }
@@ -85,6 +87,27 @@ export async function createApp(db: DB, opts: CreateAppOpts = {}): Promise<Fasti
     return dashboardTimeseries(db, dashFilters(req), q.bucket);
   });
   app.get("/api/dashboard/breakdowns", async (req) => dashboardBreakdowns(db, dashFilters(req)));
+
+  // UI preferences (chart/column visibility, per-chart toggles). Stored in the writable sidecar
+  // (prefs.ts); localStorage on the client is an optimistic cache. GET degrades to `{value:null}` when
+  // no writable store is configured so the client simply keeps its local value. PUT reuses the same
+  // CSRF+availability guard as the other writes.
+  const PREF_KEY = /^[a-z0-9._-]{1,64}$/i;
+  app.get("/api/prefs/:key", async (req, reply) => {
+    const { key } = req.params as { key: string };
+    if (!PREF_KEY.test(key)) return reply.code(400).send({ error: { code: "BAD_KEY", message: "invalid pref key" } });
+    if (!triageDb) return { value: null };
+    const raw = getPref(triageDb, key);
+    return { value: raw == null ? null : JSON.parse(raw) };
+  });
+  app.put("/api/prefs/:key", async (req, reply) => {
+    const { key } = req.params as { key: string };
+    if (!PREF_KEY.test(key)) return reply.code(400).send({ error: { code: "BAD_KEY", message: "invalid pref key" } });
+    if (!guardWrite(req, reply)) return;
+    const body = req.body as { value?: unknown };
+    setPref(triageDb!, key, JSON.stringify(body?.value ?? null));
+    return { ok: true };
+  });
 
   app.get("/api/sessions", async (req) => {
     const q = req.query as Record<string, string>;

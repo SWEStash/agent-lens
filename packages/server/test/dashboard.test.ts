@@ -16,10 +16,10 @@ function seed(): Database.Database {
   db.pragma("foreign_keys = OFF"); // test aggregation SQL, not the full FK graph
   // Sessions: m1 (isf, main, cache-heavy opus), a1 (isf, subagent, dated haiku), m2 (personal, main, <synthetic>).
   db.exec(`
-    INSERT INTO sessions (id, agent_id, source_id, is_sidechain, started_at, turn_count) VALUES
-      ('m1','claude-code','isf',0,'2026-01-01T00:00:00Z',2),
-      ('a1','claude-code','isf',1,'2026-01-01T00:00:00Z',0),
-      ('m2','claude-code','personal',0,'2026-01-02T00:00:00Z',1);
+    INSERT INTO sessions (id, agent_id, source_id, is_sidechain, started_at, duration_ms, turn_count) VALUES
+      ('m1','claude-code','isf',0,'2026-01-01T00:00:00Z',1000,2),
+      ('a1','claude-code','isf',1,'2026-01-01T00:00:00Z',500,0),
+      ('m2','claude-code','personal',0,'2026-01-02T00:00:00Z',3000,1);
     INSERT INTO token_usage (event_uuid, session_id, model, input_tokens, output_tokens, cache_creation_input_tokens, cache_read_input_tokens) VALUES
       ('m1e','m1','claude-opus-4-8',1000000,1000000,1000000,10000000),
       ('a1e','a1','claude-haiku-4-5-20251001',100,100,0,0),
@@ -35,6 +35,11 @@ function seed(): Database.Database {
       ('session','m1','feature',50,'medium',2),
       ('session','m2','bugfix',20,'small',2),
       ('session','a1','review',5,'trivial',2);
+    INSERT INTO workflow_results (run_id, source_id, status, total_tokens, duration_ms, started_at) VALUES
+      ('wf1','isf','completed',1000,2000,'2026-01-01T00:00:00Z'),
+      ('wf2','isf','completed',3000,4000,'2026-01-01T00:00:00Z'),
+      ('wf3','isf','failed',500,1000,'2026-01-02T00:00:00Z'),
+      ('wf4','personal','running',NULL,NULL,'2026-01-02T00:00:00Z');
   `);
   return db;
 }
@@ -65,6 +70,20 @@ describe("dashboardOverview", () => {
 
   it("computes turn-duration percentiles over non-null durations", () => {
     expect(o.turn_duration_ms).toEqual({ p50: 200, p95: 300, count: 3 });
+  });
+
+  it("computes session-duration percentiles over MAIN sessions only (subagent a1 excluded)", () => {
+    expect(o.session_duration_ms).toEqual({ p50: 1000, p95: 3000, count: 2 }); // m1=1000, m2=3000; a1 skipped
+  });
+
+  it("rolls up workflow runs: outcomes, success over decided runs, token/duration sums", () => {
+    expect(o.workflows.total).toBe(4);
+    expect(o.workflows.completed).toBe(2);
+    expect(o.workflows.failed).toBe(1);
+    expect(o.workflows.success_rate).toBeCloseTo(2 / 3, 10); // running excluded from the denominator
+    expect(o.workflows.total_tokens).toBe(4500); // 1000 + 3000 + 500 + 0
+    expect(o.workflows.avg_duration_ms).toBe(2333); // round((2000+4000+1000)/3)
+    expect(o.workflows.by_status.find((s: any) => s.status === "completed").n).toBe(2);
   });
 });
 
@@ -125,5 +144,7 @@ describe("source filter scopes every aggregate", () => {
     expect(o.sessions).toBe(1);
     expect(o.total_tokens).toBe(1000); // only m2's <synthetic>
     expect(o.cost).toBe(0);
+    expect(o.workflows.total).toBe(1); // only the personal 'running' run; success_rate 0 (none decided)
+    expect(o.workflows.success_rate).toBe(0);
   });
 });

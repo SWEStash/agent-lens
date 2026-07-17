@@ -407,6 +407,72 @@ describe("getSession attaches spilled full tool results", () => {
   });
 });
 
+// UI preferences ride the writable sidecar (prefs.ts): a key→JSON store persisted so chart/column
+// visibility survives a cache-clear. Writes reuse the CSRF+availability guard; reads degrade to null
+// when no writable store is configured so the client keeps its localStorage value.
+describe("UI prefs store", () => {
+  async function appWithPrefs() {
+    const app2 = await createApp(seed(), { triageDbPath: ":memory:" });
+    await app2.ready();
+    return app2;
+  }
+
+  it("GET unset → null; PUT (same-origin) then GET round-trips the JSON", async () => {
+    const app2 = await appWithPrefs();
+    let r = await app2.inject({ method: "GET", url: "/api/prefs/dashboard.charts" });
+    expect(r.statusCode).toBe(200);
+    expect(r.json().value).toBeNull();
+
+    r = await app2.inject({
+      method: "PUT",
+      url: "/api/prefs/dashboard.charts",
+      headers: { origin: "http://localhost", "content-type": "application/json" },
+      payload: { value: ["cost-over-time", "activity"] },
+    });
+    expect(r.statusCode).toBe(200);
+
+    r = await app2.inject({ method: "GET", url: "/api/prefs/dashboard.charts" });
+    expect(r.json().value).toEqual(["cost-over-time", "activity"]);
+    await app2.close();
+  });
+
+  it("PUT blocks a cross-site Origin (CSRF guard)", async () => {
+    const app2 = await appWithPrefs();
+    const r = await app2.inject({
+      method: "PUT",
+      url: "/api/prefs/dashboard.charts",
+      headers: { origin: "https://evil.example", "content-type": "application/json" },
+      payload: { value: [] },
+    });
+    expect(r.statusCode).toBe(403);
+    expect(r.json().error.code).toBe("FORBIDDEN_ORIGIN");
+    await app2.close();
+  });
+
+  it("rejects an invalid pref key", async () => {
+    const app2 = await appWithPrefs();
+    const r = await app2.inject({ method: "GET", url: "/api/prefs/" + encodeURIComponent("bad key!") });
+    expect(r.statusCode).toBe(400);
+    await app2.close();
+  });
+
+  it("degrades to null (GET) and 503 (PUT) when no writable store is configured", async () => {
+    const app2 = await createApp(seed()); // no triageDbPath
+    await app2.ready();
+    const g = await app2.inject({ method: "GET", url: "/api/prefs/dashboard.charts" });
+    expect(g.statusCode).toBe(200);
+    expect(g.json().value).toBeNull();
+    const w = await app2.inject({
+      method: "PUT",
+      url: "/api/prefs/dashboard.charts",
+      headers: { origin: "http://localhost", "content-type": "application/json" },
+      payload: { value: [] },
+    });
+    expect(w.statusCode).toBe(503);
+    await app2.close();
+  });
+});
+
 // Schema-version drift: /api/health flags a DB stamped by an older build so the UI can warn that a full
 // re-ingest is required (an incremental ingest can't migrate a schema bump).
 describe("health surfaces schema staleness", () => {

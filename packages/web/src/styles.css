@@ -161,6 +161,30 @@ select:focus-visible,
 .multi-select > .col-menu { left: 0; right: auto; }
 .search { display: flex; gap: 6px; flex: 1; min-width: 280px; }
 .search input { flex: 1; }
+
+/* Unify every control in the Sessions filter row to one box metric. They come from different widgets
+ * (native <select>, search <input>/<button>, the project dropdown <button>, the Security/Errors
+ * <details> summaries) that otherwise render at 29–37px tall with 13.3px vs 14px fonts. One height +
+ * font here makes them line up. */
+.filters > select,
+.filters .search input,
+.filters .search button,
+.filters .filter-select-btn,
+.filters .multi-select > summary {
+  height: 36px;
+  box-sizing: border-box;
+  font-size: 13px;
+  /* Native controls (<select>/<input>/<button>) default to a UA font-family while the <summary>
+   * pills inherit the body font; force the body font on all of them so they read identically. */
+  font-family: inherit;
+}
+/* The button/summary controls need explicit centering to sit their text in the fixed height. */
+.filters .filter-select-btn,
+.filters .multi-select > summary {
+  display: inline-flex;
+  align-items: center;
+  padding: 0 10px;
+}
 .muted { color: var(--muted); }
 .pad { padding: 24px 0; }
 .error { color: var(--err); padding: 12px; border: 1px solid var(--err); border-radius: 6px; margin-bottom: 12px; }
@@ -568,10 +592,27 @@ table.sessions { width: 100%; border-collapse: collapse; }
   grid-template-columns: repeat(auto-fit, minmax(380px, 1fr));
   gap: 14px;
 }
-.card { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 14px; min-width: 0; }
+.card { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 14px; min-width: 0; display: flex; flex-direction: column; }
 .card-head { display: flex; align-items: baseline; gap: 10px; margin-bottom: 10px; flex-wrap: wrap; }
 .card-head h3 { margin: 0; font-size: 14px; }
 .card-hint { font-size: 11px; color: var(--muted); }
+/* Actions on the right of a card header: metric toggles, "show all" buttons. Pushed to the far edge. */
+.card-actions { margin-left: auto; display: flex; align-items: center; gap: 8px; }
+.link-btn { background: none; border: none; color: var(--accent); font-size: 11px; cursor: pointer; padding: 0; white-space: nowrap; }
+.link-btn:hover { text-decoration: underline; }
+/* One height governs every chart so grid rows stay even; a card overrides it inline only when the user
+ * expands it ("show all"). Charts inside render at height="100%". */
+.chart-body { height: var(--chart-h, 240px); }
+/* Segmented toggle for per-chart metric switches (e.g. tokens ⇄ cost). */
+.seg { display: inline-flex; border: 1px solid var(--border); border-radius: 6px; overflow: hidden; }
+.seg button { background: none; border: none; color: var(--muted); font-size: 11px; padding: 2px 8px; cursor: pointer; }
+.seg button + button { border-left: 1px solid var(--border); }
+.seg button.on { background: var(--panel2); color: var(--text); }
+/* Dashboard toolbar row (right-aligned controls like the chart-visibility gear). */
+.dash-toolbar { display: flex; align-items: center; justify-content: flex-end; gap: 10px; margin-bottom: 10px; }
+/* Clickable category-axis labels on drill-down bar charts (reachable even when the bar is tiny). */
+.axis-link { fill: var(--muted); cursor: pointer; }
+.axis-link:hover { fill: var(--accent); text-decoration: underline; }
 .empty { color: var(--muted); font-size: 13px; padding: 24px 8px; }
 .empty code { background: var(--panel2); padding: 1px 5px; border-radius: 4px; }
 

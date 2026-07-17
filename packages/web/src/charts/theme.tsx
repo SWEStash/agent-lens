@@ -47,14 +47,36 @@ export function useChartTokens() {
   }, [theme]);
 }
 
-export function ChartCard({ title, hint, children }: { title: string; hint?: ReactNode; children: ReactNode }) {
+/** A dashboard chart card. The chart lives in a `.chart-body` whose height is governed by one CSS
+ * variable (`--chart-h`) so every card in a grid row is the same height by default — pass an explicit
+ * `bodyHeight` only to let a card grow on demand (the "show all" expansion). `actions` renders on the
+ * right of the header (metric toggles, show-all buttons); charts inside use `height="100%"`. */
+export function ChartCard({
+  title,
+  hint,
+  actions,
+  bodyHeight,
+  hidden,
+  children,
+}: {
+  title: string;
+  hint?: ReactNode;
+  actions?: ReactNode;
+  bodyHeight?: number | string;
+  hidden?: boolean;
+  children: ReactNode;
+}) {
+  if (hidden) return null;
   return (
     <div className="card">
       <div className="card-head">
         <h3>{title}</h3>
         {hint && <span className="card-hint">{hint}</span>}
+        {actions && <span className="card-actions">{actions}</span>}
       </div>
-      {children}
+      <div className="chart-body" style={bodyHeight != null ? { height: bodyHeight } : undefined}>
+        {children}
+      </div>
     </div>
   );
 }
