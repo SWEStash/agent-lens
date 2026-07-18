@@ -12,6 +12,7 @@
  * engine supersede these rows.
  */
 import { createHash } from "node:crypto";
+import { posix as path } from "node:path";
 import { bumpSeverity, type Severity, type SecurityCategoryKey } from "@agent-lens/core";
 import type { DB } from "./db.js";
 
@@ -51,7 +52,23 @@ import type { DB } from "./db.js";
 // mistaken for `-fr` flags. And an rm -rf whose targets are all under a temp dir (/tmp, /var/folders)
 // drops from high to low — temp dirs are agent-owned scratch (writes there aren't flagged at all), so a
 // cleanup delete is routine; a home/root/glob target still escalates to critical.
-export const DETECTOR_VERSION = 7;
+// v8 closes two coverage gaps (SA10 obfuscated content, SA08 path traversal) from the detector audit.
+// (1) New privilege.* rule obfuscated.decode_exec: a decoder whose output is piped into an interpreter
+// that executes it (`base64 -d | sh`, `xxd -r | bash`, `openssl … -d | sh`, `uudecode | sh`) — a
+// decode-then-execute evasion primitive that hides its payload from a reader and from token-pattern
+// rules. Matched on the executed view (commandBare) so a decode string that is only echoed/quoted/
+// commented stays inert; requires the decoder UPSTREAM of a pipe INTO the interpreter (so `base64 -d f
+// > out`, decode-to-file, does not flag), and reuses curl_pipe_shell's node/python/perl/ruby carve-out
+// (an inline program `-e`/`-c`/`-m`/`-p` consumes the decoded output as data, not a script). Piping to
+// `sudo <shell>` escalates high→critical. This fills the gap curl_pipe_shell leaves when a decoder sits
+// between the fetch and the shell (`curl … | base64 -d | sh`), with no double-count. (2) write_outside_
+// project now also flags a RELATIVE `../` write that escapes the project: outsideProjectPath resolves a
+// `../`-bearing relative path against the session's project root (posix-normalized) and runs the existing
+// owned/outside/SYSTEM_PATH checks on the resolved absolute path, so `../../../../etc/cron.d/x` lands as
+// high (system) while a `../sibling` write stays low and a `../` that normalizes back inside the project
+// does not flag. A finding raised via traversal carries mods.traversal. secret_file_access already
+// matched `../../.env`/`../../id_rsa` (SECRET_FILE ignores the leading `../`), so it is unchanged.
+export const DETECTOR_VERSION = 8;
 
 // Severity model + category taxonomy are shared from core (packages/core/src/security.ts) so the
 // server and web agree on ordering and keys. Re-exported for tests that drive this module directly.
@@ -210,12 +227,25 @@ export function isAgentOwnedPath(p: string, configDirs: string[]): boolean {
   return !!tmp && p.startsWith(tmp.replace(/\/$/, "") + "/");
 }
 
-/** Does an absolute file path fall outside the session's project directory? (null-safe.) */
-function outsideProject(filePath: string | null, projectPath: string | null, configDirs: string[]): boolean {
-  if (!filePath || !filePath.startsWith("/")) return false; // relative paths are project-local
-  if (isAgentOwnedPath(filePath, configDirs)) return false; // agent's own config/work dir + temp → expected
-  if (!projectPath) return false; // unknown project → don't guess
-  return filePath !== projectPath && !filePath.startsWith(projectPath.replace(/\/$/, "") + "/");
+/**
+ * If a write target lands outside the session's project directory, return its resolved absolute path;
+ * else null. Handles two escapes: an absolute path already outside the project, and a RELATIVE path that
+ * climbs out via `../` (resolved against the project root and posix-normalized — `../../../etc/x` →
+ * `/etc/x`). A relative path with no `../` is project-local; a `../` that normalizes back inside the
+ * project is not an escape. Agent-owned dirs (config/work + temp) and an unknown project never flag.
+ * Returning the resolved path lets the caller run SYSTEM_PATH severity on where the write actually lands.
+ */
+function outsideProjectPath(filePath: string | null, projectPath: string | null, configDirs: string[]): string | null {
+  if (!filePath) return null;
+  let abs = filePath;
+  if (!filePath.startsWith("/")) {
+    if (!projectPath || !filePath.includes("../")) return null; // relative & no traversal → project-local
+    abs = path.normalize(projectPath.replace(/\/$/, "") + "/" + filePath);
+  }
+  if (isAgentOwnedPath(abs, configDirs)) return null; // agent's own config/work dir + temp → expected
+  if (!projectPath) return null; // unknown project → don't guess
+  const root = projectPath.replace(/\/$/, "");
+  return abs !== root && !abs.startsWith(root + "/") ? abs : null;
 }
 
 // Classify the destination host(s) of a curl/wget command for exfil scoring. Runs on the VERBATIM
@@ -524,6 +554,39 @@ const RULES: Rule[] = [
     },
   },
   {
+    id: "obfuscated.decode_exec",
+    category: "privilege-bypass",
+    framework_ref: "OWASP LLM06",
+    title: "Decodes and executes obfuscated content (base64 -d | sh)",
+    tools: ["Bash"],
+    baseSeverity: "high",
+    test(ctx) {
+      const c = ctx.commandBare;
+      if (!c) return null;
+      // A decoder turns opaque/encoded text into live code; piping that into an interpreter runs it — a
+      // decode-then-execute evasion primitive. Matched on the executed view so a decode string that is
+      // only echoed/quoted/commented is already inert.
+      const decoder = /\b(base64\s+(?:-d|-D|--decode)|xxd\s+-r|openssl\s+(?:base64\s+-d|enc\b[^|]*\s-d\b)|uudecode)\b/i.exec(c);
+      if (!decoder) return null;
+      // The decoder must be UPSTREAM of a pipe INTO the interpreter (so its decoded stdout is executed).
+      // Decoding to a file (`base64 -d f > out`) or a later, separately-run script (`; sh x`) has no pipe
+      // from the decoder to the shell and must not flag — so we search only the text AFTER the decoder.
+      const downstream = c.slice(decoder.index + decoder[0].length);
+      const piped = /\|\s*(?:sudo\s+)?(sh|bash|zsh|dash|ksh|python\d?|node|perl|ruby)\b([^|;&\n]*)/i.exec(downstream);
+      if (!piped) return null;
+      const interp = piped[1].toLowerCase();
+      const args = piped[2] || "";
+      // node/python/perl/ruby handed an inline program (-e/-c/-m/-p) consume the piped output as DATA,
+      // not as a script to execute — mirror curl_pipe_shell's carve-out.
+      if (/^(?:node|python|perl|ruby)/.test(interp) && /(?:^|\s)-(?:e|c|m|p)\b|(?:^|\s)--(?:eval|command|module|print)\b/.test(args))
+        return null;
+      const sudo = /\|\s*sudo\b/i.test(downstream);
+      const d = decoder[0].toLowerCase();
+      const decoderName = d.startsWith("base64") ? "base64" : d.startsWith("xxd") ? "xxd" : d.startsWith("openssl") ? "openssl" : "uudecode";
+      return { evidence: evidence(ctx.command!), severity: sudo ? "critical" : "high", mods: { decoder: decoderName, interpreter: interp } };
+    },
+  },
+  {
     id: "privilege.sudo",
     category: "privilege-bypass",
     framework_ref: "OWASP LLM06",
@@ -594,9 +657,15 @@ const RULES: Rule[] = [
     baseSeverity: "low", // writing to /tmp, scratch dirs, adjacent repos is routine; only a system path (below) is high
     test(ctx) {
       const f = ctx.filePath;
-      if (!outsideProject(f, ctx.projectPath, ctx.ownedConfigDirs)) return null;
-      const system = !!f && SYSTEM_PATH.test(f);
-      return { evidence: evidence(f!), severity: system ? "high" : "low", mods: { project: ctx.projectPath, system_path: system } };
+      const abs = outsideProjectPath(f, ctx.projectPath, ctx.ownedConfigDirs);
+      if (!abs) return null;
+      const system = SYSTEM_PATH.test(abs); // severity keys off where the write LANDS (resolved), not the raw arg
+      const traversal = !!f && !f.startsWith("/") && f.includes("../"); // escaped via a relative `../` climb
+      return {
+        evidence: evidence(f!),
+        severity: system ? "high" : "low",
+        mods: { project: ctx.projectPath, system_path: system, ...(traversal ? { traversal: true } : {}) },
+      };
     },
   },
 ];
