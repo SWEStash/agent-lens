@@ -16,21 +16,13 @@
  * top-level `exclude: [<realProjectPath>, …]` plus the `AGENT_LENS_EXCLUDE` env (comma-separated).
  * They are honored at every stage — collect (not mirrored), ingest (not stored / pruned), corpus.
  */
-import { readFileSync } from "node:fs";
-import { expandPath, findRepoRoot, resolveConfigFile, resolveDataDir } from "./paths.js";
+import { expandPath } from "./paths.js";
+import { readConfigFile } from "./config.js";
 
 export interface Source {
   label: string;
   agent: string;
   configDir: string;
-}
-
-/** Read + parse the resolved config file, or null when none exists. */
-function readConfig(): { sources?: unknown[]; exclude?: unknown[] } | null {
-  const repoRoot = findRepoRoot();
-  const dataDir = resolveDataDir(repoRoot);
-  const file = resolveConfigFile(repoRoot, dataDir);
-  return file ? JSON.parse(readFileSync(file, "utf8")) : null;
 }
 
 export function loadSources(): Source[] {
@@ -45,7 +37,7 @@ export function loadSources(): Source[] {
     ];
   }
 
-  const cfg = readConfig() ?? { sources: [{ label: "default", agent: "claude-code", configDir: "$HOME/.claude" }] };
+  const cfg = readConfigFile() ?? { sources: [{ label: "default", agent: "claude-code", configDir: "$HOME/.claude" }] };
 
   const seen = new Set<string>();
   const out: Source[] = [];
@@ -69,7 +61,7 @@ export function loadExcludes(): string[] {
   const fromEnv = (process.env.AGENT_LENS_EXCLUDE || "").split(",");
   let fromCfg: unknown[] = [];
   if (!process.env.CLAUDE_DIR) {
-    const cfg = readConfig();
+    const cfg = readConfigFile();
     if (cfg && Array.isArray(cfg.exclude)) fromCfg = cfg.exclude;
   }
   const seen = new Set<string>();
