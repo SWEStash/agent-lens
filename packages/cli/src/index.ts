@@ -16,6 +16,7 @@ import {
   parseTargets,
   resolveConfigFile,
   resolveDataDir,
+  resolveDbPath,
   resolveServerConfig,
   runService,
 } from "@agent-lens/core";
@@ -66,7 +67,7 @@ cli
 cli
   .command("ingest", "Build/update the SQLite projection from the archive")
   .option("--full", "Ignore incremental state and re-read every file")
-  .option("--db <path>", "SQLite DB path")
+  .option("--db <path>", "SQLite DB path (overrides AGENT_LENS_DB / config db)")
   .option("--archive <path>", "Archive directory")
   .action((opts: { full?: boolean; db?: string; archive?: string }) => {
     const argv: string[] = [];
@@ -80,7 +81,7 @@ cli
   .command("serve", "Serve the web UI + read-only API on 127.0.0.1")
   .option("--port <n>", "HTTP port (overrides AGENT_LENS_PORT / config server.port; default 4477)")
   .option("--host <host>", "Bind host (overrides AGENT_LENS_HOST / config server.host; loopback only unless AGENT_LENS_ALLOW_NONLOCAL=1)")
-  .option("--db <path>", "SQLite DB path (overrides AGENT_LENS_DB)")
+  .option("--db <path>", "SQLite DB path (overrides AGENT_LENS_DB / config db)")
   .action(async (opts: { port?: string; host?: string; db?: string }) => {
     try {
       await startServer({ port: opts.port, host: opts.host, db: opts.db });
@@ -100,7 +101,7 @@ cli
 
 cli
   .command("metrics", "Re-run classification over an already-ingested DB")
-  .option("--db <path>", "SQLite DB path")
+  .option("--db <path>", "SQLite DB path (overrides AGENT_LENS_DB / config db)")
   .action((opts: { db?: string }) => {
     runMetrics(opts.db ? ["--db", opts.db] : []);
   });
@@ -110,9 +111,9 @@ cli
   .option("--out <file>", "Write to this file (default: stdout)")
   .option("--level <level>", "Redaction level: secrets (default) | structure")
   .option("--no-redact", "Verbatim, UNREDACTED output (opt-out)")
-  .option("--db <path>", "SQLite DB path")
+  .option("--db <path>", "SQLite DB path (overrides AGENT_LENS_DB / config db)")
   .action((sessionId: string, opts: { out?: string; level?: string; redact?: boolean; db?: string }) => {
-    const dbPath = opts.db || process.env.AGENT_LENS_DB || join(resolveDataDir(findRepoRoot()), "agent-lens.db");
+    const { path: dbPath } = resolveDbPath(opts.db);
     if (!existsSync(dbPath)) {
       console.error(`agent-lens: db not found: ${dbPath} (run ingest first)`);
       process.exit(1);
@@ -159,8 +160,7 @@ cli
       process.exit(1);
     }
     const { port, host, portOrigin, hostOrigin } = server;
-    const dbPath = process.env.AGENT_LENS_DB || join(dataDir, "agent-lens.db");
-    const dbOrigin = process.env.AGENT_LENS_DB ? "env" : "default";
+    const { path: dbPath, origin: dbOrigin } = resolveDbPath();
     const archive = process.env.AGENT_LENS_ARCHIVE || join(dataDir, "archive");
     const triageDb = process.env.AGENT_LENS_TRIAGE_DB || join(dirname(dbPath), "triage.db");
     const keepDays = process.env.AGENT_LENS_VERSIONS_KEEP_DAYS || "90";

@@ -87,19 +87,30 @@ cp agent-lens.config.example.json agent-lens.config.json   # if not already pres
 - `configDir` accepts `~` and `$HOME`.
 - `agent` is `claude-code` (the only shipped adapter today; see *Adding another agent* below).
 
-The same file can also persist server settings, so the port/host survive without exporting env vars
-in your shell rc:
+The same file can also persist the store path and server settings, so they survive without exporting
+env vars in your shell rc:
 
 ```jsonc
 {
   "sources": [ /* … */ ],
+  "db": "~/lens/agent-lens.db",
   "server": { "port": 4477, "host": "127.0.0.1" }
 }
 ```
 
 These are overridable per run — precedence is **flag > env > config file > default** (e.g.
-`agent-lens serve --port 5599` beats `AGENT_LENS_PORT` beats `server.port` beats the built-in 4477).
+`agent-lens serve --port 5599` beats `AGENT_LENS_PORT` beats `server.port` beats the built-in 4477;
+likewise `--db` beats `AGENT_LENS_DB` beats `db` beats `<dataDir>/agent-lens.db`). `db` accepts `~`
+and `$HOME` and is honored by every command that touches the store — `ingest`, `metrics`, `serve`,
+`export`. The triage sidecar (ADR-018) lives beside it, so moving `db` moves the pair.
 Run `agent-lens config` to print the effective settings and where each came from.
+
+> **Note:** `db` is intentionally absent from `agent-lens.config.example.json`. That example is the
+> last-resort fallback when no real config file exists, so a path baked into it would silently
+> redirect the store for anyone who hasn't made their own config yet.
+>
+> The **data dir** stays env-only (`AGENT_LENS_DATA`) by construction: it is where the config file is
+> looked up, so it cannot be read back out of that file.
 
 The config file is resolved in this order: `AGENT_LENS_CONFIG` → `<dataDir>/agent-lens.config.json`
 → the repo's `agent-lens.config.json` → the built-in default (`~/.claude`). Verify what will be
@@ -361,20 +372,21 @@ macOS) if you need at-rest protection. See `docs/decisions/ADR-009-retention-and
 
 ### Environment variables
 
-For `server` settings (`AGENT_LENS_PORT`, `AGENT_LENS_HOST`) the precedence is **flag > env > config
-file (`server` block) > default**; run `agent-lens config` to see the effective values and their
-origins. All others follow env > config/default as noted.
+For the store path (`AGENT_LENS_DB`) and the `server` settings (`AGENT_LENS_PORT`,
+`AGENT_LENS_HOST`) the precedence is **flag > env > config file (`db` / `server` block) > default**;
+run `agent-lens config` to see the effective values and their origins. All others are env > default
+as noted.
 
 | Variable | Default | Used by | Purpose |
 |---|---|---|---|
 | `AGENT_LENS_DATA` | `<repo>/data` | all | base dir for archive + DB |
 | `AGENT_LENS_ARCHIVE` | `$AGENT_LENS_DATA/archive` | collect, ingest | archive location |
-| `AGENT_LENS_DB` | `$AGENT_LENS_DATA/agent-lens.db` | ingest, server | SQLite path |
+| `AGENT_LENS_DB` | config `db` → `$AGENT_LENS_DATA/agent-lens.db` | ingest, metrics, server, export | SQLite path (overridden by `--db`) |
 | `AGENT_LENS_TRIAGE_DB` | `<dir of DB>/triage.db` | server | writable triage/prefs store (kept beside the read-only DB) |
 | `AGENT_LENS_CONFIG` | `<repo>/agent-lens.config.json` | collect, ingest | sources config path |
 | `AGENT_LENS_EXCLUDE` | _(unset)_ | collect, ingest | comma-separated project paths to exclude, additive to the config `exclude` array |
-| `AGENT_LENS_PORT` | `4477` | server | HTTP port |
-| `AGENT_LENS_HOST` | `127.0.0.1` | server | bind host (loopback) |
+| `AGENT_LENS_PORT` | config `server.port` → `4477` | server | HTTP port (overridden by `--port`) |
+| `AGENT_LENS_HOST` | config `server.host` → `127.0.0.1` | server | bind host, loopback (overridden by `--host`) |
 | `AGENT_LENS_ALLOW_NONLOCAL` | _(unset)_ | server | required to bind a non-loopback host |
 | `AGENT_LENS_VERSIONS_KEEP_DAYS` | `90` | prune | retention window for `.versions/` snapshots |
 | `CLAUDE_DIR` | _(unset)_ | collect, ingest | legacy single-source override |

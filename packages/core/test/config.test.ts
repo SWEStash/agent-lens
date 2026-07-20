@@ -4,17 +4,28 @@
  * exactly what ships. `resolveServerConfig` takes the parsed config as an arg, so these tests control
  * the "file" layer directly and the env layer via process.env (saved/restored per test).
  */
+import { homedir } from "node:os";
+import { join } from "node:path";
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { resolveServerConfig, validatePort, DEFAULT_PORT, DEFAULT_HOST } from "../dist/index.js";
+import {
+  resolveDbPath,
+  resolveServerConfig,
+  validatePort,
+  DEFAULT_DB_NAME,
+  DEFAULT_PORT,
+  DEFAULT_HOST,
+} from "../dist/index.js";
 
 const PORT = "AGENT_LENS_PORT";
 const HOST = "AGENT_LENS_HOST";
+const DB = "AGENT_LENS_DB";
 let saved: Record<string, string | undefined>;
 
 beforeEach(() => {
-  saved = { [PORT]: process.env[PORT], [HOST]: process.env[HOST] };
+  saved = { [PORT]: process.env[PORT], [HOST]: process.env[HOST], [DB]: process.env[DB] };
   delete process.env[PORT];
   delete process.env[HOST];
+  delete process.env[DB];
 });
 afterEach(() => {
   for (const [k, v] of Object.entries(saved)) {
@@ -56,6 +67,48 @@ describe("resolveServerConfig precedence", () => {
   it("treats empty-string overrides as unset (does not override lower layers)", () => {
     const r = resolveServerConfig({ port: "", host: "" }, { server: { port: 5601 } });
     expect(r).toMatchObject({ port: 5601, portOrigin: "file", host: DEFAULT_HOST, hostOrigin: "default" });
+  });
+});
+
+describe("resolveDbPath precedence", () => {
+  it("falls back to <dataDir>/agent-lens.db when nothing is set", () => {
+    const r = resolveDbPath(undefined, null);
+    expect(r.origin).toBe("default");
+    expect(r.path.endsWith(DEFAULT_DB_NAME)).toBe(true);
+  });
+
+  it("reads the config file when neither flag nor env is set", () => {
+    const r = resolveDbPath(undefined, { db: "/srv/lens/store.db" });
+    expect(r).toMatchObject({ path: "/srv/lens/store.db", origin: "file" });
+  });
+
+  it("env beats the config file", () => {
+    process.env[DB] = "/srv/lens/from-env.db";
+    const r = resolveDbPath(undefined, { db: "/srv/lens/store.db" });
+    expect(r).toMatchObject({ path: "/srv/lens/from-env.db", origin: "env" });
+  });
+
+  it("a flag beats env and file", () => {
+    process.env[DB] = "/srv/lens/from-env.db";
+    const r = resolveDbPath("/srv/lens/from-flag.db", { db: "/srv/lens/store.db" });
+    expect(r).toMatchObject({ path: "/srv/lens/from-flag.db", origin: "flag" });
+  });
+
+  it("treats an empty-string flag as unset (does not override lower layers)", () => {
+    const r = resolveDbPath("", { db: "/srv/lens/store.db" });
+    expect(r).toMatchObject({ path: "/srv/lens/store.db", origin: "file" });
+  });
+
+  it("expands ~ in a config-file path, like sources[].configDir", () => {
+    const r = resolveDbPath(undefined, { db: "~/lens/store.db" });
+    expect(r).toMatchObject({ path: join(homedir(), "lens/store.db"), origin: "file" });
+  });
+
+  it("resolves the db independently of the server settings", () => {
+    process.env[DB] = "/srv/lens/from-env.db";
+    const cfg = { db: "/srv/lens/store.db", server: { port: 5601 } };
+    expect(resolveDbPath(undefined, cfg).origin).toBe("env");
+    expect(resolveServerConfig({}, cfg)).toMatchObject({ port: 5601, portOrigin: "file" });
   });
 });
 

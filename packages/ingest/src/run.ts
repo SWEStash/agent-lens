@@ -13,6 +13,7 @@ import {
   loadExcludes,
   loadSources,
   resolveDataDir,
+  resolveDbPath,
   SCHEMA_VERSION,
   type SourceAdapter,
 } from "@agent-lens/core";
@@ -43,7 +44,7 @@ export function runIngest(argv: string[] = process.argv.slice(2)): void {
   const args = parseIngestArgs(argv);
   const dataDir = resolveDataDir(findRepoRoot());
   const archiveRoot = args.archive || process.env.AGENT_LENS_ARCHIVE || join(dataDir, "archive");
-  const dbPath = args.db || process.env.AGENT_LENS_DB || join(dataDir, "agent-lens.db");
+  const { path: dbPath } = resolveDbPath(args.db);
 
   if (!existsSync(archiveRoot)) {
     console.error(`agent-lens-ingest: archive not found: ${archiveRoot} (run 'agent-lens collect' first)`);
@@ -221,8 +222,7 @@ export function runIngest(argv: string[] = process.argv.slice(2)): void {
 export function runMetrics(argv: string[] = process.argv.slice(2)): void {
   let dbArg = "";
   for (let i = 0; i < argv.length; i++) if (argv[i] === "--db") dbArg = argv[++i] ?? "";
-  const dataDir = resolveDataDir(findRepoRoot());
-  const dbPath = dbArg || process.env.AGENT_LENS_DB || join(dataDir, "agent-lens.db");
+  const { path: dbPath } = resolveDbPath(dbArg);
 
   if (!existsSync(dbPath)) {
     console.error(`agent-lens-metrics: db not found: ${dbPath} (run ingest first)`);

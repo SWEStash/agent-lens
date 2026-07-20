@@ -8,7 +8,7 @@
 import { existsSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { findRepoRoot, resolveDataDir, resolveServerConfig, resolveWebDist } from "@agent-lens/core";
+import { findRepoRoot, resolveDbPath, resolveServerConfig, resolveWebDist } from "@agent-lens/core";
 import { openReadonly } from "./db.js";
 import { createApp } from "./app.js";
 
@@ -29,8 +29,8 @@ export async function startServer(overrides: StartServerOverrides = {}): Promise
   // published package root (web SPA sits at ../web, data falls back to the per-user dir).
   const here = dirname(fileURLToPath(import.meta.url));
   const repoRoot = findRepoRoot(here);
-  const dbPath = overrides.db || process.env.AGENT_LENS_DB || join(resolveDataDir(repoRoot), "agent-lens.db");
-  // Port/host resolve with precedence flag > env > file > default, validated (bad port fails fast).
+  // db/port/host all resolve with precedence flag > env > file > default (bad port fails fast).
+  const { path: dbPath } = resolveDbPath(overrides.db);
   const { host, port } = resolveServerConfig({ port: overrides.port, host: overrides.host });
   const webDist = resolveWebDist(here, repoRoot);
 
