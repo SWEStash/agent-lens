@@ -43,7 +43,11 @@ Two **targets**:
   hour; `--times`, default `09,13,17,21`).
 - **server** — the long-running `serve` daemon, new. Per platform:
   - **Linux** → a systemd user service `agent-lens-server.service`, `Type=simple`,
-    `Restart=on-failure`, `RestartSec=5`, `WantedBy=default.target`. The absolute `node` + CLI are
+    `Restart=always`, `RestartSec=5`, `WantedBy=default.target`. `Restart=always` (not
+    `on-failure`): systemd counts a bare SIGTERM as a *clean* exit, so `on-failure` left the server
+    dead after any external `kill`/`pkill` — in practice a `pkill -f 'agent-lens.js serve'` aimed at
+    an ad-hoc test server, which matches this unit's `ExecStart` too. This also matches the launchd
+    `KeepAlive` behaviour below; `systemctl --user stop` still stops it. The absolute `node` + CLI are
     baked into `ExecStart`, so no `WorkingDirectory` / `Environment=PATH=` mise hack is needed (that
     only existed because the legacy path ran `serve.sh`). `AGENT_LENS_PORT` / `AGENT_LENS_HOST` set at
     install time are baked in as `Environment=` lines.

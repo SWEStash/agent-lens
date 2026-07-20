@@ -23,9 +23,6 @@ jobs:
   release:
     runs-on: ubuntu-latest
     timeout-minutes: 20
-    env:
-      # Exposed here so the release step's `if:` can detect whether the secret is configured.
-      NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
     steps:
       - uses: actions/checkout@v5
         with:
@@ -60,12 +57,22 @@ jobs:
       - name: Global-install tarball smoke (real npm i -g, exercises better-sqlite3 prebuild)
         run: node scripts/smoke-tarball.mjs --global
 
+      # Detect whether the publish token is configured WITHOUT exposing it to the build/test steps
+      # above (MEDIUM-002): it emits only a boolean, and the token itself is scoped to the publish
+      # step's own `env:` below — never job-wide, where `pnpm install`/lifecycle scripts run.
+      - name: Detect npm token
+        id: npm_token
+        env:
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: echo "configured=$([ -n "$NPM_TOKEN" ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
+
       # --- Release: semantic-release computes the version, publishes to npm, tags, GH release ---
       # Skipped (workflow stays green) until NPM_TOKEN is configured as a repo secret. The v0.1.0
       # baseline tag must already be pushed so semantic-release never cuts a from-scratch release.
       - name: semantic-release
-        if: ${{ env.NPM_TOKEN != '' }}
+        if: ${{ steps.npm_token.outputs.configured == 'true' }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
           NPM_CONFIG_PROVENANCE: "true"
         run: pnpm exec semantic-release

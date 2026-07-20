@@ -1,6 +1,7 @@
-import { Fragment, useEffect, useRef, useState } from "react";
+import { Fragment, useEffect, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { api, type Project, type SessionSummary } from "./api";
+import { useDetailsAutoClose } from "./useDetailsAutoClose";
 import { fmtCost, fmtDate, fmtDuration, fmtTokens, shortModel, tokenSplitTitle } from "./format";
 import { FilterSelect } from "./FilterSelect";
 import { Pager } from "./Pager";
@@ -168,24 +169,6 @@ const ERROR_TYPE_OPTIONS: Array<{ value: string; label: string }> = [
   { value: "user-rejected", label: "user rejected" },
   { value: "guardrail-blocked", label: "guardrail blocked" },
 ];
-
-/** A native <details> gives keyboard/focus behaviour for free but stays open on outside clicks.
- * This hook closes it (clears `open`) when a mousedown lands outside the element — matching the
- * FilterSelect dropdown's dismiss-on-outside-click behaviour. We only listen for `mousedown`: a
- * document-level `focusin` listener crashes Chrome's renderer (SIGILL) during the synthetic focus a
- * <label> click forwards to its checkbox inside a <details>. */
-function useDetailsAutoClose() {
-  const ref = useRef<HTMLDetailsElement>(null);
-  useEffect(() => {
-    const onDoc = (e: Event) => {
-      const el = ref.current;
-      if (el?.open && !el.contains(e.target as Node)) el.open = false;
-    };
-    document.addEventListener("mousedown", onDoc);
-    return () => document.removeEventListener("mousedown", onDoc);
-  }, []);
-  return ref;
-}
 
 /** A labeled multi-select filter: a <details> dropdown of checkboxes. Value is the selected `value`s;
  * empty = no filter. Mirrors the column-customizer dropdown (shares the `.col-menu` panel styles). */

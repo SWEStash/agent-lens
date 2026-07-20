@@ -65,8 +65,17 @@ describe("systemd server unit", () => {
     const s = systemdServerService(NODE, CLI);
     expect(s).toContain(`ExecStart=${NODE} ${CLI} serve`);
     expect(s).toContain("Type=simple");
-    expect(s).toContain("Restart=on-failure");
+    expect(s).toContain("Restart=always");
     expect(s).toContain("WantedBy=default.target");
+  });
+  // Regression: systemd treats a bare SIGTERM as a *clean* exit, so Restart=on-failure left the
+  // server dead whenever a stray `pkill -f 'agent-lens.js serve'` (aimed at an ad-hoc test server)
+  // also matched this unit's ExecStart. Restart=always is what makes it come back.
+  it("restarts after a clean exit / SIGTERM, not only on failure", () => {
+    const s = systemdServerService(NODE, CLI);
+    // Anchored: only the directive line counts — the unit's comments mention on-failure by name.
+    expect(s).not.toMatch(/^Restart=on-failure$/m);
+    expect(s).toMatch(/^Restart=always$/m);
   });
   it("bakes AGENT_LENS_PORT / AGENT_LENS_HOST when provided", () => {
     const s = systemdServerService(NODE, CLI, { AGENT_LENS_PORT: "5000", AGENT_LENS_HOST: "127.0.0.1" });

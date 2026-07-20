@@ -118,8 +118,11 @@ After=network.target
 Type=simple
 # Absolute node + CLI paths: systemd user services don't inherit the interactive PATH.
 ExecStart=${node} ${cli} serve
-${envLines}# Long-running: restart if it crashes.
-Restart=on-failure
+${envLines}# Long-running: always come back, including after a bare SIGTERM. systemd counts SIGTERM as a
+# clean exit, so Restart=on-failure would leave the server dead after a stray "pkill -f ... serve"
+# aimed at an ad-hoc test server — the unit's ExecStart matches that pattern too. Matches the
+# launchd KeepAlive=true behaviour. An explicit "systemctl --user stop" still stops it for good.
+Restart=always
 RestartSec=5
 Nice=10
 
