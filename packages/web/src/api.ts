@@ -12,9 +12,12 @@ function resolveUrl(path: string): string {
 }
 
 /** URL for a session's Markdown export — the live API route, or the pre-rendered static file in
- * snapshot mode. */
-export function exportUrl(id: string): string {
-  return SNAPSHOT ? `${BASE}snapshot/sessions/${id}.export.md` : `/api/sessions/${id}/export.md`;
+ * snapshot mode. `level` picks the redaction mode: default (undefined) = the server's redacted
+ * `secrets` level; `structure` = aggressive scrub; `off` = verbatim. Snapshot mode serves the one
+ * pre-rendered (redacted) file regardless. */
+export function exportUrl(id: string, level?: "structure" | "off"): string {
+  if (SNAPSHOT) return `${BASE}snapshot/sessions/${id}.export.md`;
+  return `/api/sessions/${id}/export.md${level ? `?redact=${level}` : ""}`;
 }
 
 export async function api<T = any>(path: string): Promise<T> {

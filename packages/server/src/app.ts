@@ -7,10 +7,10 @@
 import { existsSync } from "node:fs";
 import Fastify, { type FastifyInstance } from "fastify";
 import fastifyStatic from "@fastify/static";
-import { sessionToMarkdown, type MarkdownEvent } from "@agent-lens/core";
+import { renderSessionExport, parseRedactionLevel } from "./export.js";
 import { type DB, lastIngested, schemaStatus, listSources, listProjects, listModels, listSessions, getSession, getWorkflow, listSkills, getSkill, listFindings, securitySummary } from "./db.js";
 import { dashboardOverview, dashboardTimeseries, dashboardBreakdowns, type DashFilters } from "./dashboard.js";
-import { originAllowed, runRefresh } from "./refresh.js";
+import { writeBlocked, runRefresh } from "./refresh.js";
 import { openTriage, dismiss, reopen, muteRule, unmute, listMutes, type TriageDB, type MuteScope } from "./triage.js";
 import { PREFS_SCHEMA_SQL, getPref, setPref } from "./prefs.js";
 
@@ -20,10 +20,42 @@ export interface CreateAppOpts {
   /** Path to the writable security-triage store (ADR-018). When set, it is opened read-write for
    *  triage writes and ATTACHed to the read handle so the findings list can JOIN triage state. */
   triageDbPath?: string | null;
+  /** Reject any request whose Host authority is not loopback (DNS-rebinding defense, HIGH-001).
+   *  Defaults to true; the intentional non-local bind (AGENT_LENS_ALLOW_NONLOCAL) passes false. */
+  enforceLoopbackHost?: boolean;
 }
+
+/** Loopback host authorities (hostname only; any port). A request Host outside this set is treated
+ *  as a DNS-rebinding attempt and rejected before any handler runs. */
+const LOOPBACK_HOSTS = new Set(["127.0.0.1", "localhost", "[::1]"]);
 
 export async function createApp(db: DB, opts: CreateAppOpts = {}): Promise<FastifyInstance> {
   const app = Fastify({ logger: false });
+
+  // HIGH-001: binding 127.0.0.1 stops direct remote connections but NOT DNS rebinding — a page on
+  // evil.com re-resolved to 127.0.0.1 makes same-origin requests the browser will let it read. Reads
+  // are unauthenticated, so without a Host check the whole transcript store is exfiltratable. Reject
+  // any non-loopback Host up front. This also removes the residual write ambiguity (Origin-absent).
+  if (opts.enforceLoopbackHost !== false) {
+    app.addHook("onRequest", async (req, reply) => {
+      const host = (req.headers.host ?? "").replace(/:\d+$/, "");
+      if (!LOOPBACK_HOSTS.has(host)) {
+        return reply.code(403).send({ error: { code: "FORBIDDEN_HOST", message: "non-loopback Host rejected" } });
+      }
+    });
+  }
+
+  // Baseline security headers on every response (incl. static SPA + errors). Anti-clickjacking
+  // (`X-Frame-Options`/`frame-ancestors`) matters here because framing the loopback UI could drive
+  // the Origin-passing write routes. A full script/style CSP is deliberately omitted — it risks
+  // breaking the SPA and adds little on a loopback-only, Host-guarded server (tracked as follow-up).
+  app.addHook("onSend", async (_req, reply, payload) => {
+    reply.header("X-Frame-Options", "DENY");
+    reply.header("X-Content-Type-Options", "nosniff");
+    reply.header("Referrer-Policy", "no-referrer");
+    reply.header("Content-Security-Policy", "frame-ancestors 'none'");
+    return payload;
+  });
 
   // Security triage store (ADR-018): a separate writable SQLite, ATTACHed to the read handle so the
   // findings queries can JOIN dismissed/muted state, while writes go through `triageDb`. The analytics
@@ -38,7 +70,7 @@ export async function createApp(db: DB, opts: CreateAppOpts = {}): Promise<Fasti
 
   // Shared CSRF + availability guard for the triage write routes (same posture as /api/refresh).
   const guardWrite = (req: any, reply: any): boolean => {
-    if (!originAllowed(req.headers.origin)) {
+    if (writeBlocked(req.headers)) {
       reply.code(403).send({ error: { code: "FORBIDDEN_ORIGIN", message: "cross-origin write blocked" } });
       return false;
     }
@@ -58,14 +90,17 @@ export async function createApp(db: DB, opts: CreateAppOpts = {}): Promise<Fasti
   // can pull in new transcripts on demand (ADR-015). Guarded against cross-site CSRF (Origin) and
   // concurrent runs (single-instance lock → 409). See refresh.ts.
   app.post("/api/refresh", async (req, reply) => {
-    if (!originAllowed(req.headers.origin)) {
+    if (writeBlocked(req.headers)) {
       return reply.code(403).send({ error: { code: "FORBIDDEN_ORIGIN", message: "cross-origin refresh blocked" } });
     }
     let result;
     try {
       result = runRefresh();
     } catch (e: any) {
-      return reply.code(500).send({ error: { code: "REFRESH_FAILED", message: String(e?.message ?? e) } });
+      // Don't leak the raw exception (may include host filesystem paths, LOW-003) to the client; the
+      // recipient is the local user but a generic message keeps this safe if ever exposed. Detail → log.
+      console.error("agent-lens-server: refresh failed:", e);
+      return reply.code(500).send({ error: { code: "REFRESH_FAILED", message: "refresh failed; see server logs" } });
     }
     if (!result) {
       return reply.code(409).send({ error: { code: "REFRESH_IN_PROGRESS", message: "a collect/ingest run is already in progress" } });
@@ -221,39 +256,15 @@ export async function createApp(db: DB, opts: CreateAppOpts = {}): Promise<Fasti
 
   app.get("/api/sessions/:id/export.md", async (req, reply) => {
     const { id } = req.params as { id: string };
-    const result = getSession(db, id);
-    if (!result) return reply.code(404).send({ error: "not found" });
-    const s = result.session;
-    const events: MarkdownEvent[] = result.events.map((e) => ({
-      type: e.type,
-      role: e.role,
-      timestamp: e.timestamp,
-      text: e.text,
-      thinking: e.thinking,
-      toolCalls: e.toolCalls.map((t: any) => ({
-        tool_name: t.tool_name,
-        skill_name: t.skill_name,
-        agent_type: t.agent_type,
-        input_json: t.input_json,
-        status: t.status,
-      })),
-    }));
-    const md = sessionToMarkdown(
-      {
-        id: s.id,
-        title: s.title,
-        source: s.source_id,
-        project: s.project_path,
-        model: null,
-        started_at: s.started_at,
-        ended_at: s.ended_at,
-      },
-      events,
-    );
+    // Redaction defaults ON (selective secret/PII masking). `structure` = aggressive scrub;
+    // `off` = explicit verbatim opt-out. Anything unrecognized falls back to the safe default.
+    const level = parseRedactionLevel((req.query as { redact?: string }).redact);
+    const out = renderSessionExport(db, id, level);
+    if (!out) return reply.code(404).send({ error: "not found" });
     reply
       .header("content-type", "text/markdown; charset=utf-8")
-      .header("content-disposition", `attachment; filename="session-${id.slice(0, 8)}.md"`)
-      .send(md);
+      .header("content-disposition", `attachment; filename="${out.filename}"`)
+      .send(out.markdown);
   });
 
   // Serve the built SPA (if present) with a history fallback for client routes.

@@ -193,6 +193,10 @@ export class Redactor {
 // Canonical Claude Code project-dir encoder now lives in core so collect + ingest agree exactly.
 export { encodeProjectPath } from "@agent-lens/core";
 import { encodeProjectPath } from "@agent-lens/core";
+// The fail-closed leak scan now lives in core (shared with the redacted-export sanitizer). Re-export
+// so this module's consumers (redact-cli.ts, tests) keep their `./redact.js` import unchanged.
+export { LEAK_PATTERNS, findLeak } from "@agent-lens/core";
+import { findLeak } from "@agent-lens/core";
 
 /** Parse the AGENT_LENS_REDACT_EXCLUDE CSV of real project paths into encoded-dir prefixes. */
 export function parseExcludes(csv: string | undefined | null): string[] {
@@ -215,23 +219,4 @@ export function isExcludedDir(encodedDir: string, excluded: string[]): boolean {
  */
 export function isExcludedArchivePath(filePath: string, excluded: string[]): boolean {
   return excluded.some((e) => filePath.includes(`/projects/${e}/`));
-}
-
-/** Patterns that must NEVER appear in redacted output (final defense-in-depth leak scan). */
-export const LEAK_PATTERNS: Array<{ name: string; re: RegExp }> = [
-  { name: "email", re: /[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/ },
-  { name: "home-path-with-user", re: /\/(?:home|Users)\/(?!user\b)[A-Za-z0-9._-]+/ },
-  { name: "ipv4", re: /\b\d{1,3}(?:\.\d{1,3}){3}\b/ },
-  { name: "url", re: /https?:\/\/[^\s"']+/ },
-  { name: "aws-key", re: /AKIA[0-9A-Z]{16}/ },
-  { name: "bearer/token", re: /\b(?:sk|pk|ghp|gho|xox[abp])[-_][A-Za-z0-9]{8,}/ },
-];
-
-/** Return the first leak found in `text`, or null. Used to fail closed before writing the corpus. */
-export function findLeak(text: string): { name: string; sample: string } | null {
-  for (const { name, re } of LEAK_PATTERNS) {
-    const m = re.exec(text);
-    if (m) return { name, sample: m[0].slice(0, 40) };
-  }
-  return null;
 }

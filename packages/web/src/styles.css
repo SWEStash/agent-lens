@@ -233,6 +233,13 @@ table.sessions { width: 100%; border-collapse: collapse; }
 .detail-meta .path { color: var(--muted); }
 .spawned-by { color: var(--muted); }
 .export { margin-left: auto; border: 1px solid var(--border); border-radius: 6px; padding: 6px 12px; }
+/* Export dropdown: reuses .col-customizer/.col-menu; the menu items are links, not checkbox labels. */
+.export-menu { margin-left: auto; }
+.export-menu > summary.export { display: inline-block; list-style: none; cursor: pointer; }
+.export-menu > summary.export::-webkit-details-marker { display: none; }
+.export-menu .col-menu a { display: block; padding: 5px 8px; border-radius: 4px; white-space: nowrap; text-decoration: none; color: var(--text); }
+.export-menu .col-menu a:hover { background: var(--panel2); }
+.export-menu .col-menu a.export-verbatim { color: var(--warn, #c9772b); }
 .subagent-link { display: inline-block; font-size: 12px; margin: 0 0 4px 10px; }
 
 .subagents { margin: 0 0 18px; padding: 12px 14px; border: 1px solid var(--border); border-radius: 8px; }

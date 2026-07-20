@@ -7,11 +7,29 @@ import { fmtCost, fmtDate, fmtDuration, fmtTokens, shortModel, tokenSplitTitle }
 import { prettyJson } from "./jsonish";
 import { SeverityTag, SEVERITIES } from "./severity";
 import CopyButton from "./CopyButton";
+import { useDetailsAutoClose } from "./useDetailsAutoClose";
 
 /** How message bodies render: "markdown" (formatted, the default) or "raw" (verbatim text).
  * Provided once per SessionView and consumed deep in the tree by message bodies. */
 export type MsgFormat = "markdown" | "raw";
 const FormatContext = createContext<MsgFormat>("markdown");
+
+/** Export-to-Markdown control. A <details> menu (shares the `.col-customizer`/`.col-menu` styles)
+ * offering the redacted default, an aggressive structure-only scrub, and an explicit verbatim
+ * opt-out. Redaction is best-effort — the exported file carries that disclaimer. */
+function ExportMenu({ id }: { id: string }) {
+  const ref = useDetailsAutoClose();
+  return (
+    <details className="export-menu col-customizer" ref={ref}>
+      <summary className="export" title="Export this session as Markdown">⬇ Export Markdown</summary>
+      <div className="col-menu" role="group" aria-label="Export options">
+        <a href={exportUrl(id)} download>Redacted <span className="muted small">(secrets masked)</span></a>
+        <a href={exportUrl(id, "structure")} download>Structure only <span className="muted small">(scrubbed)</span></a>
+        <a className="export-verbatim" href={exportUrl(id, "off")} download>Verbatim <span className="muted small">(unredacted)</span></a>
+      </div>
+    </details>
+  );
+}
 
 /** Maps a Workflow tool_use id → its run id (wf_…), built once per SessionView from the transcript's
  * tool calls. Lets a `<task-notification>` (which carries the originating tool-use-id) link straight
@@ -1390,9 +1408,7 @@ export default function SessionView() {
           )}
           <span>{fmtDuration(s.duration_ms)}</span>
           <span className="muted">{fmtDate(s.started_at)}</span>
-          <a className="export" href={exportUrl(s.id)}>
-            ⬇ Export Markdown
-          </a>
+          <ExportMenu id={s.id} />
         </div>
         {d.classification && <ClassificationBadge c={d.classification} />}
         {d.findings && d.findings.length > 0 && <SecurityBanner findings={d.findings} sessionId={s.id} />}

@@ -35,6 +35,21 @@ export function originAllowed(origin: string | undefined): boolean {
 }
 
 /**
+ * Whether a state-changing request should be blocked (defense-in-depth CSRF, LOW-001). Combines the
+ * `Origin` allowlist with `Sec-Fetch-Site`: browsers stamp the latter on every request, so a
+ * cross-site/same-site fetch is rejected even if `Origin` is somehow absent — closing the
+ * `originAllowed(undefined) === true` gap. Non-browser callers (curl/CLI) send neither header and
+ * stay allowed. Paired with the loopback-Host guard (HIGH-001), this covers the rebinding case too.
+ */
+export function writeBlocked(headers: Record<string, string | string[] | undefined>): boolean {
+  const site = headers["sec-fetch-site"];
+  const s = Array.isArray(site) ? site[0] : site;
+  if (typeof s === "string" && s !== "same-origin" && s !== "none") return true;
+  const origin = headers["origin"];
+  return !originAllowed(Array.isArray(origin) ? origin[0] : origin);
+}
+
+/**
  * Run one collect + ingest pass under the shared single-instance lock. Returns `null` if a run is
  * already in progress (caller → 409). Throws on collect/ingest failure (caller → 500). Synchronous
  * and blocking: on a large archive this briefly stalls the server, acceptable for a local

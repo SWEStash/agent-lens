@@ -3,13 +3,13 @@
  * plus watch (resident collect+ingest) and service (install collect+ingest and/or serve as OS
  * services). Bundled into a single file by tsup so it installs as one npm package (ADR-010).
  */
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { cac } from "cac";
 import { acquireLock, collectAll, findRepoRoot, parseHours, parseTargets, resolveDataDir, runService } from "@agent-lens/core";
 import { runIngest, runMetrics } from "@agent-lens/ingest";
-import { startServer } from "@agent-lens/server";
+import { startServer, openReadonly, renderSessionExport, parseRedactionLevel } from "@agent-lens/server";
 import { runWatch } from "./watch.js";
 
 function version(): string {
@@ -84,6 +84,33 @@ cli
   .option("--db <path>", "SQLite DB path")
   .action((opts: { db?: string }) => {
     runMetrics(opts.db ? ["--db", opts.db] : []);
+  });
+
+cli
+  .command("export <sessionId>", "Write a session to a shareable Markdown file (redacted by default)")
+  .option("--out <file>", "Write to this file (default: stdout)")
+  .option("--level <level>", "Redaction level: secrets (default) | structure")
+  .option("--no-redact", "Verbatim, UNREDACTED output (opt-out)")
+  .option("--db <path>", "SQLite DB path")
+  .action((sessionId: string, opts: { out?: string; level?: string; redact?: boolean; db?: string }) => {
+    const dbPath = opts.db || process.env.AGENT_LENS_DB || join(resolveDataDir(findRepoRoot()), "agent-lens.db");
+    if (!existsSync(dbPath)) {
+      console.error(`agent-lens: db not found: ${dbPath} (run ingest first)`);
+      process.exit(1);
+    }
+    // cac sets `redact:false` for --no-redact. Otherwise the level flag (default: secrets).
+    const level = opts.redact === false ? "off" : parseRedactionLevel(opts.level);
+    const out = renderSessionExport(openReadonly(dbPath), sessionId, level);
+    if (!out) {
+      console.error(`agent-lens: session not found: ${sessionId}`);
+      process.exit(1);
+    }
+    if (opts.out) {
+      writeFileSync(opts.out, out.markdown);
+      console.error(`agent-lens: wrote ${out.filename} → ${opts.out} (redaction: ${level})`);
+    } else {
+      process.stdout.write(out.markdown);
+    }
   });
 
 cli

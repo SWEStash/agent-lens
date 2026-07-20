@@ -12,6 +12,11 @@ import { findRepoRoot, resolveDataDir, resolveWebDist } from "@agent-lens/core";
 import { openReadonly } from "./db.js";
 import { createApp } from "./app.js";
 
+// Re-exported for the unified CLI (bundles this package): the read-only DB open + the shared
+// session-export helpers back the `agent-lens export` command without a second server process.
+export { openReadonly } from "./db.js";
+export { renderSessionExport, parseRedactionLevel } from "./export.js";
+
 export async function startServer(): Promise<void> {
   // Resolve relative to this module: in dev it's packages/server/dist; bundled into the CLI it's the
   // published package root (web SPA sits at ../web, data falls back to the per-user dir).
@@ -39,7 +44,10 @@ export async function startServer(): Promise<void> {
   const triageDbPath = process.env.AGENT_LENS_TRIAGE_DB || join(dirname(dbPath), "triage.db");
 
   const db = openReadonly(dbPath);
-  const app = await createApp(db, { webDist, triageDbPath });
+  // Enforce a loopback Host allowlist (DNS-rebinding defense) whenever we're bound to loopback. An
+  // intentional non-loopback bind (host set + AGENT_LENS_ALLOW_NONLOCAL, checked above) opts out.
+  const enforceLoopbackHost = host === "127.0.0.1" || host === "localhost";
+  const app = await createApp(db, { webDist, triageDbPath, enforceLoopbackHost });
 
   try {
     await app.listen({ host, port });
