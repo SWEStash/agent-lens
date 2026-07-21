@@ -1,6 +1,6 @@
 # ADR-018 — Security-finding triage in a separate writable store
 
-- Status: Accepted
+- Status: Accepted (location amended by [ADR-021](ADR-021-fixed-data-layout.md))
 - Date: 2026-07-14
 - Deciders: project owner
 
@@ -24,7 +24,7 @@ Keep triage state in a **separate, writable `triage.db`** that ingest never touc
 
 - Two tables — `dismissed_findings` (keyed by the **stable finding id** `sha1(tool_call_id, rule_id)`,
   which survives re-detection) and `muted_rules` (rule + optional project/source scope).
-- It sits beside the analytics DB (`AGENT_LENS_TRIAGE_DB` or `<dataDir>/triage.db`) and is **never
+- It sits beside the analytics DB (`triage.db`, in the db's directory) and is **never
   opened by ingest**, so triage survives `ingest --full` automatically — no invariant to enforce.
 - The server opens it **read-write** for writes and `ATTACH`es it to the read handle, so the findings
   list JOINs triage state in SQL (correct filtering, pagination, and counts). The analytics handle

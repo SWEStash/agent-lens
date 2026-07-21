@@ -26,7 +26,6 @@ const SBX = mkdtempSync(join(tmpdir(), "al-shots."));
 const env = {
   ...process.env,
   AGENT_LENS_DATA: SBX,
-  AGENT_LENS_ARCHIVE: CORPUS,
   AGENT_LENS_DB: join(SBX, "shots.db"),
   AGENT_LENS_CONFIG: join(SBX, "sources.json"),
   AGENT_LENS_PORT: String(PORT),
@@ -70,7 +69,7 @@ async function main() {
     throw new Error("dist not found — run `pnpm build` first");
   }
   console.log("screenshots: building web (live mode) + ingesting corpus");
-  await run("node", ["packages/ingest/dist/index.js", "--full"]);
+  await run("node", ["packages/ingest/dist/index.js", "--full", "--archive", CORPUS]);
   await run("pnpm", ["--filter", "@agent-lens/web", "build"]); // live build (VITE_SNAPSHOT cleared)
 
   server = spawn("node", ["packages/server/dist/index.js"], { stdio: "ignore", env, cwd: REPO });

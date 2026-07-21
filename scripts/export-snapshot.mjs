@@ -33,7 +33,6 @@ const SBX = mkdtempSync(join(tmpdir(), "al-snapshot."));
 const env = {
   ...process.env,
   AGENT_LENS_DATA: SBX,
-  AGENT_LENS_ARCHIVE: CORPUS,
   AGENT_LENS_DB: join(SBX, "snapshot.db"),
   AGENT_LENS_CONFIG: join(SBX, "sources.json"),
   AGENT_LENS_PORT: String(PORT),
@@ -91,7 +90,7 @@ async function waitForHealth() {
 
 async function main() {
   console.log("export-snapshot: ingesting corpus --full into", env.AGENT_LENS_DB);
-  await run("node", ["packages/ingest/dist/index.js", "--full"]);
+  await run("node", ["packages/ingest/dist/index.js", "--full", "--archive", CORPUS]);
 
   rmSync(OUT, { recursive: true, force: true });
 

@@ -13,7 +13,9 @@ the [Operations Guide](USAGE.md). This runbook covers running, migrating, and tr
 - **Manual.** `agent-lens ingest` (incremental) or `agent-lens ingest --full` (rebuild). Direct:
   `node packages/ingest/dist/index.js [--full] [--db <path>] [--archive <path>]`.
 - **Inputs.** Reads `data/archive/` (the mirror + `.versions/` snapshots), writes `data/agent-lens.db`.
-  Overridable via `AGENT_LENS_DATA`, `AGENT_LENS_ARCHIVE`, `AGENT_LENS_DB`
+  Relocate via `AGENT_LENS_DATA` (moves both) or `AGENT_LENS_DB` / config `db` (the db alone).
+  The archive itself has no override — it is always `<dataDir>/archive` (ADR-021); `ingest --archive`
+  is a per-run read-only override for ingesting a copied archive.
   ([env table](USAGE.md#environment-variables)). The archive is read-only to ingest — it is never
   mutated, so any run is safe to repeat.
 

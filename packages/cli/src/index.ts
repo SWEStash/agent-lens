@@ -14,11 +14,13 @@ import {
   loadSources,
   parseHours,
   parseTargets,
+  resolveArchiveDir,
   resolveConfigFile,
   resolveDataDir,
   resolveDbPath,
   resolveServerConfig,
   runService,
+  triageDbFor,
 } from "@agent-lens/core";
 import { runIngest, runMetrics } from "@agent-lens/ingest";
 import { startServer, openReadonly, renderSessionExport, parseRedactionLevel } from "@agent-lens/server";
@@ -161,8 +163,8 @@ cli
     }
     const { port, host, portOrigin, hostOrigin } = server;
     const { path: dbPath, origin: dbOrigin } = resolveDbPath();
-    const archive = process.env.AGENT_LENS_ARCHIVE || join(dataDir, "archive");
-    const triageDb = process.env.AGENT_LENS_TRIAGE_DB || join(dirname(dbPath), "triage.db");
+    const archive = resolveArchiveDir(repoRoot);
+    const triageDb = triageDbFor(dbPath);
     const keepDays = process.env.AGENT_LENS_VERSIONS_KEEP_DAYS || "90";
     const keepOrigin = process.env.AGENT_LENS_VERSIONS_KEEP_DAYS ? "env" : "default";
 
@@ -170,9 +172,9 @@ cli
     console.log("Paths");
     console.log(`  config file      ${configFile ?? "(none — using built-in default source)"}`);
     console.log(`  data dir         ${dataDir}${process.env.AGENT_LENS_DATA ? "  [env]" : ""}`);
-    console.log(`  archive          ${archive}${process.env.AGENT_LENS_ARCHIVE ? "  [env]" : ""}`);
+    console.log(`  archive          ${archive}  [fixed: <data dir>/archive]`);
     console.log(`  db               ${dbPath}  [${dbOrigin}]`);
-    console.log(`  triage db        ${triageDb}${process.env.AGENT_LENS_TRIAGE_DB ? "  [env]" : ""}`);
+    console.log(`  triage db        ${triageDb}  [fixed: beside the db]`);
     console.log("\nServer");
     console.log(`  host             ${host}  [${hostOrigin}]`);
     console.log(`  port             ${port}  [${portOrigin}]`);

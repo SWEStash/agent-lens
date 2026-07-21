@@ -169,3 +169,37 @@ describe("acquireLock", () => {
     a!.release();
   });
 });
+
+/**
+ * Regression (ADR-021): AGENT_LENS_ARCHIVE was honored by ingest/refresh but NOT by collectAll, so
+ * setting it split the pipeline — collect wrote to <dataDir>/archive while ingest read the override,
+ * found nothing, and reported a successful run with zero sessions. The env var is gone; collect and
+ * ingest now share one fixed location. This pins that collect never follows it again.
+ */
+describe("collectAll archive location is fixed", () => {
+  let savedArchive: string | undefined;
+  let savedData: string | undefined;
+  beforeEach(() => {
+    savedArchive = process.env.AGENT_LENS_ARCHIVE;
+    savedData = process.env.AGENT_LENS_DATA;
+  });
+  afterEach(() => {
+    for (const [k, v] of [
+      ["AGENT_LENS_ARCHIVE", savedArchive],
+      ["AGENT_LENS_DATA", savedData],
+    ] as const) {
+      if (v === undefined) delete process.env[k];
+      else process.env[k] = v;
+    }
+  });
+
+  it("mirrors into <dataDir>/archive and ignores AGENT_LENS_ARCHIVE", () => {
+    process.env.AGENT_LENS_DATA = join(root, "data");
+    process.env.AGENT_LENS_ARCHIVE = join(root, "elsewhere");
+    write(projFile(), "a\n", 1000);
+    const sources: Source[] = [{ label: "s1", agent: "claude-code", configDir: srcDir }];
+    collectAll({ sources, excludes: [], log: () => {} }); // no archiveBase — uses the fixed location
+    expect(existsSync(join(root, "data", "archive", "s1", `projects/${ENC}/session.jsonl`))).toBe(true);
+    expect(existsSync(join(root, "elsewhere"))).toBe(false);
+  });
+});

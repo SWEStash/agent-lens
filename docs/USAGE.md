@@ -105,6 +105,11 @@ and `$HOME` and is honored by every command that touches the store — `ingest`,
 `export`. The triage sidecar (ADR-018) lives beside it, so moving `db` moves the pair.
 Run `agent-lens config` to print the effective settings and where each came from.
 
+There is deliberately **no** `archive` or `triageDb` key. The db is a derived projection — point it
+anywhere and `ingest --full` rebuilds it — but the archive and the triage store hold the only copy of
+their data, so an independent override risks stranding it. They stay pinned to the layout; relocate
+`AGENT_LENS_DATA` instead. See [ADR-021](decisions/ADR-021-fixed-data-layout.md).
+
 > **Note:** neither `db` nor `server` appears in `agent-lens.config.example.json`. That example is the
 > last-resort fallback when no real config file exists, so anything set in it is *live* config for
 > everyone who hasn't written their own — a `db` there would silently redirect the store, and a
@@ -379,12 +384,14 @@ For the store path (`AGENT_LENS_DB`) and the `server` settings (`AGENT_LENS_PORT
 run `agent-lens config` to see the effective values and their origins. All others are env > default
 as noted.
 
+The **archive** (`<dataDir>/archive`) and the **triage sidecar** (`triage.db`, beside the db) have no
+variables of their own: they hold data nothing can rebuild, so they are pinned to the layout rather
+than independently relocatable (ADR-021). Move `AGENT_LENS_DATA` to move the archive.
+
 | Variable | Default | Used by | Purpose |
 |---|---|---|---|
-| `AGENT_LENS_DATA` | `<repo>/data` | all | base dir for archive + DB |
-| `AGENT_LENS_ARCHIVE` | `$AGENT_LENS_DATA/archive` | collect, ingest | archive location |
+| `AGENT_LENS_DATA` | `<repo>/data` | all | base dir for archive + DBs — **the only way to relocate the archive** (ADR-021) |
 | `AGENT_LENS_DB` | config `db` → `$AGENT_LENS_DATA/agent-lens.db` | ingest, metrics, server, export | SQLite path (overridden by `--db`) |
-| `AGENT_LENS_TRIAGE_DB` | `<dir of DB>/triage.db` | server | writable triage/prefs store (kept beside the read-only DB) |
 | `AGENT_LENS_CONFIG` | `<repo>/agent-lens.config.json` | collect, ingest | sources config path |
 | `AGENT_LENS_EXCLUDE` | _(unset)_ | collect, ingest | comma-separated project paths to exclude, additive to the config `exclude` array |
 | `AGENT_LENS_PORT` | config `server.port` → `4477` | server | HTTP port (overridden by `--port`) |
