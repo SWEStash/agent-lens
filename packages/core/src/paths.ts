@@ -66,6 +66,24 @@ export function resolveDataDir(repoRoot: string | null = findRepoRoot()): string
 }
 
 /**
+ * The raw transcript mirror, always `<dataDir>/archive` (ADR-021). Deliberately not independently
+ * configurable: it is the source of truth, so a stray override desyncs the writer (collect) from the
+ * readers (ingest, refresh) and silently strands previously collected data. Move the data dir instead.
+ */
+export function resolveArchiveDir(repoRoot: string | null = findRepoRoot()): string {
+  return join(resolveDataDir(repoRoot), "archive");
+}
+
+/**
+ * The writable triage/prefs sidecar (ADR-018) for a given store: `triage.db` beside it. Also fixed
+ * (ADR-021) — it holds hand-authored state that nothing can rebuild, so it travels with the db it
+ * annotates rather than taking an override of its own.
+ */
+export function triageDbFor(dbPath: string): string {
+  return join(dirname(dbPath), "triage.db");
+}
+
+/**
  * First existing config file, in precedence order:
  *   `AGENT_LENS_CONFIG` → `<dataDir>/agent-lens.config.json` → repo config → repo example.
  * Returns `null` when none exist (callers fall back to the built-in default source).

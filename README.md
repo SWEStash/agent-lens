@@ -241,7 +241,10 @@ filter/compare across accounts. Config is looked up as `AGENT_LENS_CONFIG` → `
 path — can be set per run (`agent-lens serve --port 5599`), persisted in the config file (`"server"`
 block, top-level `"db"`), or via env vars, with precedence **flag > env > file > default**; the data
 dir and retention stay environment variables (see the
-[environment table in USAGE.md](docs/USAGE.md#reference)). Run `agent-lens config` to print the
+[environment table in USAGE.md](docs/USAGE.md#reference)). The archive and the triage store are
+deliberately *not* individually configurable — they hold the only copy of their data, so they stay
+pinned to `<dataDir>` and move with it
+([ADR-021](docs/decisions/ADR-021-fixed-data-layout.md)). Run `agent-lens config` to print the
 effective settings and where each came from.
 
 **Excluding projects.** Add real project paths to an optional `exclude` array (or set

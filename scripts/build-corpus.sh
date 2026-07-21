@@ -13,7 +13,7 @@ REPO="$PWD"
 
 RAW="${AL_CORPUS_RAW:-/tmp/al-corpus-raw}"
 CORPUS="test/fixtures/corpus"
-ARCHIVE="${AGENT_LENS_ARCHIVE:-data/archive}"
+ARCHIVE="${AGENT_LENS_DATA:-data}/archive"
 
 # Never emit this project's own data: default the exclude list to the repo root (computed, not a
 # hardcoded name). Extend via AGENT_LENS_EXCLUDE; redact-cli enforces it. See memory test-corpus-redaction.

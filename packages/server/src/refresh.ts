@@ -11,7 +11,7 @@
  */
 import { existsSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
-import { acquireLock, collectAll, findRepoRoot, resolveDataDir, type CollectStats } from "@agent-lens/core";
+import { acquireLock, collectAll, findRepoRoot, resolveArchiveDir, resolveDataDir, type CollectStats } from "@agent-lens/core";
 import { runIngest } from "@agent-lens/ingest";
 
 export interface RefreshResult {
@@ -63,7 +63,7 @@ export function runRefresh(): RefreshResult | null {
     const collected = collectAll();
     // runIngest process.exit(1)s if the archive dir is missing — which would kill the server. Ensure
     // it exists first (collectAll creates it when there's anything to copy; this covers the empty case).
-    const archiveRoot = process.env.AGENT_LENS_ARCHIVE || join(dataDir, "archive");
+    const archiveRoot = resolveArchiveDir();
     if (!existsSync(archiveRoot)) mkdirSync(archiveRoot, { recursive: true });
     runIngest([]);
     return { ok: true, collected };

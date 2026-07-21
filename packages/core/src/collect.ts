@@ -36,7 +36,7 @@ import {
 import { basename, dirname, join, relative, sep } from "node:path";
 import { platform } from "node:os";
 import { loadExcludes, loadSources, type Source } from "./sources.js";
-import { findRepoRoot, resolveDataDir } from "./paths.js";
+import { resolveArchiveDir } from "./paths.js";
 import { encodeProjectPath } from "./projects.js";
 
 const POSIX = platform() !== "win32";
@@ -45,7 +45,7 @@ const FILE_MODE = 0o600;
 const CHUNK = 1 << 16;
 
 export interface CollectOptions {
-  /** Archive base dir. Default: `<dataDir>/archive`. */
+  /** Archive base dir. Default: the fixed `<dataDir>/archive` (ADR-021). Tests pass an explicit one. */
   archiveBase?: string;
   /** Sources to collect. Default: loadSources(). */
   sources?: Source[];
@@ -311,7 +311,7 @@ function collectSource(
 /** Collect every configured source into the archive. Returns aggregate counters. */
 export function collectAll(opts: CollectOptions = {}): CollectStats {
   const log = opts.log ?? ((m: string) => console.log(m));
-  const archiveBase = opts.archiveBase ?? join(resolveDataDir(findRepoRoot()), "archive");
+  const archiveBase = opts.archiveBase ?? resolveArchiveDir();
   const sources = opts.sources ?? loadSources();
   const excludedDirs = (opts.excludes ?? loadExcludes()).map(encodeProjectPath);
   const runTs = opts.runTimestamp ?? collectTimestamp();

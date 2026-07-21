@@ -9,10 +9,9 @@ import { readFileSync, statSync, mkdirSync, existsSync } from "node:fs";
 import { dirname, join } from "node:path";
 import {
   costForUsage,
-  findRepoRoot,
   loadExcludes,
   loadSources,
-  resolveDataDir,
+  resolveArchiveDir,
   resolveDbPath,
   SCHEMA_VERSION,
   type SourceAdapter,
@@ -42,8 +41,9 @@ function parseIngestArgs(argv: string[]) {
 /** Stage 2: (re)build the derived SQLite store from the local archive. Idempotent. */
 export function runIngest(argv: string[] = process.argv.slice(2)): void {
   const args = parseIngestArgs(argv);
-  const dataDir = resolveDataDir(findRepoRoot());
-  const archiveRoot = args.archive || process.env.AGENT_LENS_ARCHIVE || join(dataDir, "archive");
+  // --archive stays as an explicit per-run override (ingesting a copied archive); there is no
+  // env/config equivalent — the location is fixed so collect and ingest can never disagree (ADR-021).
+  const archiveRoot = args.archive || resolveArchiveDir();
   const { path: dbPath } = resolveDbPath(args.db);
 
   if (!existsSync(archiveRoot)) {

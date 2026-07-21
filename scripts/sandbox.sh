@@ -18,7 +18,7 @@ command -v sqlite3 >/dev/null || { echo "sandbox: sqlite3 CLI required" >&2; exi
 SBX="$(mktemp -d /tmp/al-sandbox.XXXXXX)"
 PORT="${AGENT_LENS_PORT:-14477}"
 export AGENT_LENS_DATA="$SBX"
-export AGENT_LENS_ARCHIVE="$REPO/test/fixtures/corpus"
+CORPUS="$REPO/test/fixtures/corpus"   # passed as `ingest --archive` (the archive location itself is fixed)
 export AGENT_LENS_DB="$SBX/sandbox.db"
 export AGENT_LENS_CONFIG="$SBX/sources.json"
 export AGENT_LENS_PORT="$PORT"
@@ -40,7 +40,7 @@ ok() { if [ "$1" = "$2" ]; then echo "  PASS  $3 ($2)"; else echo "  FAIL  $3 (g
 q() { sqlite3 "$AGENT_LENS_DB" "$1"; }
 
 echo "=== ingest --full over the 3-source corpus (isolated DB) ==="
-INGEST="$(node packages/ingest/dist/index.js --full)"; echo "$INGEST" | sed 's/^/  /'
+INGEST="$(node packages/ingest/dist/index.js --full --archive "$CORPUS")"; echo "$INGEST" | sed 's/^/  /'
 
 echo "=== scenario assertions (DB) ==="
 # malformed / partial JSONL: the truncated line was counted, not silently dropped. `head -1` targets

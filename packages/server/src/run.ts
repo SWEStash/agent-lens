@@ -8,7 +8,7 @@
 import { existsSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { findRepoRoot, resolveDbPath, resolveServerConfig, resolveWebDist } from "@agent-lens/core";
+import { findRepoRoot, resolveDbPath, resolveServerConfig, resolveWebDist, triageDbFor } from "@agent-lens/core";
 import { openReadonly } from "./db.js";
 import { createApp } from "./app.js";
 
@@ -48,7 +48,7 @@ export async function startServer(overrides: StartServerOverrides = {}): Promise
 
   // Triage store (ADR-018) sits beside the analytics DB and is never touched by ingest, so user triage
   // survives `ingest --full`. Opened read-write by createApp; the analytics handle stays read-only.
-  const triageDbPath = process.env.AGENT_LENS_TRIAGE_DB || join(dirname(dbPath), "triage.db");
+  const triageDbPath = triageDbFor(dbPath);
 
   const db = openReadonly(dbPath);
   // Enforce a loopback Host allowlist (DNS-rebinding defense) whenever we're bound to loopback. An

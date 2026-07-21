@@ -30,8 +30,8 @@ Only data/archive/*/.versions/<TS>/ snapshot dirs are ever considered. The proje
 settings/, history.jsonl, and data/agent-lens.db are never touched.
 
 Environment:
-  AGENT_LENS_DATA               Base data dir (default: <repo>/data)
-  AGENT_LENS_ARCHIVE            Archive base   (default: $AGENT_LENS_DATA/archive)
+  AGENT_LENS_DATA               Base data dir (default: <repo>/data); the archive is always
+                                <dataDir>/archive (ADR-021)
   AGENT_LENS_VERSIONS_KEEP_DAYS Default retention window in days (default: 90)
 EOF
 }
@@ -53,7 +53,7 @@ done
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 DATA_DIR="${AGENT_LENS_DATA:-$REPO_ROOT/data}"
-ARCHIVE_BASE="${AGENT_LENS_ARCHIVE:-$DATA_DIR/archive}"
+ARCHIVE_BASE="$DATA_DIR/archive"
 LOG="$ARCHIVE_BASE/.prune.log"
 
 if [[ ! -d "$ARCHIVE_BASE" ]]; then
