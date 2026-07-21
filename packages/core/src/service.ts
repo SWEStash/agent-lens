@@ -16,12 +16,27 @@
  */
 import { spawnSync } from "node:child_process";
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
-import { homedir, platform } from "node:os";
+import { homedir, platform, userInfo } from "node:os";
 import { join } from "node:path";
 import { findRepoRoot, resolveDataDir } from "./paths.js";
 import { resolveServerConfig } from "./config.js";
 
 export const DEFAULT_HOURS = [9, 13, 17, 21];
+
+/**
+ * The login name for `loginctl enable-linger`. Asks the OS (passwd entry) rather than reading $USER:
+ * schedulers and `env -i` don't set it, which is exactly when this runs, and under sudo it names the
+ * invoking user while the units belong to the effective one. Falls back to the env only if the
+ * passwd lookup fails (rare — a uid with no entry, seen in some containers); "" means "unknown", and
+ * callers skip linger rather than shelling out with an empty argument.
+ */
+export function currentUser(): string {
+  try {
+    return userInfo().username;
+  } catch {
+    return process.env.USER || process.env.LOGNAME || "";
+  }
+}
 
 const SYSTEMD_COLLECTOR_TIMER = "agent-lens-collect.timer";
 const SYSTEMD_COLLECTOR_SERVICE = "agent-lens-collect.service";
@@ -238,8 +253,9 @@ function linuxInstall(targets: ServiceTarget[], node: string, cli: string, hours
     sh("systemctl", ["--user", "status", SYSTEMD_SERVER_SERVICE, "--no-pager"]);
   }
   // Run while logged out (best-effort) — needed for both the timer and the daemon.
-  if (have("loginctl") && !sh("loginctl", ["enable-linger", process.env.USER || ""], true)) {
-    console.log(`agent-lens: could not enable linger automatically; run: sudo loginctl enable-linger ${process.env.USER}`);
+  const user = currentUser();
+  if (user && have("loginctl") && !sh("loginctl", ["enable-linger", user], true)) {
+    console.log(`agent-lens: could not enable linger automatically; run: sudo loginctl enable-linger ${user}`);
   }
 }
 
