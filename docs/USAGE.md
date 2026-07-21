@@ -105,9 +105,11 @@ and `$HOME` and is honored by every command that touches the store — `ingest`,
 `export`. The triage sidecar (ADR-018) lives beside it, so moving `db` moves the pair.
 Run `agent-lens config` to print the effective settings and where each came from.
 
-> **Note:** `db` is intentionally absent from `agent-lens.config.example.json`. That example is the
-> last-resort fallback when no real config file exists, so a path baked into it would silently
-> redirect the store for anyone who hasn't made their own config yet.
+> **Note:** neither `db` nor `server` appears in `agent-lens.config.example.json`. That example is the
+> last-resort fallback when no real config file exists, so anything set in it is *live* config for
+> everyone who hasn't written their own — a `db` there would silently redirect the store, and a
+> `server` block would count as an explicitly-set port/host (freezing today's defaults into installed
+> service units). Copy the file, then add these keys to your own copy.
 >
 > The **data dir** stays env-only (`AGENT_LENS_DATA`) by construction: it is where the config file is
 > looked up, so it cannot be read back out of that file.

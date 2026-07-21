@@ -104,6 +104,22 @@ describe("resolveDbPath precedence", () => {
     expect(r).toMatchObject({ path: join(homedir(), "lens/store.db"), origin: "file" });
   });
 
+  // Back-compat: the flag/env layers must stay byte-identical to the pre-change `a || b || default`
+  // expression, or upgrading would repoint an install that already sets them at a different file.
+  it("passes flag and env values through verbatim — no expansion, no trimming", () => {
+    const flag = resolveDbPath("~/legacy.db", null);
+    expect(flag).toMatchObject({ path: "~/legacy.db", origin: "flag" });
+
+    process.env[DB] = "$HOME/legacy.db";
+    expect(resolveDbPath(undefined, null)).toMatchObject({ path: "$HOME/legacy.db", origin: "env" });
+
+    process.env[DB] = "  "; // whitespace was a real (if odd) path before; it must still win
+    expect(resolveDbPath(undefined, null)).toMatchObject({ path: "  ", origin: "env" });
+
+    process.env[DB] = "relative/store.db"; // resolved against cwd by the driver, exactly as before
+    expect(resolveDbPath(undefined, null)).toMatchObject({ path: "relative/store.db", origin: "env" });
+  });
+
   it("resolves the db independently of the server settings", () => {
     process.env[DB] = "/srv/lens/from-env.db";
     const cfg = { db: "/srv/lens/store.db", server: { port: 5601 } };

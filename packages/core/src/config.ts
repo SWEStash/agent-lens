@@ -51,13 +51,19 @@ export interface ResolvedDb {
  * Resolve the SQLite store path with the same precedence as the server settings:
  * `--db` flag > AGENT_LENS_DB > config `db` > `<dataDir>/agent-lens.db`.
  *
- * Every layer goes through expandPath, so `~`/`$HOME` work and a relative path resolves against the
- * cwd — matching how `sources[].configDir` has always been treated. The triage store is derived from
- * this path's directory by the server (ADR-018), so pointing `db` elsewhere moves the pair together.
+ * The flag and env layers keep the pre-existing semantics EXACTLY — the raw string, any non-empty
+ * value wins — so upgrading can never repoint the store of an install that already sets them. In
+ * particular a literal `~`/`$HOME` in AGENT_LENS_DB keeps resolving the way it always did (as a
+ * directory of that name); expanding it here would silently move such an install to a different,
+ * empty database. Only the `db` config key — which no existing install can have — gets expandPath,
+ * matching how `sources[].configDir` has always been treated.
+ *
+ * The triage store is derived from this path's directory by the server (ADR-018), so pointing `db`
+ * elsewhere moves the pair together.
  */
 export function resolveDbPath(override?: string, cfg: AgentLensConfigFile | null = readConfigFile()): ResolvedDb {
-  if (isSet(override)) return { path: expandPath(String(override).trim()), origin: "flag" };
-  if (isSet(process.env.AGENT_LENS_DB)) return { path: expandPath(process.env.AGENT_LENS_DB!.trim()), origin: "env" };
+  if (override) return { path: override, origin: "flag" };
+  if (process.env.AGENT_LENS_DB) return { path: process.env.AGENT_LENS_DB, origin: "env" };
   if (isSet(cfg?.db)) return { path: expandPath(String(cfg!.db).trim()), origin: "file" };
   return { path: join(resolveDataDir(findRepoRoot()), DEFAULT_DB_NAME), origin: "default" };
 }
