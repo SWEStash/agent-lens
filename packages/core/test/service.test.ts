@@ -4,8 +4,10 @@
  * validated out-of-band (systemd-analyze verify) since it mutates real user state.
  * Imports the BUILT dist so it exercises exactly what ships.
  */
-import { describe, it, expect } from "vitest";
+import { userInfo } from "node:os";
+import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import {
+  currentUser,
   parseHours,
   parseTargets,
   onCalendarHours,
@@ -110,5 +112,37 @@ describe("launchd server plist", () => {
     const p = launchdServerPlist(NODE, CLI, "/data/server.log", { AGENT_LENS_PORT: "5000" });
     expect(p).toContain("<key>EnvironmentVariables</key>");
     expect(p).toContain("<key>AGENT_LENS_PORT</key><string>5000</string>");
+  });
+});
+
+/**
+ * `loginctl enable-linger` needs a login name. $USER is set by interactive shells but NOT by
+ * systemd/launchd, nor by `env -i` — so reading it from the environment produced an empty argument
+ * (and an "enable-linger undefined" hint) exactly in the unattended contexts this command targets.
+ */
+describe("currentUser", () => {
+  let savedUser: string | undefined;
+  let savedLogname: string | undefined;
+  beforeEach(() => {
+    savedUser = process.env.USER;
+    savedLogname = process.env.LOGNAME;
+  });
+  afterEach(() => {
+    if (savedUser === undefined) delete process.env.USER;
+    else process.env.USER = savedUser;
+    if (savedLogname === undefined) delete process.env.LOGNAME;
+    else process.env.LOGNAME = savedLogname;
+  });
+
+  it("returns the OS login name when $USER and $LOGNAME are unset", () => {
+    delete process.env.USER;
+    delete process.env.LOGNAME;
+    expect(currentUser()).toBe(userInfo().username);
+    expect(currentUser()).not.toBe("");
+  });
+
+  it("prefers the OS login name over a conflicting $USER (e.g. under sudo)", () => {
+    process.env.USER = "someone-else";
+    expect(currentUser()).toBe(userInfo().username);
   });
 });
