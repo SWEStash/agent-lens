@@ -19,6 +19,7 @@ import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { homedir, platform } from "node:os";
 import { join } from "node:path";
 import { findRepoRoot, resolveDataDir } from "./paths.js";
+import { resolveServerConfig } from "./config.js";
 
 export const DEFAULT_HOURS = [9, 13, 17, 21];
 
@@ -61,11 +62,18 @@ export function parseHours(spec: string | undefined): number[] {
   return [...new Set(hours)].sort((a, b) => a - b);
 }
 
-/** Read AGENT_LENS_PORT / AGENT_LENS_HOST from the current env, if set (baked into the server unit). */
+/**
+ * Effective port/host to bake into the server unit. Resolves via the shared config precedence
+ * (env > config file > default) and bakes any value the user explicitly set — from the shell env OR
+ * `server.{port,host}` in agent-lens.config.json — so the scheduled server matches what they run
+ * interactively (schedulers don't inherit the shell env, hence the baking). Defaults stay unbaked so
+ * a future default change still applies to already-installed units.
+ */
 function serverEnv(): Record<string, string> {
   const env: Record<string, string> = {};
-  if (process.env.AGENT_LENS_PORT) env.AGENT_LENS_PORT = process.env.AGENT_LENS_PORT;
-  if (process.env.AGENT_LENS_HOST) env.AGENT_LENS_HOST = process.env.AGENT_LENS_HOST;
+  const { port, host, portOrigin, hostOrigin } = resolveServerConfig();
+  if (portOrigin !== "default") env.AGENT_LENS_PORT = String(port);
+  if (hostOrigin !== "default") env.AGENT_LENS_HOST = host;
   return env;
 }
 

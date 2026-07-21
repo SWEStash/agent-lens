@@ -8,6 +8,7 @@ export * from "./pricing.js";
 export * from "./markdown.js";
 export * from "./rawjson.js";
 export * from "./paths.js";
+export * from "./config.js";
 export * from "./sources.js";
 export * from "./projects.js";
 export * from "./collect.js";

@@ -8,7 +8,7 @@
 import { existsSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { findRepoRoot, resolveDataDir, resolveWebDist } from "@agent-lens/core";
+import { findRepoRoot, resolveDbPath, resolveServerConfig, resolveWebDist } from "@agent-lens/core";
 import { openReadonly } from "./db.js";
 import { createApp } from "./app.js";
 
@@ -17,14 +17,21 @@ import { createApp } from "./app.js";
 export { openReadonly } from "./db.js";
 export { renderSessionExport, parseRedactionLevel } from "./export.js";
 
-export async function startServer(): Promise<void> {
+/** Per-invocation overrides (from `serve --port/--host/--db`); each takes precedence over env + file. */
+export interface StartServerOverrides {
+  port?: number | string;
+  host?: string;
+  db?: string;
+}
+
+export async function startServer(overrides: StartServerOverrides = {}): Promise<void> {
   // Resolve relative to this module: in dev it's packages/server/dist; bundled into the CLI it's the
   // published package root (web SPA sits at ../web, data falls back to the per-user dir).
   const here = dirname(fileURLToPath(import.meta.url));
   const repoRoot = findRepoRoot(here);
-  const dbPath = process.env.AGENT_LENS_DB || join(resolveDataDir(repoRoot), "agent-lens.db");
-  const host = process.env.AGENT_LENS_HOST || "127.0.0.1"; // loopback only by default
-  const port = Number(process.env.AGENT_LENS_PORT || 4477);
+  // db/port/host all resolve with precedence flag > env > file > default (bad port fails fast).
+  const { path: dbPath } = resolveDbPath(overrides.db);
+  const { host, port } = resolveServerConfig({ port: overrides.port, host: overrides.host });
   const webDist = resolveWebDist(here, repoRoot);
 
   if (host !== "127.0.0.1" && host !== "localhost" && !process.env.AGENT_LENS_ALLOW_NONLOCAL) {

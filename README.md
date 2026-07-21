@@ -237,8 +237,12 @@ A **source** is a labeled agent account — a `label` plus its `configDir` — d
 A single resolver in `@agent-lens/core` feeds both collection and ingest (the `scripts/sources.mjs`
 shim just exposes it to the shell), so sessions are tagged with their source and you can
 filter/compare across accounts. Config is looked up as `AGENT_LENS_CONFIG` → `<dataDir>/agent-lens.config.json`
-→ the repo's `agent-lens.config.json`. Runtime knobs (ports, paths, retention window) are environment
-variables — see the [environment table in USAGE.md](docs/USAGE.md#reference).
+→ the repo's `agent-lens.config.json`. Runtime knobs — the server **port**/**host** and the **db**
+path — can be set per run (`agent-lens serve --port 5599`), persisted in the config file (`"server"`
+block, top-level `"db"`), or via env vars, with precedence **flag > env > file > default**; the data
+dir and retention stay environment variables (see the
+[environment table in USAGE.md](docs/USAGE.md#reference)). Run `agent-lens config` to print the
+effective settings and where each came from.
 
 **Excluding projects.** Add real project paths to an optional `exclude` array (or set
 `AGENT_LENS_EXCLUDE`, comma-separated) to keep playgrounds, throwaway tests, or private work out of
