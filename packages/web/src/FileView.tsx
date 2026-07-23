@@ -73,11 +73,19 @@ export default function FileView() {
         </div>
       </div>
 
-      {data.sessions.map((s) => (
+      {data.sessions.map((s) => {
+        // The session link lands on this file's first change in the transcript (scroll-and-flash),
+        // not the session top — same anchor the per-turn rows use.
+        const firstEv = s.changes.find((c) => c.event_uuid)?.event_uuid;
+        return (
         <div className="card" key={s.session_id}>
           <div className="card-head">
             <h3>
-              <Link to={`/session/${s.session_id}`} className="title">
+              <Link
+                to={`/session/${s.session_id}${firstEv ? `#ev-${firstEv}` : ""}`}
+                className="title"
+                title={firstEv ? "Open the session at this file's first change" : undefined}
+              >
                 {s.title || <span className="muted">{s.session_id.slice(0, 12)}</span>}
               </Link>
             </h3>
@@ -123,7 +131,8 @@ export default function FileView() {
             </tbody>
           </table>
         </div>
-      ))}
+        );
+      })}
 
       <p className="muted pad">
         Tracked from Edit/Write tool calls — changes made via shell commands or outside sessions aren’t captured.
