@@ -39,6 +39,17 @@ jobs:
       - run: pnpm build
       - run: pnpm test # builds all packages + vitest (incl. corpus-scenarios, determinism, redaction)
 
+      # A new SPA endpoint missing from export-snapshot.mjs (or a snapshotFileKey collision) fails
+      # here instead of 404ing the live GitHub Pages demo — only the Pages job ran this before.
+      - name: Export the demo snapshot (guards the Pages build)
+        run: node scripts/export-snapshot.mjs
+
+      - name: Build the static SPA in snapshot mode (catches snapshot-path breakage the default build misses)
+        env:
+          VITE_SNAPSHOT: "1"
+          VITE_BASE: /agent-lens/
+        run: pnpm --filter @agent-lens/web build
+
       - name: From-tarball smoke (packs the CLI, runs collect→ingest→serve with no repo present)
         run: node scripts/smoke-tarball.mjs
 

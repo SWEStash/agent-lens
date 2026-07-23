@@ -73,6 +73,25 @@ async function getText(path) {
   if (!r.ok) throw new Error(`GET ${path} → ${r.status}`);
   return r.text();
 }
+/**
+ * Stable snapshot key for a file's provenance timeline (/file). Mirror of snapshotFileKey in
+ * packages/web/src/api.ts — the SPA computes the identical key to fetch snapshot/file/<key>.json, so
+ * KEEP THE TWO IN SYNC (change one, change the other). cyrb53 over `${project}\n${path}`.
+ */
+function snapshotFileKey(path, project) {
+  const s = `${project ?? ""}\n${path}`;
+  let h1 = 0xdeadbeef;
+  let h2 = 0x41c6ce57;
+  for (let i = 0; i < s.length; i++) {
+    const ch = s.charCodeAt(i);
+    h1 = Math.imul(h1 ^ ch, 2654435761);
+    h2 = Math.imul(h2 ^ ch, 1597334677);
+  }
+  h1 = Math.imul(h1 ^ (h1 >>> 16), 2246822507) ^ Math.imul(h2 ^ (h2 >>> 13), 3266489909);
+  h2 = Math.imul(h2 ^ (h2 >>> 16), 2246822507) ^ Math.imul(h1 ^ (h1 >>> 13), 3266489909);
+  return (4294967296 * (2097151 & h2) + (h1 >>> 0)).toString(36);
+}
+
 /** Write to snapshot/<rel> — `rel` mirrors the client's resolved path (see api.ts resolveUrl). */
 function writeSnap(rel, data) {
   const dest = join(OUT, rel);
@@ -144,6 +163,25 @@ async function main() {
     writeSnap(`workflows/${runId}.json`, await getJson(`/api/workflows/${encodeURIComponent(runId)}`));
   }
 
+  // File-modification provenance (ADR-022): the /files list + one timeline per file. The list
+  // collapses to its default (unfiltered, last_ts desc) view like the other lists; limit=200 is the
+  // server's max page (the demo corpus is well under it). Each row's timeline is keyed by a hash of
+  // (path, project) — the file path has slashes so it can't be a route segment — which api.ts's
+  // snapshotFileKey reproduces to fetch snapshot/file/<key>.json.
+  const filesList = await getJson("/api/files?limit=200");
+  writeSnap("files.json", filesList);
+  const fileKeys = new Map(); // key → "project\0path", to catch a hash collision clobbering a row
+  for (const f of filesList.files) {
+    const key = snapshotFileKey(f.file_path, f.project_id);
+    const ident = `${f.project_id ?? ""}\0${f.file_path}`;
+    const clash = fileKeys.get(key);
+    if (clash && clash !== ident) throw new Error(`snapshotFileKey collision: ${clash} vs ${ident} → ${key}`);
+    fileKeys.set(key, ident);
+    const fq = new URLSearchParams({ path: f.file_path });
+    if (f.project_id) fq.set("project", f.project_id);
+    writeSnap(`file/${key}.json`, await getJson("/api/file?" + fq.toString()));
+  }
+
   writeSnap("manifest.json", {
     generated_from: "test/fixtures/corpus",
     sources: (await getJson("/api/sources")).map((s) => s.label ?? s.id),
@@ -151,7 +189,9 @@ async function main() {
     note: "Static corpus-only snapshot — filters/pagination collapse to the default view.",
   });
 
-  console.log(`export-snapshot: wrote ${ids.length} sessions + ${runIds.size} workflows + dashboards to ${OUT}`);
+  console.log(
+    `export-snapshot: wrote ${ids.length} sessions + ${runIds.size} workflows + ${filesList.files.length} files + dashboards to ${OUT}`,
+  );
 }
 
 main()
