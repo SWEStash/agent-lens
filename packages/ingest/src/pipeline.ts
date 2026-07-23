@@ -113,6 +113,7 @@ export function pruneExcluded(db: DB, excludedPaths: string[]): number {
   db.pragma("foreign_keys = OFF");
   db.transaction(() => {
     db.exec("DELETE FROM findings WHERE session_id IN (SELECT id FROM _prune)");
+    db.exec("DELETE FROM file_changes WHERE session_id IN (SELECT id FROM _prune)");
     for (const t of ["token_usage", "tool_calls", "turns", "events"]) db.exec(`DELETE FROM ${t} WHERE session_id IN (SELECT id FROM _prune)`);
     db.exec("DELETE FROM classifications WHERE scope = 'session' AND target_id IN (SELECT id FROM _prune)");
     db.exec("DELETE FROM sessions WHERE id IN (SELECT id FROM _prune)");
@@ -411,6 +412,9 @@ export function rebuildDerived(db: DB, dirty?: Set<string> | null): Set<string> 
   // Security findings for a now-missing session (kept global — detect() runs after this rebuild and
   // only rescans the dirty scope, so a vanished non-dirty session's rows must be swept here).
   db.exec("DELETE FROM findings WHERE session_id NOT IN (SELECT id FROM sessions)");
+  // Same sweep for file_changes (ADR-022): deriveFileChanges also runs post-rebuild on the dirty
+  // scope only, so a vanished non-dirty session's rows must be cleared here.
+  db.exec("DELETE FROM file_changes WHERE session_id NOT IN (SELECT id FROM sessions)");
   // Sweep skill versions no longer referenced by any tool_call. Full path only: an incremental run
   // only re-derives dirty sessions, so a version could still be referenced by a non-dirty session.
   if (!incremental) {

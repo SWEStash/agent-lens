@@ -21,6 +21,7 @@ import { ClaudeCodeAdapter } from "./adapters/claude-code.js";
 import { classify, CLASSIFIER_VERSION } from "./classify.js";
 import { detect, DETECTOR_VERSION } from "./detect.js";
 import { classifyErrors } from "./errors.js";
+import { deriveFileChanges, FILECHANGES_VERSION } from "./filechanges.js";
 import { ingestFile, newStats, prepareStatements, pruneExcluded, rebuildDerived } from "./pipeline.js";
 import { ingestWorkflowResults, newWorkflowStats } from "./workflows.js";
 import { ingestSubagentMeta, newMetaStats } from "./meta.js";
@@ -181,6 +182,10 @@ export function runIngest(argv: string[] = process.argv.slice(2)): void {
   // the same expanded dirty set. Powers the sessions error-type filter + dashboard/detail breakdowns.
   classifyErrors(db, args.full ? null : expanded);
 
+  // File-modification provenance (ADR-022) from Edit/Write/NotebookEdit inputs. Deterministic +
+  // re-runnable; reuses the same expanded dirty set and delete-then-inserts per touched session.
+  const fileChanges = deriveFileChanges(db, args.full ? null : expanded);
+
   // Report.
   const count = (sql: string) => (db.prepare(sql).get() as any).n as number;
   const sessions = count("SELECT COUNT(*) n FROM sessions");
@@ -214,6 +219,7 @@ export function runIngest(argv: string[] = process.argv.slice(2)): void {
       `  session_meta=${metaRows} (upserted=${metaStats.upserted} skipped=${metaStats.skipped} malformed=${metaStats.malformed})\n` +
       `  tool_results=${trRows} (upserted=${trStats.upserted} skipped=${trStats.skipped} malformed=${trStats.malformed})\n` +
       `  findings=${detected.count} (${sevLine})\n` +
+      `  file_changes=${fileChanges.count}\n` +
       `  tokens=${totalTokens.toLocaleString()} est_cost=$${cost.toFixed(2)} db=${dbPath}`,
   );
 }
@@ -233,9 +239,11 @@ export function runMetrics(argv: string[] = process.argv.slice(2)): void {
   const r = classify(db);
   const d = detect(db);
   const e = classifyErrors(db);
+  const fc = deriveFileChanges(db);
   db.close();
   console.log(
     `agent-lens-metrics: classified=${r.count} classifier_version=${CLASSIFIER_VERSION} ` +
-      `findings=${d.count} detector_version=${DETECTOR_VERSION} errors_classified=${e.count} error_classifier_version=${e.version} db=${dbPath}`,
+      `findings=${d.count} detector_version=${DETECTOR_VERSION} errors_classified=${e.count} error_classifier_version=${e.version} ` +
+      `file_changes=${fc.count} filechanges_version=${FILECHANGES_VERSION} db=${dbPath}`,
   );
 }
