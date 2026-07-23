@@ -241,8 +241,8 @@ is **not** auto-restarted on crash — it returns on the next logon.
 > **Tip:** `agent-lens service install` with no target installs the collector **and** the server at
 > once — the one-command "make it work after reboot" setup.
 
-Open the URL. The app has four views (nav tabs): **Sessions** (browse), **Skills**, **Security**
-(findings), and **Dashboard** (analytics). The top bar also shows **when data was last ingested** ("updated Xm ago"),
+Open the URL. The app has five views (nav tabs): **Sessions** (browse), **Files** (provenance),
+**Skills**, **Security** (findings), and **Dashboard** (analytics). The top bar also shows **when data was last ingested** ("updated Xm ago"),
 a **Refresh** button that runs collect+ingest on the host on demand (`POST /api/refresh` — a scoped
 write-action on the otherwise read-only server; loopback-only + CSRF-guarded, see ADR-015), and a
 **light/dark theme toggle** (dark by default; your choice is remembered).
@@ -273,6 +273,24 @@ corpus by `node scripts/screenshots.mjs`.
   collapsible signals panel, and an **error summary** in the header — *"X failed · Y declined/blocked
   of N tool calls"* (the failed-vs-declined split is a heuristic; see [ADR-019](decisions/ADR-019-tool-error-observability.md)).
 - **Export** any session to Markdown (⬇ button, or `GET /api/sessions/:id/export.md`).
+
+**Files** (`/files`) — file-modification provenance ([ADR-022](decisions/ADR-022-file-modification-provenance.md)):
+which sessions (and which turns) changed which files, derived deterministically from every
+successful `Edit`/`Write` tool call in the archive. Answers the inverse of the transcript view:
+*"this file changed — under what circumstances?"* You can:
+
+- **Browse & filter** every touched file by path substring, source, and project; sort by last
+  touched, change count, or session count.
+- Open a file for its **provenance timeline**: every changing session (title, category, date),
+  expanded to the specific turns, each **deep-linking to the exact Edit/Write call in the
+  transcript** (scrolled to and highlighted).
+- See a **"files changed" roll-up** on each session page (header, collapsible) — per-file change
+  counts and line deltas, each linking to the file's history.
+
+> **Honest limits:** the index is built from Edit/Write tool calls only. Changes made via shell
+> commands (`sed`, redirects), by you in an editor, by formatters, or on other machines are **not
+> captured**; deletions/renames aren't tracked yet (see the ADR's roadmap). Treat it as agent
+> provenance, not a complete file history.
 
 **Dashboard** (`/dashboard`) — server-side aggregates over the whole store (filter by source and a
 date range):
