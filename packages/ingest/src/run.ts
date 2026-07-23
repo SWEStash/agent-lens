@@ -22,6 +22,7 @@ import { classify, CLASSIFIER_VERSION } from "./classify.js";
 import { detect, DETECTOR_VERSION } from "./detect.js";
 import { classifyErrors } from "./errors.js";
 import { deriveFileChanges, FILECHANGES_VERSION } from "./filechanges.js";
+import { canonicalizeProjects } from "./canonicalize.js";
 import { ingestFile, newStats, prepareStatements, pruneExcluded, rebuildDerived } from "./pipeline.js";
 import { ingestWorkflowResults, newWorkflowStats } from "./workflows.js";
 import { ingestSubagentMeta, newMetaStats } from "./meta.js";
@@ -170,6 +171,12 @@ export function runIngest(argv: string[] = process.argv.slice(2)): void {
   // rebuilds everything. classify reuses the expanded set rebuildDerived returns.
   const expanded = rebuildDerived(db, args.full ? null : dirty);
 
+  // Canonical project roots (ADR-023): fold cwd-grained project rows into their git root (or
+  // observed ancestor) BEFORE the passes below — classify/detect/file-changes all consume the
+  // session's project path. Global + re-runnable (the table is a few dozen rows), so an existing
+  // DB heals on its next ingest without --full.
+  canonicalizeProjects(db);
+
   // Heuristic classification (ADR-004) over the now-stable derived tables. Deterministic +
   // re-runnable; also exposed standalone as `agent-lens metrics` (see runMetrics).
   const classified = classify(db, args.full ? null : expanded);
@@ -236,6 +243,7 @@ export function runMetrics(argv: string[] = process.argv.slice(2)): void {
   }
 
   const db = openDb(dbPath);
+  canonicalizeProjects(db); // ADR-023 — heal cwd-grained projects before the passes read them
   const r = classify(db);
   const d = detect(db);
   const e = classifyErrors(db);
