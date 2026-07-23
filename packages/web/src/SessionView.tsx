@@ -2,7 +2,7 @@ import { createContext, useContext, useEffect, useId, useMemo, useRef, useState 
 import { Link, useLocation, useParams } from "react-router-dom";
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { api, exportUrl, type Classification, type ClassificationSignals, type EventNode, type Finding, type SessionChild, type SessionDetail, type ToolCall } from "./api";
+import { api, exportUrl, type Classification, type ClassificationSignals, type EventNode, type FileChangeRow, type Finding, type SessionChild, type SessionDetail, type ToolCall } from "./api";
 import { fmtCost, fmtDate, fmtDuration, fmtTokens, shortModel, tokenSplitTitle } from "./format";
 import { prettyJson } from "./jsonish";
 import { SeverityTag, SEVERITIES } from "./severity";
@@ -318,6 +318,55 @@ function SecurityBanner({ findings, sessionId }: { findings: Finding[]; sessionI
         view on Security page →
       </Link>
     </div>
+  );
+}
+
+/** "Files changed" roll-up in the transcript header (ADR-022): the session's derived Edit/Write file
+ * modifications, grouped per file. Collapsed by default (native <details>, like the subagent run
+ * groups); each file jumps to its first change's transcript event and links to its provenance page.
+ * Rendered only when the session changed at least one file. */
+function FilesChangedPanel({ changes, projectPath }: { changes: FileChangeRow[]; projectPath: string | null }) {
+  const byFile = new Map<string, FileChangeRow[]>();
+  for (const c of changes) (byFile.get(c.file_path) ?? byFile.set(c.file_path, []).get(c.file_path))!.push(c);
+  const rel = (p: string) =>
+    projectPath && p.startsWith(projectPath.replace(/\/$/, "") + "/") ? p.slice(projectPath.replace(/\/$/, "").length + 1) : p;
+  return (
+    <details className="wf-run files-changed">
+      <summary>
+        📄 {byFile.size} {byFile.size === 1 ? "file" : "files"} changed · {changes.length}{" "}
+        {changes.length === 1 ? "edit" : "edits"}
+      </summary>
+      <table className="sessions">
+        <tbody>
+          {[...byFile.entries()].map(([path, list]) => {
+            const first = list.find((c) => c.event_uuid);
+            const added = list.reduce((a, c) => a + (c.lines_added ?? 0), 0);
+            const removed = list.reduce((a, c) => a + (c.lines_removed ?? 0), 0);
+            return (
+              <tr key={path}>
+                <td>
+                  {first?.event_uuid ? (
+                    <a href={`#ev-${first.event_uuid}`} className="title" title={path + " — jump to the first change"}>
+                      {rel(path)}
+                    </a>
+                  ) : (
+                    <span title={path}>{rel(path)}</span>
+                  )}
+                </td>
+                <td className="num">
+                  {list.length}× <span className="muted">(+{added} −{removed})</span>
+                </td>
+                <td>
+                  <Link className="subagent-link small" to={`/file?path=${encodeURIComponent(path)}`}>
+                    history →
+                  </Link>
+                </td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+    </details>
   );
 }
 
@@ -1412,6 +1461,9 @@ export default function SessionView() {
         </div>
         {d.classification && <ClassificationBadge c={d.classification} />}
         {d.findings && d.findings.length > 0 && <SecurityBanner findings={d.findings} sessionId={s.id} />}
+        {d.file_changes && d.file_changes.length > 0 && (
+          <FilesChangedPanel changes={d.file_changes} projectPath={s.project_path ?? null} />
+        )}
       </div>
 
       {d.children && d.children.length > 0 && <SubagentPanel d={d} />}

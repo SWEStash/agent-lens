@@ -256,6 +256,69 @@ export interface SessionDetail {
   workflow_runs: WorkflowRun[];
   /** Security findings across this session (ADR-017), most-severe first — for the header summary. */
   findings: Finding[];
+  /** File modifications derived from this session's Edit/Write tool calls (ADR-022), chronological —
+   * for the "Files changed" header roll-up. Empty on a pre-v14 DB. */
+  file_changes: FileChangeRow[];
+}
+
+/** One derived file modification (ADR-022): a successful Edit/Write/NotebookEdit tool call's target. */
+export interface FileChangeRow {
+  id: string;
+  tool_call_id: string;
+  turn_id: string | null;
+  /** The tool call's transcript event — deep-link anchor (#ev-<uuid>). */
+  event_uuid: string | null;
+  file_path: string;
+  tool_name: string;
+  lines_added: number | null;
+  lines_removed: number | null;
+  timestamp: string | null;
+}
+
+/** One (project, file) aggregate row of GET /api/files. */
+export interface FileSummary {
+  project_id: string | null;
+  project_path: string | null;
+  file_path: string;
+  sessions: number;
+  changes: number;
+  lines_added: number | null;
+  lines_removed: number | null;
+  first_ts: string | null;
+  last_ts: string | null;
+}
+
+/** One session's group in a file's provenance timeline (GET /api/file). */
+export interface FileTimelineSession {
+  session_id: string;
+  title: string | null;
+  source_id: string | null;
+  started_at: string | null;
+  category: string | null;
+  changes: Array<{
+    id: string;
+    turn_id: string | null;
+    turn_seq: number | null;
+    prompt_preview: string | null;
+    event_uuid: string | null;
+    tool_name: string;
+    lines_added: number | null;
+    lines_removed: number | null;
+    timestamp: string | null;
+  }>;
+}
+
+export interface FileTimeline {
+  file_path: string;
+  project_id: string | null;
+  project_path: string | null;
+  sessions_count: number;
+  changes_count: number;
+  lines_added: number;
+  lines_removed: number;
+  first_ts: string | null;
+  last_ts: string | null;
+  sessions: FileTimelineSession[];
 }
 
 /** One subagent fanned out by a Workflow run, with its roll-up tokens/cost for the run's agent list. */

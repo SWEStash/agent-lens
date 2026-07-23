@@ -13,6 +13,8 @@ const SessionView = lazy(() => import("./SessionView"));
 const WorkflowView = lazy(() => import("./WorkflowView"));
 const SkillsView = lazy(() => import("./SkillsView"));
 const SkillView = lazy(() => import("./SkillView"));
+const FilesView = lazy(() => import("./FilesView"));
+const FileView = lazy(() => import("./FileView"));
 const SecurityView = lazy(() => import("./SecurityView"));
 
 const Loading = () => (
@@ -53,6 +55,22 @@ createRoot(document.getElementById("root")!).render(
             element={
               <Suspense fallback={<Loading />}>
                 <WorkflowView />
+              </Suspense>
+            }
+          />
+          <Route
+            path="files"
+            element={
+              <Suspense fallback={<Loading />}>
+                <FilesView />
+              </Suspense>
+            }
+          />
+          <Route
+            path="file"
+            element={
+              <Suspense fallback={<Loading />}>
+                <FileView />
               </Suspense>
             }
           />
