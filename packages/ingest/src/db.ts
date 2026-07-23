@@ -64,6 +64,7 @@ export function resetSchema(db: DB): void {
     DROP TRIGGER IF EXISTS events_ad;
     DROP TRIGGER IF EXISTS events_ai;
     DROP TABLE IF EXISTS events_fts;
+    DROP TABLE IF EXISTS file_changes;
     DROP TABLE IF EXISTS findings;
     DROP TABLE IF EXISTS classifications;
     DROP TABLE IF EXISTS token_usage;

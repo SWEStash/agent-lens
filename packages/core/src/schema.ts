@@ -17,7 +17,7 @@
  * (Phase 2). Bump SCHEMA_VERSION on any DDL change.
  */
 
-export const SCHEMA_VERSION = 13;
+export const SCHEMA_VERSION = 14;
 
 export const SCHEMA_SQL = /* sql */ `
 PRAGMA journal_mode = WAL;
@@ -235,6 +235,29 @@ CREATE INDEX IF NOT EXISTS idx_findings_severity ON findings(severity);
 CREATE INDEX IF NOT EXISTS idx_findings_category ON findings(category);
 CREATE INDEX IF NOT EXISTS idx_findings_rule     ON findings(rule_id);
 CREATE INDEX IF NOT EXISTS idx_findings_tool_call ON findings(tool_call_id);
+
+-- File modifications derived from tool calls (ADR-022). One row per (tool_call, file): today
+-- Edit/Write/NotebookEdit are 1:1, but the hash id leaves room for multi-file sources (e.g. a
+-- future Bash-write heuristic) without a schema break. Failed calls (status='error') are excluded
+-- at derivation — they didn't change the file. Re-runnable like findings: incremental runs DELETE
+-- the dirty sessions' rows and re-INSERT (delete-then-insert). Populated by ingest's
+-- deriveFileChanges (filechanges.ts).
+CREATE TABLE IF NOT EXISTS file_changes (
+  id             TEXT PRIMARY KEY,                -- sha1(tool_call_id + NUL + file_path), 16 hex
+  tool_call_id   TEXT NOT NULL REFERENCES tool_calls(id),
+  session_id     TEXT NOT NULL REFERENCES sessions(id),
+  turn_id        TEXT,               -- no FK: rebuildDerived recreates turns (same stance as findings)
+  event_uuid     TEXT,                            -- jump-to-transcript anchor (#ev-<uuid>)
+  project_id     TEXT REFERENCES projects(id),    -- from the session, for per-project grouping
+  file_path      TEXT NOT NULL,                   -- normalized absolute path
+  tool_name      TEXT NOT NULL,                   -- Edit | Write | NotebookEdit
+  lines_added    INTEGER,                         -- newline-count delta (NULL when unknowable)
+  lines_removed  INTEGER,
+  timestamp      TEXT,                            -- ISO8601, from the tool call's event
+  derive_version INTEGER NOT NULL DEFAULT 1
+);
+CREATE INDEX IF NOT EXISTS idx_file_changes_session ON file_changes(session_id);
+CREATE INDEX IF NOT EXISTS idx_file_changes_file    ON file_changes(project_id, file_path, timestamp);
 
 -- Workflow-tool run results, ingested from the sidecar JSON the runner writes next to the launching
 -- session (…/projects/<enc>/<sessionId>/workflows/wf_<id>.json). The transcript only carries the

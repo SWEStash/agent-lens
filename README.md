@@ -70,6 +70,7 @@ agent-lens-ingest: files=312 skipped=298 new_events=1840 malformed=0
 
 - What exactly happened in that session three weeks ago? *(full transcript + full-text search)*
 - Did the agent do anything risky on my host — delete data, touch secrets, exfiltrate, escalate? *(deterministic security findings; retrospective + triageable)*
+- Which session — and which turn — changed this file? *(per-file provenance timelines, deep-linked into the transcript)*
 - Where did my tokens and spend go — by day, model, or project?
 - Which sessions were big features vs. quick fixes? *(heuristic category + complexity)*
 - Which skills and subagents do I actually use, and how often?
@@ -106,6 +107,11 @@ agent-lens-ingest: files=312 skipped=298 new_events=1840 malformed=0
   (single/batch), mute a whole rule, and filter by status/date; open counts drive the KPIs so real
   ones stand out. Triage persists in a separate store that survives full rebuilds
   ([ADR-018](docs/decisions/ADR-018-security-triage-store.md)).
+- **File-modification provenance** — deterministic, **no-AI** index of which sessions (and turns)
+  changed which files, derived from every successful `Edit`/`Write` tool call: a browsable **Files**
+  page, per-file **provenance timelines** deep-linking to the exact transcript event, and a "files
+  changed" roll-up on each session. Agent tool calls only — shell/manual/external edits aren't
+  captured, and it says so in the UI ([ADR-022](docs/decisions/ADR-022-file-modification-provenance.md)).
 - **Tool-error observability** — deterministic, **no-AI** classification of failed tool calls: a
   per-session error summary, a sortable **Errors** column + filter on the sessions list, and dashboard
   *"tool errors over time"* / *"error types"* breakdowns. Genuine failures are separated from

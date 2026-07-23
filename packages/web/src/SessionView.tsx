@@ -1,8 +1,8 @@
-import { createContext, useContext, useEffect, useId, useMemo, useRef, useState } from "react";
+import { createContext, Fragment, useContext, useEffect, useId, useMemo, useRef, useState } from "react";
 import { Link, useLocation, useParams } from "react-router-dom";
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { api, exportUrl, type Classification, type ClassificationSignals, type EventNode, type Finding, type SessionChild, type SessionDetail, type ToolCall } from "./api";
+import { api, exportUrl, type Classification, type ClassificationSignals, type EventNode, type FileChangeRow, type Finding, type SessionChild, type SessionDetail, type ToolCall } from "./api";
 import { fmtCost, fmtDate, fmtDuration, fmtTokens, shortModel, tokenSplitTitle } from "./format";
 import { prettyJson } from "./jsonish";
 import { SeverityTag, SEVERITIES } from "./severity";
@@ -318,6 +318,117 @@ function SecurityBanner({ findings, sessionId }: { findings: Finding[]; sessionI
         view on Security page →
       </Link>
     </div>
+  );
+}
+
+/** One node of the files-changed tree: subdirectories + the files sitting directly in it. */
+interface FileTreeNode {
+  dirs: Map<string, FileTreeNode>;
+  files: Array<{ name: string; path: string; list: FileChangeRow[] }>;
+}
+
+/** Build a directory tree from per-file change lists (display paths), then compress single-child
+ * directory chains (`src` → `components` with nothing else becomes one `src/components` row) so the
+ * tree stays shallow. Out-of-project files keep their absolute path — their leading `/` segment
+ * makes them visibly absolute in the tree. */
+function buildFileTree(entries: Array<{ display: string; path: string; list: FileChangeRow[] }>): FileTreeNode {
+  const root: FileTreeNode = { dirs: new Map(), files: [] };
+  for (const e of entries) {
+    const abs = e.display.startsWith("/");
+    const segs = (abs ? e.display.slice(1) : e.display).split("/");
+    if (abs && segs.length > 0) segs[0] = "/" + segs[0];
+    let node = root;
+    for (const seg of segs.slice(0, -1)) {
+      node = node.dirs.get(seg) ?? node.dirs.set(seg, { dirs: new Map(), files: [] }).get(seg)!;
+    }
+    node.files.push({ name: segs[segs.length - 1], path: e.path, list: e.list });
+  }
+  const compress = (node: FileTreeNode) => {
+    for (const [name, child] of [...node.dirs.entries()]) {
+      compress(child);
+      if (child.files.length === 0 && child.dirs.size === 1) {
+        const [subName, sub] = [...child.dirs.entries()][0];
+        node.dirs.delete(name);
+        node.dirs.set(name + "/" + subName, sub);
+      }
+    }
+  };
+  compress(root);
+  return root;
+}
+
+/** Render a tree node as indented table rows: directory rows span the table; file rows keep the
+ * jump link, change summary, and history link. Dirs first, then files, both alphabetical. */
+function FileTreeRows({ node, depth }: { node: FileTreeNode; depth: number }) {
+  const indent = { paddingLeft: `${0.4 + depth * 1.1}rem` };
+  return (
+    <>
+      {[...node.dirs.entries()]
+        .sort(([a], [b]) => a.localeCompare(b))
+        .map(([name, child]) => (
+          <Fragment key={name}>
+            <tr>
+              <td colSpan={3} style={indent}>
+                <span className="muted">📁 {name}/</span>
+              </td>
+            </tr>
+            <FileTreeRows node={child} depth={depth + 1} />
+          </Fragment>
+        ))}
+      {[...node.files]
+        .sort((a, b) => a.name.localeCompare(b.name))
+        .map((f) => {
+          const first = f.list.find((c) => c.event_uuid);
+          const added = f.list.reduce((a, c) => a + (c.lines_added ?? 0), 0);
+          const removed = f.list.reduce((a, c) => a + (c.lines_removed ?? 0), 0);
+          return (
+            <tr key={f.path}>
+              <td style={indent}>
+                {first?.event_uuid ? (
+                  <a href={`#ev-${first.event_uuid}`} className="title" title={f.path + " — jump to the first change"}>
+                    {f.name}
+                  </a>
+                ) : (
+                  <span title={f.path}>{f.name}</span>
+                )}
+              </td>
+              <td className="num">
+                {f.list.length}× <span className="muted">(+{added} −{removed})</span>
+              </td>
+              <td>
+                <Link className="subagent-link small" to={`/file?path=${encodeURIComponent(f.path)}`}>
+                  history →
+                </Link>
+              </td>
+            </tr>
+          );
+        })}
+    </>
+  );
+}
+
+/** "Files changed" roll-up in the transcript header (ADR-022): the session's derived Edit/Write file
+ * modifications, grouped per file and rendered as a compressed directory tree. Collapsed by default
+ * (native <details>, like the subagent run groups); each file jumps to its first change's transcript
+ * event and links to its provenance page. Rendered only when the session changed at least one file. */
+function FilesChangedPanel({ changes, projectPath }: { changes: FileChangeRow[]; projectPath: string | null }) {
+  const byFile = new Map<string, FileChangeRow[]>();
+  for (const c of changes) (byFile.get(c.file_path) ?? byFile.set(c.file_path, []).get(c.file_path))!.push(c);
+  const rel = (p: string) =>
+    projectPath && p.startsWith(projectPath.replace(/\/$/, "") + "/") ? p.slice(projectPath.replace(/\/$/, "").length + 1) : p;
+  const tree = buildFileTree([...byFile.entries()].map(([path, list]) => ({ display: rel(path), path, list })));
+  return (
+    <details className="wf-run files-changed">
+      <summary>
+        📄 {byFile.size} {byFile.size === 1 ? "file" : "files"} changed · {changes.length}{" "}
+        {changes.length === 1 ? "edit" : "edits"}
+      </summary>
+      <table className="sessions">
+        <tbody>
+          <FileTreeRows node={tree} depth={0} />
+        </tbody>
+      </table>
+    </details>
   );
 }
 
@@ -1412,6 +1523,9 @@ export default function SessionView() {
         </div>
         {d.classification && <ClassificationBadge c={d.classification} />}
         {d.findings && d.findings.length > 0 && <SecurityBanner findings={d.findings} sessionId={s.id} />}
+        {d.file_changes && d.file_changes.length > 0 && (
+          <FilesChangedPanel changes={d.file_changes} projectPath={s.project_path ?? null} />
+        )}
       </div>
 
       {d.children && d.children.length > 0 && <SubagentPanel d={d} />}
