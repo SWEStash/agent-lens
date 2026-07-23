@@ -8,7 +8,7 @@ import { existsSync } from "node:fs";
 import Fastify, { type FastifyInstance } from "fastify";
 import fastifyStatic from "@fastify/static";
 import { renderSessionExport, parseRedactionLevel } from "./export.js";
-import { type DB, lastIngested, schemaStatus, listSources, listProjects, listModels, listSessions, getSession, getWorkflow, listSkills, getSkill, listFindings, securitySummary } from "./db.js";
+import { type DB, lastIngested, schemaStatus, listSources, listProjects, listModels, listSessions, getSession, getWorkflow, listSkills, getSkill, listFindings, securitySummary, listFiles, getFileTimeline } from "./db.js";
 import { dashboardOverview, dashboardTimeseries, dashboardBreakdowns, type DashFilters } from "./dashboard.js";
 import { writeBlocked, runRefresh } from "./refresh.js";
 import { openTriage, dismiss, reopen, muteRule, unmute, listMutes, type TriageDB, type MuteScope } from "./triage.js";
@@ -250,6 +250,30 @@ export async function createApp(db: DB, opts: CreateAppOpts = {}): Promise<Fasti
   app.get("/api/skills/:name", async (req, reply) => {
     const { name } = req.params as { name: string };
     const result = getSkill(db, decodeURIComponent(name));
+    if (!result) return reply.code(404).send({ error: "not found" });
+    return result;
+  });
+
+  // File-modification provenance (ADR-022): the /files list and the per-file timeline. The file
+  // path travels as a query param (it contains slashes), not a route segment.
+  app.get("/api/files", async (req) => {
+    const q = req.query as Record<string, string>;
+    const sort = (["last_ts", "first_ts", "changes", "sessions", "path"] as const).find((s) => s === q.sort);
+    return listFiles(db, {
+      q: q.q,
+      source: q.source,
+      project: q.project,
+      sort,
+      dir: q.dir === "asc" ? "asc" : "desc",
+      limit: Math.min(Number(q.limit) || 50, 200),
+      offset: Number(q.offset) || 0,
+    });
+  });
+
+  app.get("/api/file", async (req, reply) => {
+    const q = req.query as Record<string, string>;
+    if (!q.path) return reply.code(400).send({ error: "missing path" });
+    const result = getFileTimeline(db, q.path, q.project || undefined);
     if (!result) return reply.code(404).send({ error: "not found" });
     return result;
   });
