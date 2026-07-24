@@ -1,6 +1,6 @@
 import { Fragment, useEffect, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
-import { api, type Project, type SessionSummary } from "./api";
+import { api, type Project, type SessionSummary, type Source } from "./api";
 import { useDetailsAutoClose } from "./useDetailsAutoClose";
 import { fmtCost, fmtDate, fmtDuration, fmtTokens, shortModel, tokenSplitTitle } from "./format";
 import { FilterSelect } from "./FilterSelect";
@@ -10,11 +10,6 @@ import { loadPrefLocal, fetchPref, savePref } from "./prefs";
 
 type SessionSortKey = "title" | "turns" | "tokens" | "cost" | "duration" | "started" | "errors" | "security";
 
-interface Source {
-  id: string;
-  label: string;
-  session_count: number;
-}
 
 /** A sessions-table column. `toggleable` columns can be hidden via the "Columns" customizer and their
  * visibility persists in localStorage; non-toggleable ones (Session) always render. `sortKey` (when

@@ -8,6 +8,11 @@
  * classifier "signals" explainer). PNGs land in docs/img/ and are embedded in README.md / docs/USAGE.md.
  *
  * Usage: node scripts/screenshots.mjs   (requires `pnpm build`; Playwright Chromium must be installed)
+ *
+ * Note: `playwright` is the one exact-pinned devDependency in the root package.json (no caret). This is
+ * deliberate — the committed docs/img/ PNGs must be byte-reproducible across contributors, and a
+ * Chromium bump can shift antialiasing/layout enough to churn the images. Bump the pin intentionally
+ * and re-generate the screenshots in the same commit.
  */
 import { spawn } from "node:child_process";
 import { mkdirSync, rmSync, mkdtempSync, writeFileSync, existsSync } from "node:fs";

@@ -19,6 +19,11 @@ export interface RefreshResult {
   collected: CollectStats;
 }
 
+/** Loopback host authorities (hostname only; any port), shared by the Host guard (app.ts) and the
+ *  Origin/CSRF guard below. Note the bracketed IPv6 form: `new URL(...).hostname` and a stripped Host
+ *  header both yield `[::1]` (not `::1`) for the IPv6 loopback, so the set must carry the brackets. */
+export const LOOPBACK_HOSTS = new Set(["127.0.0.1", "localhost", "[::1]"]);
+
 /**
  * CSRF guard for the loopback server. Allow requests with no `Origin` (non-browser callers like curl
  * or the CLI — not a CSRF vector) and same-machine origins; reject anything cross-site. The server
@@ -27,8 +32,7 @@ export interface RefreshResult {
 export function originAllowed(origin: string | undefined): boolean {
   if (!origin) return true;
   try {
-    const h = new URL(origin).hostname;
-    return h === "127.0.0.1" || h === "localhost" || h === "::1";
+    return LOOPBACK_HOSTS.has(new URL(origin).hostname);
   } catch {
     return false;
   }

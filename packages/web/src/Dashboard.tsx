@@ -16,7 +16,7 @@ import {
   Cell,
 } from "recharts";
 import { Link } from "react-router-dom";
-import { api, type DashOverview, type DashTimeseries, type DashBreakdowns, type TokenSplit, type SecuritySummary } from "./api";
+import { api, type DashOverview, type DashTimeseries, type DashBreakdowns, type TokenSplit, type SecuritySummary, type Source } from "./api";
 import { fmtCost, fmtTokens, fmtDuration, shortModel } from "./format";
 import { ChartCard, Kpi, useChartTokens } from "./charts/theme";
 import { loadPrefLocal, fetchPref, savePref } from "./prefs";
@@ -71,11 +71,6 @@ function TokenBreakdownKpi({ t }: { t: TokenSplit }) {
   );
 }
 
-interface Source {
-  id: string;
-  label: string;
-  session_count: number;
-}
 
 const BAND_ORDER = ["trivial", "small", "medium", "large", "xl"];
 

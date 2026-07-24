@@ -8,8 +8,8 @@
  */
 import { describe, it, expect } from "vitest";
 import type { MarkdownSession, MarkdownEvent } from "@agent-lens/core";
-import { exportMarkdown, maskSecrets } from "../dist/redact-export.js";
-import { findLeak, findShareLeak } from "../dist/secrets.js";
+import { exportMarkdown } from "../dist/redact-export.js";
+import { findLeak, findShareLeak, maskSecrets } from "../dist/secrets.js";
 
 const GHP = "ghp_" + "a".repeat(36);
 const SK = "sk-" + "b".repeat(24);

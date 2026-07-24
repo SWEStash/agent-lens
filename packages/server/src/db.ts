@@ -1,5 +1,6 @@
 import Database from "better-sqlite3";
 import { costForUsage, SCHEMA_VERSION, unpackRaw, severityRank, SECURITY_CATEGORIES, errorKind } from "@agent-lens/core";
+import { tableExists } from "./sql-util.js";
 
 export type DB = Database.Database;
 
@@ -516,14 +517,9 @@ function xmlTag(text: string, tag: string): string | null {
   return text.match(new RegExp(`<${tag}>([\\s\\S]*?)</${tag}>`))?.[1]?.trim() ?? null;
 }
 
-/** Whether a table exists — the server opens the DB read-only, so a not-yet-ingested schema (no
- * workflow_results table) must degrade gracefully rather than throw. */
-function tableExists(db: DB, name: string): boolean {
-  return !!db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name = ?").get(name);
-}
 
 /** Parse a stored JSON column back to a value, or null when absent/malformed. */
-function safeJson(s: string | null): unknown {
+export function safeJson(s: string | null): unknown {
   if (!s) return null;
   try {
     return JSON.parse(s);

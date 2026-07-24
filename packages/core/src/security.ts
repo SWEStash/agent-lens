@@ -83,8 +83,3 @@ export const SECURITY_CATEGORIES: SecurityCategoryRef[] = [
     remediation: "Confirm the escalation was necessary and scoped. Remove any persistence the agent added, re-tighten permissions, and avoid running agents with skipped permission prompts on a trusted host.",
   },
 ];
-
-/** Quick lookup of a category's reference content by key. */
-export function securityCategory(key: string): SecurityCategoryRef | undefined {
-  return SECURITY_CATEGORIES.find((c) => c.key === key);
-}

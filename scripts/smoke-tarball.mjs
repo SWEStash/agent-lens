@@ -97,5 +97,5 @@ if (up) {
   Array.isArray(rows) && rows.length > 0 ? ok(`API returns ${rows.length} ingested sessions`) : fail("API returned no sessions");
 }
 console.log(process.exitCode ? "\nsmoke: FAILED" : `\nsmoke: PASS (${GLOBAL ? "globally-installed" : "extracted"} CLI runs the full pipeline with no repo present)`);
-if (server) try { server.kill(); } catch {}
+// The `exit` handler (above) already kills the server and cleans TMP, so process.exit() suffices here.
 process.exit(process.exitCode ?? 0);

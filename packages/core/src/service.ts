@@ -363,12 +363,14 @@ function windowsUninstall(targets: ServiceTarget[]): void {
 }
 
 function windowsStatus(targets: ServiceTarget[]): void {
+  // Status must print the query output on success, so run loud (quiet=false) like linux/macStatus — the
+  // `true` here was a copy-paste from the uninstall path and silently swallowed the schtasks listing.
   if (targets.includes("collector")) {
-    sh("schtasks", ["/Query", "/FO", "LIST", "/TN", WINDOWS_COLLECTOR_PREFIX], true) ||
+    sh("schtasks", ["/Query", "/FO", "LIST", "/TN", WINDOWS_COLLECTOR_PREFIX], false) ||
       console.log("agent-lens service: no collector tasks found under " + WINDOWS_COLLECTOR_PREFIX);
   }
   if (targets.includes("server")) {
-    sh("schtasks", ["/Query", "/FO", "LIST", "/TN", WINDOWS_SERVER_TASK], true) ||
+    sh("schtasks", ["/Query", "/FO", "LIST", "/TN", WINDOWS_SERVER_TASK], false) ||
       console.log("agent-lens service: no server task found (" + WINDOWS_SERVER_TASK + ")");
   }
 }

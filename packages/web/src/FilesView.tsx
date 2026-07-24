@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
-import { api, type FileSummary, type Project } from "./api";
+import { api, type FileSummary, type Project, type Source } from "./api";
 import { fmtDate } from "./format";
 import { FilterSelect } from "./FilterSelect";
 import { Pager } from "./Pager";
@@ -10,11 +10,6 @@ const PAGE = 50;
 
 type FileSortKey = "path" | "sessions" | "changes" | "last_ts";
 
-interface Source {
-  id: string;
-  label: string;
-  session_count: number;
-}
 
 /** A file's display path: project-relative when it lives under the project root, absolute otherwise
  * (out-of-project writes are real and must stay visibly absolute). Full path goes in the title attr. */
