@@ -93,6 +93,36 @@ describe("useFetch", () => {
     expect(result.current.error).toBe(null);
   });
 
+  it("ignores a stale response that lands after a newer one", async () => {
+    const slowFirst = deferred<string>();
+    const second = deferred<string>();
+    api.mockReturnValueOnce(slowFirst.promise).mockReturnValueOnce(second.promise);
+
+    const { result, rerender } = renderHook(({ p }: { p: string }) => useFetch<string>(p), {
+      initialProps: { p: "/a" },
+    });
+    rerender({ p: "/b" });
+
+    await act(async () => second.resolve("B"));
+    await act(async () => slowFirst.resolve("A")); // the superseded request finally answers
+    expect(result.current).toEqual({ data: "B", loading: false, error: null });
+  });
+
+  it("ignores a stale rejection that lands after a newer response", async () => {
+    const slowFirst = deferred<string>();
+    const second = deferred<string>();
+    api.mockReturnValueOnce(slowFirst.promise).mockReturnValueOnce(second.promise);
+
+    const { result, rerender } = renderHook(({ p }: { p: string }) => useFetch<string>(p), {
+      initialProps: { p: "/a" },
+    });
+    rerender({ p: "/b" });
+
+    await act(async () => second.resolve("B"));
+    await act(async () => slowFirst.reject(new Error("timeout")));
+    expect(result.current).toEqual({ data: "B", loading: false, error: null });
+  });
+
   it("does not fetch at all when the path is null", async () => {
     const { result } = renderHook(() => useFetch<string>(null));
     await waitFor(() => expect(result.current.loading).toBe(false));

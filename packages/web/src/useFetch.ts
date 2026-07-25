@@ -32,10 +32,16 @@ export function useAsync<T>(load: () => Promise<T> | null, deps: unknown[], opts
       return;
     }
     setState((s) => ({ data: opts.reset ? null : s.data, loading: true, error: null }));
+    // Responses can land out of order (a filter typed quickly enough, a slow first page). Only the
+    // newest request may write state: `stale` is set by the cleanup that runs when the deps change.
+    let stale = false;
     p.then(
-      (data) => setState({ data, loading: false, error: null }),
-      (e) => setState((s) => ({ data: s.data, loading: false, error: String(e) })),
+      (data) => !stale && setState({ data, loading: false, error: null }),
+      (e) => !stale && setState((s) => ({ data: s.data, loading: false, error: String(e) })),
     );
+    return () => {
+      stale = true;
+    };
     // `load` is an inline closure over the deps; the caller's dep list is authoritative.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, deps);
