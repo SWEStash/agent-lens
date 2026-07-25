@@ -9,6 +9,7 @@
  * for later. `classifier_version` lets a future (e.g. local-LLM) classifier supersede these rows.
  */
 import type { DB } from "./db.js";
+import { createDirtySet } from "./dirtyset.js";
 
 // v2 (ADR-004): realistic complexity ceilings so real (long, substantial) main sessions spread
 // across bands instead of pegging in "large"; subagent sessions categorized by their spawner role
@@ -189,14 +190,7 @@ export function classify(db: DB, dirty?: Set<string> | null): { count: number; v
   // Every signal bulk-load is scoped to the same set so memory and work track the delta, not the whole
   // DB (ADR-010). `null`/undefined → classify all sessions (the `--full` / standalone metrics path).
   const incremental = dirty != null;
-  if (incremental) {
-    db.exec("DROP TABLE IF EXISTS _dirty");
-    db.exec("CREATE TEMP TABLE _dirty (id TEXT PRIMARY KEY)");
-    const ins = db.prepare("INSERT OR IGNORE INTO _dirty (id) VALUES (?)");
-    db.transaction((ids: Iterable<string>) => {
-      for (const id of ids) ins.run(id);
-    })(dirty);
-  }
+  if (dirty != null) createDirtySet(db, "_dirty", dirty);
   const wSess = incremental ? " WHERE session_id IN (SELECT id FROM _dirty)" : "";
   const aSess = incremental ? " AND session_id IN (SELECT id FROM _dirty)" : "";
 

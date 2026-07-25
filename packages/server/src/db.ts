@@ -1,6 +1,6 @@
 import Database from "better-sqlite3";
 import { SCHEMA_VERSION, unpackRaw, severityRank, SECURITY_CATEGORIES, errorKind } from "@agent-lens/core";
-import { tableExists, queryAll } from "./sql-util.js";
+import { tableExists, queryAll, pushDateRange, metaJoin, metaProjection } from "./sql-util.js";
 import { sessionUsage, splitOf, tokensOf, costOf, USAGE_SUMS, type UsageRow } from "./usage.js";
 
 export type DB = Database.Database;
@@ -132,8 +132,7 @@ export function listSessions(db: DB, f: SessionFilters) {
   if (f.source) (where.push("s.source_id = ?"), params.push(f.source));
   if (f.project) (where.push("s.project_id = ?"), params.push(f.project));
   // Date-inclusive on both ends (see findingWhere): a picked `to` day must include that day's sessions.
-  if (f.from) (where.push("date(s.started_at) >= date(?)"), params.push(f.from));
-  if (f.to) (where.push("date(s.started_at) <= date(?)"), params.push(f.to));
+  pushDateRange(where, params, "s.started_at", f.from, f.to);
   if (f.kind === "main") where.push("s.is_sidechain = 0");
   if (f.kind === "subagent") where.push("s.is_sidechain = 1");
   // Multi-select: session has ≥1 finding of any listed severity / ≥1 errored tool call of any listed type.
@@ -416,8 +415,8 @@ export function getSession(db: DB, id: string) {
     .prepare(
       `SELECT s.id, s.ai_title, s.slug, s.turn_count, s.started_at, s.workflow_run_id,
               (SELECT GROUP_CONCAT(DISTINCT model) FROM token_usage t WHERE t.session_id = s.id) AS models
-              ${hasMeta ? ", sm.agent_type, sm.agent_description, sm.spawn_depth" : ", NULL AS agent_type, NULL AS agent_description, NULL AS spawn_depth"}
-       FROM sessions s ${hasMeta ? "LEFT JOIN session_meta sm ON sm.session_id = s.id" : ""}
+              ${metaProjection(hasMeta)}
+       FROM sessions s ${metaJoin(hasMeta)}
        WHERE s.parent_session_id = ? ORDER BY s.started_at`,
     )
     .all(id) as any[];
@@ -517,8 +516,8 @@ export function getWorkflow(db: DB, runId: string) {
     .prepare(
       `SELECT s.id, s.ai_title, s.slug, s.turn_count, s.started_at, s.ended_at, s.duration_ms,
               (SELECT GROUP_CONCAT(DISTINCT model) FROM token_usage t WHERE t.session_id = s.id) AS models
-              ${hasMeta ? ", sm.agent_type, sm.agent_description, sm.spawn_depth" : ", NULL AS agent_type, NULL AS agent_description, NULL AS spawn_depth"}
-       FROM sessions s ${hasMeta ? "LEFT JOIN session_meta sm ON sm.session_id = s.id" : ""}
+              ${metaProjection(hasMeta)}
+       FROM sessions s ${metaJoin(hasMeta)}
        WHERE s.workflow_run_id = ? ORDER BY s.started_at`,
     )
     .all(runId) as any[];
@@ -892,8 +891,7 @@ function findingWhere(f: FindingFilters): { sql: string[]; params: any[] } {
   if (f.project) (sql.push("s.project_id = ?"), params.push(f.project));
   // Compare on the DATE part so a picked day is inclusive on both ends — `to = 2026-07-14` must include
   // 2026-07-14 events (a plain `started_at <= '2026-07-14'` would exclude that whole day's timestamps).
-  if (f.from) (sql.push("date(s.started_at) >= date(?)"), params.push(f.from));
-  if (f.to) (sql.push("date(s.started_at) <= date(?)"), params.push(f.to));
+  pushDateRange(sql, params, "s.started_at", f.from, f.to);
   return { sql, params };
 }
 

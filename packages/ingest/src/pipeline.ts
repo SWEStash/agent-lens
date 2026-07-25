@@ -7,6 +7,7 @@ import { createHash } from "node:crypto";
 import type Database from "better-sqlite3";
 import { packRaw, type SourceAdapter, type SourceFile, type TurnRow } from "@agent-lens/core";
 import { type DB } from "./db.js";
+import { createDirtySet } from "./dirtyset.js";
 
 type Stmt = Database.Statement<any[]>;
 
@@ -87,13 +88,8 @@ export function pruneExcluded(db: DB, excludedPaths: string[]): number {
   const projIds = projects.filter((p) => excludedPaths.some((e) => p.path === e || p.path.startsWith(e + "/"))).map((p) => p.id);
   if (!projIds.length) return 0;
 
-  db.exec("DROP TABLE IF EXISTS _prune");
-  db.exec("CREATE TEMP TABLE _prune (id TEXT PRIMARY KEY)");
-  const insP = db.prepare("INSERT OR IGNORE INTO _prune (id) VALUES (?)");
   const seed = db.prepare(`SELECT id FROM sessions WHERE project_id IN (${projIds.map(() => "?").join(",")})`).all(...projIds) as Array<{ id: string }>;
-  db.transaction(() => {
-    for (const s of seed) insP.run(s.id);
-  })();
+  createDirtySet(db, "_prune", seed.map((s) => s.id));
   // Transitive: subagents whose parent is being pruned (covers cross-project linkage). Fixpoint.
   const expand = db.prepare("INSERT OR IGNORE INTO _prune (id) SELECT id FROM sessions WHERE parent_session_id IN (SELECT id FROM _prune)");
   const cnt = db.prepare("SELECT COUNT(*) n FROM _prune");
@@ -196,13 +192,8 @@ export function rebuildDerived(db: DB, dirty?: Set<string> | null): Set<string> 
   const andId = incremental ? " AND id IN (SELECT id FROM _dirty)" : "";
   const andSelfId = incremental ? " AND sessions.id IN (SELECT id FROM _dirty)" : "";
 
-  if (incremental) {
-    db.exec("DROP TABLE IF EXISTS _dirty");
-    db.exec("CREATE TEMP TABLE _dirty (id TEXT PRIMARY KEY)");
-    const ins = db.prepare("INSERT OR IGNORE INTO _dirty (id) VALUES (?)");
-    db.transaction((ids: Iterable<string>) => {
-      for (const id of ids) ins.run(id);
-    })(dirty);
+  if (dirty != null) {
+    createDirtySet(db, "_dirty", dirty);
     // Fixpoint expansion to the linkage neighborhood: a dirty parent pulls in the children it spawned,
     // and a dirty child pulls in its spawner parent. Loop until the set stops growing (covers nested
     // subagents). Bounded by the session count.

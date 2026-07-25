@@ -11,6 +11,7 @@
  */
 import { classifyToolError, ERROR_CLASSIFIER_VERSION } from "@agent-lens/core";
 import type { DB } from "./db.js";
+import { createDirtySet } from "./dirtyset.js";
 
 /**
  * (Re)classify errored tool calls into `error_type`. `dirty` (the expanded id set rebuildDerived
@@ -21,14 +22,7 @@ export function classifyErrors(db: DB, dirty?: Set<string> | null): { count: num
   const incremental = dirty != null;
   const scope = incremental ? " AND session_id IN (SELECT id FROM _dirty_err)" : "";
 
-  if (incremental) {
-    db.exec("DROP TABLE IF EXISTS _dirty_err");
-    db.exec("CREATE TEMP TABLE _dirty_err (id TEXT PRIMARY KEY)");
-    const ins = db.prepare("INSERT OR IGNORE INTO _dirty_err (id) VALUES (?)");
-    db.transaction((ids: Iterable<string>) => {
-      for (const id of ids) ins.run(id);
-    })(dirty);
-  }
+  if (dirty != null) createDirtySet(db, "_dirty_err", dirty);
 
   const rows = db
     .prepare(`SELECT id, result_summary FROM tool_calls WHERE status = 'error'${scope}`)

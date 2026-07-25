@@ -7,7 +7,7 @@
  */
 import { costForUsage, rateForModel, errorKind } from "@agent-lens/core";
 import type { DB } from "./db.js";
-import { tableExists } from "./sql-util.js";
+import { tableExists, pushDateRange } from "./sql-util.js";
 
 export interface DashFilters {
   source?: string;
@@ -22,8 +22,7 @@ function sessionWhere(f: DashFilters): { sql: string; params: any[] } {
   if (f.source) (where.push("s.source_id = ?"), params.push(f.source));
   // Date-inclusive on both ends (compare the DATE part) so a picked `to` day includes that day's
   // events — a plain `started_at <= '2026-07-14'` would drop everything after 2026-07-14T00:00.
-  if (f.from) (where.push("date(s.started_at) >= date(?)"), params.push(f.from));
-  if (f.to) (where.push("date(s.started_at) <= date(?)"), params.push(f.to));
+  pushDateRange(where, params, "s.started_at", f.from, f.to);
   return { sql: where.length ? `WHERE ${where.join(" AND ")}` : "", params };
 }
 
@@ -54,8 +53,7 @@ function workflowWhere(f: DashFilters): { sql: string; params: any[] } {
   const where: string[] = [];
   const params: any[] = [];
   if (f.source) (where.push("source_id = ?"), params.push(f.source));
-  if (f.from) (where.push("date(started_at) >= date(?)"), params.push(f.from));
-  if (f.to) (where.push("date(started_at) <= date(?)"), params.push(f.to));
+  pushDateRange(where, params, "started_at", f.from, f.to);
   return { sql: where.length ? `WHERE ${where.join(" AND ")}` : "", params };
 }
 
