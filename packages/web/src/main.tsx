@@ -3,6 +3,7 @@ import { createRoot } from "react-dom/client";
 import { BrowserRouter, Routes, Route } from "react-router-dom";
 import App from "./App";
 import SessionsView from "./SessionsView";
+import { Loading } from "./AsyncBoundary";
 import { ThemeProvider } from "./theme";
 import "./styles.css";
 
@@ -17,11 +18,6 @@ const FilesView = lazy(() => import("./FilesView"));
 const FileView = lazy(() => import("./FileView"));
 const SecurityView = lazy(() => import("./SecurityView"));
 
-const Loading = () => (
-  <div className="muted pad" role="status" aria-live="polite">
-    Loading…
-  </div>
-);
 
 // Under GitHub Pages the app is served from a repo subpath (Vite's BASE_URL, e.g. "/agent-lens/");
 // the router basename keeps client routes working there. "/" → "" (no basename) for local serving.

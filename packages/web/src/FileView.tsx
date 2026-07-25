@@ -1,6 +1,7 @@
-import { useEffect, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
-import { api, type FileTimeline } from "./api";
+import { type FileTimeline } from "./api";
+import { AsyncBoundary } from "./AsyncBoundary";
+import { useFetch } from "./useFetch";
 import { fmtDate } from "./format";
 import { LinesDelta, relPath } from "./FilesView";
 
@@ -14,29 +15,20 @@ export default function FileView() {
   const [params] = useSearchParams();
   const path = params.get("path") ?? "";
   const project = params.get("project") ?? "";
-  const [data, setData] = useState<FileTimeline | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
-    if (!path) {
-      setLoading(false);
-      return;
-    }
-    setLoading(true);
-    setError(null);
-    const qs = new URLSearchParams({ path });
-    if (project) qs.set("project", project);
-    api<FileTimeline>("/file?" + qs.toString())
-      .then(setData)
-      .catch((e) => setError(String(e)))
-      .finally(() => setLoading(false));
-  }, [path, project]);
+  // No ?path= at all is "not found", not an empty request — useFetch(null) skips the fetch entirely.
+  const qs = new URLSearchParams({ path });
+  if (project) qs.set("project", project);
+  const state = useFetch<FileTimeline>(path ? "/file?" + qs.toString() : null);
 
-  if (loading) return <div className="muted pad" role="status" aria-live="polite">Loading…</div>;
-  if (error) return <div className="error" role="alert">{error}</div>;
-  if (!path || !data) return <div className="muted pad">Not found.</div>;
+  return (
+    <AsyncBoundary state={state} empty={<div className="muted pad">Not found.</div>}>
+      {(data) => <FileTimelineView data={data} />}
+    </AsyncBoundary>
+  );
+}
 
+function FileTimelineView({ data }: { data: FileTimeline }) {
   return (
     <div className="file-view">
       <Link to="/files" className="back">

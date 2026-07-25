@@ -17,6 +17,8 @@ import {
 } from "recharts";
 import { Link } from "react-router-dom";
 import { api, type DashOverview, type DashTimeseries, type DashBreakdowns, type TokenSplit, type SecuritySummary, type Source } from "./api";
+import { useAsync, useLookup } from "./useFetch";
+import { ErrorAlert, Loading } from "./AsyncBoundary";
 import { fmtCost, fmtTokens, fmtDuration, shortModel } from "./format";
 import { ChartCard, Kpi, useChartTokens } from "./charts/theme";
 import { loadPrefLocal, fetchPref, savePref } from "./prefs";
@@ -71,6 +73,9 @@ function TokenBreakdownKpi({ t }: { t: TokenSplit }) {
   );
 }
 
+
+/** Identity-stable "first load hasn't landed yet" tuple for the three range-filtered payloads. */
+const NOT_LOADED: [DashOverview | null, DashTimeseries | null, DashBreakdowns | null] = [null, null, null];
 
 const BAND_ORDER = ["trivial", "small", "medium", "large", "xl"];
 
@@ -157,14 +162,9 @@ export default function Dashboard() {
   const { C, TOKEN_COLORS, PALETTE, axisProps, gridProps, tooltipStyle } = useChartTokens();
   const [params, setParams] = useSearchParams();
   const navigate = useNavigate();
-  const [sources, setSources] = useState<Source[]>([]);
-  const [overview, setOverview] = useState<DashOverview | null>(null);
-  const [ts, setTs] = useState<DashTimeseries | null>(null);
-  const [bd, setBd] = useState<DashBreakdowns | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [loading, setLoading] = useState(true);
+  const sources = useLookup<Source[]>("/sources", []);
   // Security summary is global (not source/date filtered), so fetch it once on mount like sources.
-  const [security, setSecurity] = useState<SecuritySummary | null>(null);
+  const security = useLookup<SecuritySummary | null>("/security/summary", null);
   // Which ranked bar cards are expanded to their full list (see TOP_N). Ephemeral view state.
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const toggleExpand = (id: string) =>
@@ -201,33 +201,23 @@ export default function Dashboard() {
       return next;
     });
 
-  useEffect(() => {
-    api<Source[]>("/sources").then(setSources).catch(() => {});
-    api<SecuritySummary>("/security/summary").then(setSecurity).catch(() => {});
-  }, []);
-
-  useEffect(() => {
-    setLoading(true);
-    setError(null);
-    const qs = new URLSearchParams();
-    for (const k of ["source", "from", "to", "bucket"]) {
-      const v = params.get(k);
-      if (v) qs.set(k, v);
-    }
-    const s = qs.toString() ? "?" + qs.toString() : "";
-    Promise.all([
-      api<DashOverview>("/dashboard/overview" + s),
-      api<DashTimeseries>("/dashboard/timeseries" + s),
-      api<DashBreakdowns>("/dashboard/breakdowns" + s),
-    ])
-      .then(([o, t, b]) => {
-        setOverview(o);
-        setTs(t);
-        setBd(b);
-      })
-      .catch((e) => setError(String(e)))
-      .finally(() => setLoading(false));
-  }, [params]);
+  // The three range-filtered payloads load as one unit: a partial dashboard would mix ranges.
+  const qs = new URLSearchParams();
+  for (const k of ["source", "from", "to", "bucket"]) {
+    const v = params.get(k);
+    if (v) qs.set(k, v);
+  }
+  const s = qs.toString() ? "?" + qs.toString() : "";
+  const { data: dash, loading, error } = useAsync(
+    () =>
+      Promise.all([
+        api<DashOverview>("/dashboard/overview" + s),
+        api<DashTimeseries>("/dashboard/timeseries" + s),
+        api<DashBreakdowns>("/dashboard/breakdowns" + s),
+      ]),
+    [s],
+  );
+  const [overview, ts, bd] = dash ?? NOT_LOADED;
 
   function setParam(key: string, value: string) {
     const next = new URLSearchParams(params);
@@ -308,8 +298,8 @@ export default function Dashboard() {
         </select>
       </div>
 
-      {error && <div className="error" role="alert">{error}</div>}
-      {loading && <div className="muted pad" role="status" aria-live="polite">Loading…</div>}
+      <ErrorAlert error={error} />
+      {loading && <Loading />}
 
       {overview && !loading && (
         <>

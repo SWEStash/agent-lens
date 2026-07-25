@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
-import { api, type Project, type SkillSummary, type Source } from "./api";
+import { type Project, type SkillSummary, type Source } from "./api";
+import { useFetch, useLookup } from "./useFetch";
+import { ErrorAlert, Loading } from "./AsyncBoundary";
 import { fmtDate } from "./format";
 import { FilterSelect } from "./FilterSelect";
 import { Pager } from "./Pager";
@@ -22,11 +24,8 @@ const SKILL_SORT: Record<SkillSortKey, (s: SkillSummary) => string | number | nu
  */
 export default function SkillsView() {
   const [params, setParams] = useSearchParams();
-  const [sources, setSources] = useState<Source[]>([]);
-  const [projects, setProjects] = useState<Project[]>([]);
-  const [skills, setSkills] = useState<SkillSummary[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const sources = useLookup<Source[]>("/sources", []);
+  const projects = useLookup<Project[]>("/projects", []);
   const [qInput, setQInput] = useState(params.get("q") ?? "");
   // Sorting is client-side: the /skills endpoint returns the whole filtered list, so a sort here spans
   // every skill, not just a page. Default mirrors the server order (most-fired).
@@ -34,25 +33,12 @@ export default function SkillsView() {
   // Pagination is client-side too: sort the whole list, then slice the visible page.
   const [page, setPage] = useState(1);
 
-  useEffect(() => {
-    api<Source[]>("/sources").then(setSources).catch(() => {});
-    api<Project[]>("/projects").then(setProjects).catch(() => {});
-  }, []);
-
-  useEffect(() => {
-    setLoading(true);
-    setError(null);
-    const qs = new URLSearchParams();
-    for (const k of ["source", "project", "q"]) {
-      const v = params.get(k);
-      if (v) qs.set(k, v);
-    }
-    const s = qs.toString() ? "?" + qs.toString() : "";
-    api<SkillSummary[]>("/skills" + s)
-      .then(setSkills)
-      .catch((e) => setError(String(e)))
-      .finally(() => setLoading(false));
-  }, [params]);
+  const qs = new URLSearchParams();
+  for (const k of ["source", "project", "q"]) {
+    const v = params.get(k);
+    if (v) qs.set(k, v);
+  }
+  const { data: skills, loading, error } = useFetch<SkillSummary[]>("/skills" + (qs.toString() ? "?" + qs : ""));
 
   function setParam(key: string, value: string) {
     const next = new URLSearchParams(params);
@@ -69,7 +55,7 @@ export default function SkillsView() {
   // A filter or sort change returns to page 1 (mirrors the sessions list).
   useEffect(() => setPage(1), [params, sort.key, sort.dir]);
 
-  const sorted = useMemo(() => sortRows(skills, SKILL_SORT[sort.key], sort.dir), [skills, sort.key, sort.dir]);
+  const sorted = useMemo(() => sortRows(skills ?? [], SKILL_SORT[sort.key], sort.dir), [skills, sort.key, sort.dir]);
   const pages = Math.max(1, Math.ceil(sorted.length / PAGE));
   const clampedPage = Math.min(page, pages);
   const pageRows = sorted.slice((clampedPage - 1) * PAGE, clampedPage * PAGE);
@@ -116,10 +102,10 @@ export default function SkillsView() {
         />
       </div>
 
-      {error && <div className="error" role="alert">{error}</div>}
+      <ErrorAlert error={error} />
       {loading ? (
-        <div className="muted pad" role="status" aria-live="polite">Loading…</div>
-      ) : skills.length === 0 ? (
+        <Loading />
+      ) : sorted.length === 0 ? (
         <div className="muted pad" role="status">No skills fired match.</div>
       ) : (
         <table className="sessions">

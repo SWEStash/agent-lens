@@ -7,6 +7,7 @@ import { TurnSection } from "./transcript/TurnSection";
 import { EventBlock } from "./transcript/EventBlock";
 import { groupByTurn } from "./transcript/group";
 import { useSessionDetail } from "./transcript/useSessionDetail";
+import { ErrorAlert, Loading } from "./AsyncBoundary";
 import { FlashContext, FormatContext, HideToolsContext, WorkflowMapContext, type MsgFormat } from "./transcript/contexts";
 import { loadFormat, loadHideTools, saveFormat, saveHideTools } from "./transcript/viewPrefs";
 
@@ -68,8 +69,8 @@ export default function SessionView() {
     return () => window.clearTimeout(t);
   }, [d, hash, collapsed]);
 
-  if (error) return <div className="error" role="alert">{error}</div>;
-  if (!d) return <div className="muted pad" role="status" aria-live="polite">Loading…</div>;
+  if (error) return <ErrorAlert error={error} />;
+  if (!d) return <Loading />;
 
   // Events that actually render something (mirrors EventBlock's body check). A session with none
   // (e.g. a zero-turn session whose only line was a meta/command with no text) gets an empty-state

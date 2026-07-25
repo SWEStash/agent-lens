@@ -1,12 +1,16 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
-import { api, type FileSummary, type Project, type Source } from "./api";
+import { type FileSummary, type Project, type Source } from "./api";
+import { useFetch, useLookup } from "./useFetch";
+import { ErrorAlert, Loading } from "./AsyncBoundary";
 import { fmtDate } from "./format";
 import { FilterSelect } from "./FilterSelect";
 import { Pager } from "./Pager";
 import { SortHeader, type SortDir } from "./sort";
 
 const PAGE = 50;
+/** Identity-stable placeholder so the table renders empty (not crashing) before the first load. */
+const EMPTY_PAGE = { total: 0, files: [] as FileSummary[] };
 
 type FileSortKey = "path" | "sessions" | "changes" | "last_ts";
 
@@ -38,34 +42,20 @@ export function LinesDelta({ added, removed }: { added: number | null; removed: 
  */
 export default function FilesView() {
   const [params, setParams] = useSearchParams();
-  const [sources, setSources] = useState<Source[]>([]);
-  const [projects, setProjects] = useState<Project[]>([]);
-  const [data, setData] = useState<{ total: number; files: FileSummary[] }>({ total: 0, files: [] });
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const sources = useLookup<Source[]>("/sources", []);
+  const projects = useLookup<Project[]>("/projects", []);
   const [qInput, setQInput] = useState(params.get("q") ?? "");
   const offset = Number(params.get("offset") ?? 0);
 
-  useEffect(() => {
-    api<Source[]>("/sources").then(setSources).catch(() => {});
-    api<Project[]>("/projects").then(setProjects).catch(() => {});
-  }, []);
-
-  useEffect(() => {
-    setLoading(true);
-    setError(null);
-    const qs = new URLSearchParams();
-    for (const k of ["source", "project", "q", "sort", "dir"]) {
-      const v = params.get(k);
-      if (v) qs.set(k, v);
-    }
-    qs.set("limit", String(PAGE));
-    qs.set("offset", String(offset));
-    api<{ total: number; files: FileSummary[] }>("/files?" + qs.toString())
-      .then(setData)
-      .catch((e) => setError(String(e)))
-      .finally(() => setLoading(false));
-  }, [params, offset]);
+  const qs = new URLSearchParams();
+  for (const k of ["source", "project", "q", "sort", "dir"]) {
+    const v = params.get(k);
+    if (v) qs.set(k, v);
+  }
+  qs.set("limit", String(PAGE));
+  qs.set("offset", String(offset));
+  const { data, loading, error } = useFetch<{ total: number; files: FileSummary[] }>("/files?" + qs.toString());
+  const { total, files } = data ?? EMPTY_PAGE;
 
   function setParam(key: string, value: string) {
     const next = new URLSearchParams(params);
@@ -94,7 +84,7 @@ export default function FilesView() {
   }
 
   const page = Math.floor(offset / PAGE) + 1;
-  const pages = Math.max(1, Math.ceil(data.total / PAGE));
+  const pages = Math.max(1, Math.ceil(total / PAGE));
   const filtered = !!(params.get("q") || params.get("source") || params.get("project"));
 
   return (
@@ -136,10 +126,10 @@ export default function FilesView() {
         />
       </div>
 
-      {error && <div className="error" role="alert">{error}</div>}
+      <ErrorAlert error={error} />
       {loading ? (
-        <div className="muted pad" role="status" aria-live="polite">Loading…</div>
-      ) : data.files.length === 0 ? (
+        <Loading />
+      ) : files.length === 0 ? (
         <div className="muted pad" role="status">
           {filtered ? "No files match the filter." : "No file changes ingested yet — run agent-lens refresh (or ingest) first."}
         </div>
@@ -156,7 +146,7 @@ export default function FilesView() {
             </tr>
           </thead>
           <tbody>
-            {data.files.map((f) => (
+            {files.map((f) => (
               <tr key={(f.project_id ?? "") + "\0" + f.file_path}>
                 <td>
                   <Link
@@ -178,8 +168,8 @@ export default function FilesView() {
         </table>
       )}
 
-      {!loading && data.total > 0 && (
-        <Pager page={page} pages={pages} total={data.total} unit="files" onPage={(p) => setParam("offset", String((p - 1) * PAGE))} />
+      {!loading && total > 0 && (
+        <Pager page={page} pages={pages} total={total} unit="files" onPage={(p) => setParam("offset", String((p - 1) * PAGE))} />
       )}
 
       <p className="muted pad">

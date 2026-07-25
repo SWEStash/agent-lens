@@ -1,8 +1,10 @@
-import { Fragment, useEffect, useState } from "react";
+import { Fragment } from "react";
 import { Link, useParams } from "react-router-dom";
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { api, type WorkflowAgent, type WorkflowDetail, type WorkflowProgressEntry } from "./api";
+import { type WorkflowAgent, type WorkflowDetail, type WorkflowProgressEntry } from "./api";
+import { AsyncBoundary } from "./AsyncBoundary";
+import { useFetch } from "./useFetch";
 import { fmtCost, fmtDate, fmtDuration, fmtTokens, shortModel } from "./format";
 import { decodeEntities, looseParse, prettyJson, splitTruncation } from "./jsonish";
 import ResultView from "./ResultView";
@@ -95,19 +97,11 @@ function AgentRow({ a }: { a: WorkflowAgent }) {
  * to its transcript. The companion to the session/subagent detail page for orchestration runs. */
 export default function WorkflowView() {
   const { run_id } = useParams();
-  const [d, setD] = useState<WorkflowDetail | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const state = useFetch<WorkflowDetail>("/workflows/" + run_id, { reset: true });
+  return <AsyncBoundary state={state}>{(d) => <WorkflowRunDetail d={d} />}</AsyncBoundary>;
+}
 
-  useEffect(() => {
-    setD(null);
-    setError(null);
-    api<WorkflowDetail>("/workflows/" + run_id)
-      .then(setD)
-      .catch((e) => setError(String(e)));
-  }, [run_id]);
-
-  if (error) return <div className="error" role="alert">{error}</div>;
-  if (!d) return <div className="muted pad" role="status" aria-live="polite">Loading…</div>;
+function WorkflowRunDetail({ d }: { d: WorkflowDetail }) {
   const status = (d.status ?? "").toLowerCase();
 
   // Prefer the runner's self-reported roll-up (d.run) over stats derived from ingested agent
