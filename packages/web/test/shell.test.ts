@@ -102,11 +102,11 @@ describe("splitShellCommand", () => {
       expect(conts("x=\"$(cat <<'EOF'\nbody\nEOF\n)\"\nafter")).toEqual([false, true, true, true, false]);
     });
 
-    // KNOWN QUIRK (characterized, not endorsed): the `<<<` guard only looks forward, so the scanner
-    // re-tests at the second `<` of a herestring, sees `<` + `'` and opens a bogus heredoc — swallowing
-    // every following line as body. Fixed in the next commit; this test is updated there.
-    it("mistakes a <<< herestring for a heredoc opener", () => {
-      expect(conts("cat <<<'word'\nafter")).toEqual([false, true]);
+    // Regression: the opener test used to look only forward, so the scanner re-fired on the second `<`
+    // of a herestring and opened a bogus heredoc, swallowing the rest of the command as body.
+    it("does not mistake a <<< herestring for a heredoc", () => {
+      expect(conts("cat <<<'word'\nafter")).toEqual([false, false]);
+      expect(conts("cat <<<word\nafter")).toEqual([false, false]);
     });
 
     it("ignores a << with no delimiter after it", () => {

@@ -34,7 +34,8 @@ function scanHeredoc(line: string, i: number, heredocs: { delim: string; strip: 
 /** Split a (possibly multi-command, multi-line) shell command into physical lines, marking which start
  * a new command vs. continue the previous one — so each real command gets a `$` prompt and heredoc
  * bodies / continuations don't. A pragmatic scanner honoring single/double quotes, `$(…)`/subshell
- * depth, heredocs (incl. mid-command, e.g. `"$(cat <<'EOF'…)"`), backslash and trailing-operator
+ * depth, heredocs (incl. mid-command, e.g. `"$(cat <<'EOF'…)"`, but not `<<<` herestrings — the
+ * opener test looks both ways so the scanner can't re-fire on a herestring's middle `<`), backslash and trailing-operator
  * continuations. Control-structure bodies outside a heredoc (a bare multi-line `for`/`if`) aren't
  * tracked, so each of their lines gets its own `$` — acceptable since those are rare as a raw command. */
 export function splitShellCommand(command: string): ShellLine[] {
@@ -68,7 +69,8 @@ export function splitShellCommand(command: string): ShellLine[] {
         else if (c === '"') mode = "NORMAL";
         else if (c === "$" && line[i + 1] === "(") (parenDepth++, i++);
         else if (c === ")") parenDepth > 0 && parenDepth--;
-        else if (c === "<" && line[i + 1] === "<" && line[i + 2] !== "<") i = scanHeredoc(line, i, heredocs);
+        else if (c === "<" && line[i + 1] === "<" && line[i + 2] !== "<" && line[i - 1] !== "<")
+          i = scanHeredoc(line, i, heredocs);
         continue;
       }
       // NORMAL
@@ -79,7 +81,8 @@ export function splitShellCommand(command: string): ShellLine[] {
       else if (c === "$" && line[i + 1] === "(") (parenDepth++, i++);
       else if (c === "(") parenDepth++;
       else if (c === ")") parenDepth > 0 && parenDepth--;
-      else if (c === "<" && line[i + 1] === "<" && line[i + 2] !== "<") i = scanHeredoc(line, i, heredocs);
+      else if (c === "<" && line[i + 1] === "<" && line[i + 2] !== "<" && line[i - 1] !== "<")
+        i = scanHeredoc(line, i, heredocs);
     }
 
     if (mode === "NORMAL" && parenDepth === 0 && heredocs.length === 0) {
