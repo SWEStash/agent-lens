@@ -5,6 +5,9 @@
  * pulling Node code into its bundle (ADR-024). Keep it agent-agnostic and free of any value exports.
  */
 
+/** Security-finding severity, lowest → highest. Shared so the detector, server, and web agree. */
+export type Severity = "info" | "low" | "medium" | "high" | "critical";
+
 export interface SourceRow {
   id: string;
   label: string;

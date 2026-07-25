@@ -6,7 +6,11 @@
  * blocks on the /security page.
  */
 
-export type Severity = "info" | "low" | "medium" | "high" | "critical";
+// Severity is defined once in @agent-lens/contracts (the node-free shared-types leaf) so the detector,
+// server, and web browser bundle all agree; re-exported here so existing `@agent-lens/core` importers
+// (e.g. the ingest detector) keep their import path.
+export type { Severity } from "@agent-lens/contracts";
+import type { Severity } from "@agent-lens/contracts";
 
 /** Ascending order of concern; index doubles as the numeric rank (info=0 … critical=4). */
 export const SEVERITY_ORDER: Severity[] = ["info", "low", "medium", "high", "critical"];
