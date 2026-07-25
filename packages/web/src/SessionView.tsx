@@ -8,6 +8,24 @@ import { prettyJson } from "./jsonish";
 import { SeverityTag, SEVERITIES } from "./severity";
 import CopyButton from "./CopyButton";
 import { useDetailsAutoClose } from "./useDetailsAutoClose";
+import { splitShellCommand } from "./transcript/shell";
+import { buildFileTree, type FileTreeNode } from "./transcript/tree";
+import { groupByTurn } from "./transcript/group";
+import {
+  parseAnswers,
+  parseBashInput,
+  parseCommand,
+  parseEditInput,
+  parsePlan,
+  parseQuestions,
+  parseTaskNotification,
+  previewLabel,
+  splitPath,
+  type BashInput,
+  type EditView,
+  type ParsedCommand,
+  type ParsedTaskNotification,
+} from "./transcript/parse";
 
 /** How message bodies render: "markdown" (formatted, the default) or "raw" (verbatim text).
  * Provided once per SessionView and consumed deep in the tree by message bodies. */
@@ -321,42 +339,6 @@ function SecurityBanner({ findings, sessionId }: { findings: Finding[]; sessionI
   );
 }
 
-/** One node of the files-changed tree: subdirectories + the files sitting directly in it. */
-interface FileTreeNode {
-  dirs: Map<string, FileTreeNode>;
-  files: Array<{ name: string; path: string; list: FileChangeRow[] }>;
-}
-
-/** Build a directory tree from per-file change lists (display paths), then compress single-child
- * directory chains (`src` → `components` with nothing else becomes one `src/components` row) so the
- * tree stays shallow. Out-of-project files keep their absolute path — their leading `/` segment
- * makes them visibly absolute in the tree. */
-function buildFileTree(entries: Array<{ display: string; path: string; list: FileChangeRow[] }>): FileTreeNode {
-  const root: FileTreeNode = { dirs: new Map(), files: [] };
-  for (const e of entries) {
-    const abs = e.display.startsWith("/");
-    const segs = (abs ? e.display.slice(1) : e.display).split("/");
-    if (abs && segs.length > 0) segs[0] = "/" + segs[0];
-    let node = root;
-    for (const seg of segs.slice(0, -1)) {
-      node = node.dirs.get(seg) ?? node.dirs.set(seg, { dirs: new Map(), files: [] }).get(seg)!;
-    }
-    node.files.push({ name: segs[segs.length - 1], path: e.path, list: e.list });
-  }
-  const compress = (node: FileTreeNode) => {
-    for (const [name, child] of [...node.dirs.entries()]) {
-      compress(child);
-      if (child.files.length === 0 && child.dirs.size === 1) {
-        const [subName, sub] = [...child.dirs.entries()][0];
-        node.dirs.delete(name);
-        node.dirs.set(name + "/" + subName, sub);
-      }
-    }
-  };
-  compress(root);
-  return root;
-}
-
 /** Render a tree node as indented table rows: directory rows span the table; file rows keep the
  * jump link, change summary, and history link. Dirs first, then files, both alphabetical. */
 function FileTreeRows({ node, depth }: { node: FileTreeNode; depth: number }) {
@@ -502,19 +484,6 @@ function ToolChip({ t }: { t: ToolCall }) {
   );
 }
 
-/** Pull the plan markdown out of an ExitPlanMode call's input. Real approvals carry the full plan in
- * `input.plan`; the plan-file workflow variant sends `{}` (plan lives in a file) → null, and we fall
- * back to the generic chip. */
-function parsePlan(inputJson: string | null): string | null {
-  if (!inputJson) return null;
-  try {
-    const plan = JSON.parse(inputJson).plan;
-    return typeof plan === "string" && plan.trim() ? plan : null;
-  } catch {
-    return null;
-  }
-}
-
 /** Render an approved plan as its own titled, collapsible card (markdown), instead of a raw JSON tool
  * chip or an opaque "Plan approved" line. */
 function PlanBlock({ plan }: { plan: string }) {
@@ -524,44 +493,6 @@ function PlanBlock({ plan }: { plan: string }) {
       <CollapsibleText text={plan} />
     </div>
   );
-}
-
-interface AUQOption {
-  label: string;
-  description?: string;
-}
-interface AUQQuestion {
-  question: string;
-  header?: string;
-  multiSelect?: boolean;
-  options: AUQOption[];
-}
-
-function parseQuestions(inputJson: string | null): AUQQuestion[] {
-  if (!inputJson) return [];
-  try {
-    const q = JSON.parse(inputJson).questions;
-    return Array.isArray(q) ? q : [];
-  } catch {
-    return [];
-  }
-}
-
-/** Answers/notes for an AskUserQuestion, both keyed by question text. Present only for sessions ingested
- * after answer-capture landed; older rows have a prose summary that won't parse → empty (questions and
- * options still render, just without the selection marked). */
-function parseAnswers(resultSummary: string | null): {
-  answers: Record<string, string | string[]>;
-  annotations: Record<string, { notes?: string }>;
-} {
-  if (!resultSummary) return { answers: {}, annotations: {} };
-  try {
-    const o = JSON.parse(resultSummary);
-    if (o && typeof o === "object" && o.answers) return { answers: o.answers, annotations: o.annotations ?? {} };
-  } catch {
-    /* pre-capture prose summary — no structured answers */
-  }
-  return { answers: {}, annotations: {} };
 }
 
 /** Render an AskUserQuestion exchange as the questions it posed, each option shown, the user's
@@ -659,129 +590,6 @@ function WorkflowLaunchBlock({ t }: { t: ToolCall }) {
   );
 }
 
-interface BashInput {
-  command: string;
-  description?: string;
-  timeout?: number;
-  run_in_background?: boolean;
-  restart?: boolean;
-}
-
-/** Pull the shell command (+ optional description/flags) out of a Bash tool call's input so it can be
- * rendered like a terminal instead of a raw JSON blob. Only `command` is guaranteed; the rest are
- * optional/version-dependent (surfaced as badges, with the raw JSON as the source of truth). Returns
- * null when there's no usable command (malformed/empty input) → caller falls back to the generic chip. */
-function parseBashInput(inputJson: string | null): BashInput | null {
-  if (!inputJson) return null;
-  try {
-    const o = JSON.parse(inputJson);
-    if (!o || typeof o !== "object") return null;
-    const command = typeof o.command === "string" ? o.command : "";
-    if (!command.trim()) return null;
-    return {
-      command,
-      description: typeof o.description === "string" ? o.description : undefined,
-      timeout: typeof o.timeout === "number" ? o.timeout : undefined,
-      run_in_background: o.run_in_background === true,
-      restart: o.restart === true,
-    };
-  } catch {
-    return null;
-  }
-}
-
-/** A physical line of a shell command, tagged with whether it *starts* a new logical command (gets a
- * `$` prompt) or *continues* the previous one (heredoc body, open quote/`$(…)`, backslash or trailing
- * `|`/`&&`/`||` continuation → no prompt). */
-type ShellLine = { text: string; cont: boolean };
-
-/** Parse a heredoc opener at `line[i]` (`<<` / `<<-`, optional spaces, optionally quoted delimiter),
- * push its delimiter onto `heredocs`, and return the index of its last consumed char. */
-function scanHeredoc(line: string, i: number, heredocs: { delim: string; strip: boolean }[]): number {
-  let j = i + 2; // past "<<"
-  let strip = false;
-  if (line[j] === "-") {
-    strip = true;
-    j++;
-  }
-  while (line[j] === " " || line[j] === "\t") j++;
-  let q = "";
-  if (line[j] === "'" || line[j] === '"') {
-    q = line[j];
-    j++;
-  }
-  let delim = "";
-  if (q) {
-    while (j < line.length && line[j] !== q) delim += line[j++];
-    if (line[j] === q) j++;
-  } else {
-    while (j < line.length && /[A-Za-z0-9_]/.test(line[j])) delim += line[j++];
-  }
-  if (delim) heredocs.push({ delim, strip });
-  return j - 1; // caller's for-loop does i++
-}
-
-/** Split a (possibly multi-command, multi-line) shell command into physical lines, marking which start
- * a new command vs. continue the previous one — so each real command gets a `$` prompt and heredoc
- * bodies / continuations don't. A pragmatic scanner honoring single/double quotes, `$(…)`/subshell
- * depth, heredocs (incl. mid-command, e.g. `"$(cat <<'EOF'…)"`), backslash and trailing-operator
- * continuations. Control-structure bodies outside a heredoc (a bare multi-line `for`/`if`) aren't
- * tracked, so each of their lines gets its own `$` — acceptable since those are rare as a raw command. */
-function splitShellCommand(command: string): ShellLine[] {
-  const lines = command.split("\n");
-  const out: ShellLine[] = [];
-  let mode: "NORMAL" | "SQUOTE" | "DQUOTE" = "NORMAL";
-  let parenDepth = 0;
-  const heredocs: { delim: string; strip: boolean }[] = [];
-  let pendingCont = false;
-
-  for (const line of lines) {
-    if (heredocs.length > 0) {
-      out.push({ text: line, cont: true }); // heredoc body — literal, never a new command
-      const hd = heredocs[0];
-      const probe = hd.strip ? line.replace(/^\t+/, "") : line;
-      if (probe.trimEnd() === hd.delim) heredocs.shift();
-      continue;
-    }
-
-    out.push({ text: line, cont: mode !== "NORMAL" || parenDepth > 0 || pendingCont });
-
-    pendingCont = false;
-    for (let i = 0; i < line.length; i++) {
-      const c = line[i];
-      if (mode === "SQUOTE") {
-        if (c === "'") mode = "NORMAL";
-        continue;
-      }
-      if (mode === "DQUOTE") {
-        if (c === "\\") i++;
-        else if (c === '"') mode = "NORMAL";
-        else if (c === "$" && line[i + 1] === "(") (parenDepth++, i++);
-        else if (c === ")") parenDepth > 0 && parenDepth--;
-        else if (c === "<" && line[i + 1] === "<" && line[i + 2] !== "<") i = scanHeredoc(line, i, heredocs);
-        continue;
-      }
-      // NORMAL
-      if (c === "\\") i++;
-      else if (c === "'") mode = "SQUOTE";
-      else if (c === '"') mode = "DQUOTE";
-      else if (c === "#" && (i === 0 || /\s/.test(line[i - 1]))) break; // trailing comment
-      else if (c === "$" && line[i + 1] === "(") (parenDepth++, i++);
-      else if (c === "(") parenDepth++;
-      else if (c === ")") parenDepth > 0 && parenDepth--;
-      else if (c === "<" && line[i + 1] === "<" && line[i + 2] !== "<") i = scanHeredoc(line, i, heredocs);
-    }
-
-    if (mode === "NORMAL" && parenDepth === 0 && heredocs.length === 0) {
-      const t = line.replace(/\s+$/, "");
-      const bs = t.match(/\\+$/);
-      if (bs && bs[0].length % 2 === 1) pendingCont = true;
-      else if (/(&&|\|\||\|)$/.test(t)) pendingCont = true;
-    }
-  }
-  return out;
-}
-
 /** Render a Bash tool call as a shell console: the description as a `#` caption beside the title (or, if
  * absent, a one-line command preview when collapsed), and when open a terminal-style command block with
  * a `$` prompt per logical command (heredoc bodies / continuations get no prompt), flag badges, the
@@ -865,87 +673,6 @@ function BashBlock({ t, bash }: { t: ToolCall; bash: BashInput }) {
       )}
     </div>
   );
-}
-
-type DiffLine = { type: "ctx" | "add" | "del"; text: string };
-
-/** Line-level LCS diff between two strings — the basis for rendering an Edit as a +/- diff with
- * unchanged context lines kept. Guards against pathological cost on very large edits by falling back to
- * a delete-all + add-all rendering. */
-function diffLines(oldStr: string, newStr: string): DiffLine[] {
-  const a = oldStr === "" ? [] : oldStr.split("\n");
-  const b = newStr === "" ? [] : newStr.split("\n");
-  const n = a.length;
-  const m = b.length;
-  if (n * m > 250000)
-    return [...a.map((t) => ({ type: "del" as const, text: t })), ...b.map((t) => ({ type: "add" as const, text: t }))];
-  const dp = Array.from({ length: n + 1 }, () => new Array<number>(m + 1).fill(0));
-  for (let i = n - 1; i >= 0; i--)
-    for (let j = m - 1; j >= 0; j--)
-      dp[i][j] = a[i] === b[j] ? dp[i + 1][j + 1] + 1 : Math.max(dp[i + 1][j], dp[i][j + 1]);
-  const out: DiffLine[] = [];
-  let i = 0;
-  let j = 0;
-  while (i < n && j < m) {
-    if (a[i] === b[j]) (out.push({ type: "ctx", text: a[i] }), i++, j++);
-    else if (dp[i + 1][j] >= dp[i][j + 1]) (out.push({ type: "del", text: a[i] }), i++);
-    else (out.push({ type: "add", text: b[j] }), j++);
-  }
-  while (i < n) out.push({ type: "del", text: a[i++] });
-  while (j < m) out.push({ type: "add", text: b[j++] });
-  return out;
-}
-
-interface EditView {
-  file_path: string;
-  kind: "Edit" | "MultiEdit" | "Write";
-  hunks: DiffLine[][];
-  adds: number;
-  dels: number;
-}
-
-/** Normalize an Edit / MultiEdit / Write tool input into diff hunks: Edit → one hunk (old→new),
- * MultiEdit → one hunk per edit, Write → one all-additions hunk (new file content). Returns null when
- * the input lacks a file path / usable payload, so the caller falls back to the generic chip. */
-function parseEditInput(toolName: string, inputJson: string | null): EditView | null {
-  if (!inputJson) return null;
-  try {
-    const o = JSON.parse(inputJson);
-    if (!o || typeof o !== "object" || typeof o.file_path !== "string") return null;
-    let hunks: DiffLine[][];
-    if (toolName === "Write") {
-      if (typeof o.content !== "string") return null;
-      hunks = [o.content === "" ? [] : o.content.split("\n").map((text: string) => ({ type: "add" as const, text }))];
-    } else if (toolName === "MultiEdit") {
-      if (!Array.isArray(o.edits)) return null;
-      hunks = o.edits
-        .filter((e: unknown): e is { old_string: string; new_string: string } => {
-          const r = e as Record<string, unknown>;
-          return !!r && typeof r.old_string === "string" && typeof r.new_string === "string";
-        })
-        .map((e: { old_string: string; new_string: string }) => diffLines(e.old_string, e.new_string));
-      if (hunks.length === 0) return null;
-    } else {
-      if (typeof o.old_string !== "string" || typeof o.new_string !== "string") return null;
-      hunks = [diffLines(o.old_string, o.new_string)];
-    }
-    let adds = 0;
-    let dels = 0;
-    for (const h of hunks)
-      for (const l of h) {
-        if (l.type === "add") adds++;
-        else if (l.type === "del") dels++;
-      }
-    return { file_path: o.file_path, kind: toolName as EditView["kind"], hunks, adds, dels };
-  } catch {
-    return null;
-  }
-}
-
-/** Split a file path into a directory prefix and basename for the header (basename emphasized). */
-function splitPath(p: string): { dir: string; base: string } {
-  const i = p.lastIndexOf("/");
-  return i >= 0 ? { dir: p.slice(0, i + 1), base: p.slice(i + 1) } : { dir: "", base: p };
 }
 
 const EDIT_ICON: Record<string, string> = { Edit: "✏️", MultiEdit: "✏️", Write: "📄" };
@@ -1083,26 +810,6 @@ function toolVisible(t: ToolCall, hideTools: boolean): boolean {
   return !hideTools;
 }
 
-/** Claude Code wraps slash-command invocations and their local output in markup tags inside a
- * user message (e.g. `<command-name>/plugin</command-name>`, `<local-command-stdout>…`). Rendered
- * verbatim that looks like noise, so we detect and render it as a distinct command element. */
-type ParsedCommand =
-  | { kind: "invocation"; name: string; args: string }
-  | { kind: "output"; stdout: string }
-  | { kind: "caveat" };
-
-function parseCommand(text: string): ParsedCommand | null {
-  const name = text.match(/<command-name>([^<]*)<\/command-name>/)?.[1]?.trim();
-  if (name) {
-    const args = text.match(/<command-args>([^<]*)<\/command-args>/)?.[1]?.trim() ?? "";
-    return { kind: "invocation", name: name.startsWith("/") ? name : `/${name}`, args };
-  }
-  const out = text.match(/<(?:local-command-stdout|command-output|local-command-stderr)>([\s\S]*?)<\/(?:local-command-stdout|command-output|local-command-stderr)>/)?.[1];
-  if (out != null) return { kind: "output", stdout: out.trim() };
-  if (/<local-command-caveat>/.test(text)) return { kind: "caveat" };
-  return null;
-}
-
 /** Render a slash command as an outlined, monospace chip (the invocation) with its local output as a
  * muted result block — instead of the raw `<command-*>` markup. */
 function CommandBlock({ cmd }: { cmd: ParsedCommand }) {
@@ -1125,24 +832,6 @@ function CommandBlock({ cmd }: { cmd: ParsedCommand }) {
 /** Claude Code posts a `<task-notification>` user message when an async task (Workflow run, or a
  * backgrounded Agent) finishes. Rendered verbatim it's a wall of XML; we parse the inner tags so it
  * can show as a compact status card that links back to the workflow it reports on. */
-interface ParsedTaskNotification {
-  taskId: string | null;
-  toolUseId: string | null;
-  status: string | null;
-  summary: string | null;
-}
-
-function parseTaskNotification(text: string): ParsedTaskNotification | null {
-  if (!/<task-notification>/.test(text)) return null;
-  const pick = (tag: string) => text.match(new RegExp(`<${tag}>([\\s\\S]*?)</${tag}>`))?.[1]?.trim() ?? null;
-  return {
-    taskId: pick("task-id"),
-    toolUseId: pick("tool-use-id"),
-    status: pick("status"),
-    summary: pick("summary"),
-  };
-}
-
 /** Render a parsed task-notification as a status card: a status badge, the summary, and the task id —
  * plus a "view workflow →" link when the originating tool-use-id resolves to a Workflow run. */
 function TaskNotificationBlock({ n }: { n: ParsedTaskNotification }) {
@@ -1208,38 +897,6 @@ function CollapsibleText({ text }: { text: string }) {
       </button>
     </div>
   );
-}
-
-interface TurnGroup {
-  turnId: string | null;
-  turn: any | null;
-  events: EventNode[];
-}
-
-/** Group consecutive renderable events into their turns, preserving transcript order. Events with no
- * turn (e.g. leading meta lines) fall into header-less groups so they still render. */
-function groupByTurn(events: EventNode[], turns: any[]): TurnGroup[] {
-  const byId = new Map(turns.map((t) => [t.id, t]));
-  const groups: TurnGroup[] = [];
-  for (const e of events) {
-    const turnId = e.turn_id ?? null;
-    const last = groups[groups.length - 1];
-    if (last && last.turnId === turnId) last.events.push(e);
-    else groups.push({ turnId, turn: turnId ? byId.get(turnId) ?? null : null, events: [e] });
-  }
-  return groups;
-}
-
-/** A turn's prompt preview, with slash-command markup collapsed to a readable label so the turn
- * header doesn't show raw `<command-name>…` tags. */
-function previewLabel(text: string): string {
-  const cmd = parseCommand(text);
-  if (cmd?.kind === "invocation") return `⌘ ${cmd.name}${cmd.args ? " " + cmd.args : ""}`;
-  if (cmd?.kind === "output") return "⌘ command output";
-  if (cmd?.kind === "caveat") return "⌘ local command";
-  const notif = parseTaskNotification(text);
-  if (notif) return `🔔 task ${notif.status ?? "notification"}`;
-  return text;
 }
 
 /** A collapsible turn: the header stays visible (turn no., prompt preview, message count, duration)
