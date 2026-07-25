@@ -99,7 +99,7 @@ function hits(text: string, words: string[]): number {
   return n;
 }
 
-function scoreCategories(s: Signals, text: string): Record<Category, number> {
+function scoreCategories(s: Signals, text: string, files: string[]): Record<Category, number> {
   const t = text.toLowerCase();
   const editN = s.toolCounts["Edit"] ?? 0;
   const writeN = s.toolCounts["Write"] ?? 0;
@@ -126,8 +126,8 @@ function scoreCategories(s: Signals, text: string): Record<Category, number> {
   scores.feature += hits(t, ["add ", "implement", "build ", "create ", "feature", "support for", "new feature"]) * 0.8;
 
   // Structural evidence (tools + files), scaled so it complements but doesn't drown keywords.
-  const docFiles = s.loc.files > 0 ? countMatch(s, DOC_EXT) : 0;
-  const opsFiles = s.loc.files > 0 ? countMatch(s, OPS_FILE) : 0;
+  const docFiles = s.loc.files > 0 ? countMatch(files, DOC_EXT) : 0;
+  const opsFiles = s.loc.files > 0 ? countMatch(files, OPS_FILE) : 0;
   if (s.loc.files > 0) {
     scores.docs += 3 * (docFiles / s.loc.files);
     scores.ops += 3 * (opsFiles / s.loc.files);
@@ -147,9 +147,8 @@ function scoreCategories(s: Signals, text: string): Record<Category, number> {
   return scores;
 }
 
-/** Files matching a pattern is recomputed from the stored file list (kept on the signal object). */
-function countMatch(s: Signals & { _files?: string[] }, re: RegExp): number {
-  const files = s._files ?? [];
+/** How many of the session's touched files match a pattern. */
+function countMatch(files: string[], re: RegExp): number {
   let n = 0;
   for (const f of files) if (re.test(f)) n++;
   return n;
@@ -265,7 +264,7 @@ export function classify(db: DB, dirty?: Set<string> | null): { count: number; v
       const filesArr = [...l.files].sort();
       const subagentCount = (toolCounts["Agent"] ?? 0) + (toolCounts["Task"] ?? 0);
 
-      const signals: Signals & { _files: string[] } = {
+      const signals: Signals = {
         toolCounts,
         skills,
         loc: { added: l.added, removed: l.removed, net: l.added - l.removed, churn: l.added + l.removed, files: l.files.size },
@@ -276,10 +275,9 @@ export function classify(db: DB, dirty?: Set<string> | null): { count: number; v
         duration_ms: sess.duration_ms ?? 0,
         subagent_count: subagentCount,
         is_sidechain: sess.is_sidechain,
-        _files: filesArr,
       };
 
-      const catScores = scoreCategories(signals, promptText.get(sess.id) ?? "");
+      const catScores = scoreCategories(signals, promptText.get(sess.id) ?? "", filesArr);
       let category: Category = "chore";
       let bestScore = -1;
       for (const c of CATEGORIES) {
@@ -296,7 +294,7 @@ export function classify(db: DB, dirty?: Set<string> | null): { count: number; v
       }
       const cx = complexity(signals);
 
-      // Deterministic, explainable signal blob (stable key order; _files dropped, exposed as loc.files).
+      // Deterministic, explainable signal blob (stable key order; the file list rides as `files`).
       const signalsJson = JSON.stringify({
         tool_counts: toolCounts,
         skills,
