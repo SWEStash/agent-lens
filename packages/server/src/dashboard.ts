@@ -252,9 +252,12 @@ export function dashboardTimeseries(db: DB, f: DashFilters, bucketParam?: string
   return { bucket, series };
 }
 
-export function dashboardBreakdowns(db: DB, f: DashFilters) {
-  const w = sessionWhere(f);
+/** Extend a session WHERE clause with one more condition, opening the clause when it is empty. */
+const andWhere = (w: { sql: string }) => (w.sql ? w.sql + " AND" : "WHERE");
 
+type Where = { sql: string; params: any[] };
+
+function modelBreakdown(db: DB, w: Where) {
   const modelRows = db
     .prepare(
       `SELECT t.model model, SUM(t.input_tokens) i, SUM(t.output_tokens) o,
@@ -264,7 +267,7 @@ export function dashboardBreakdowns(db: DB, f: DashFilters) {
        GROUP BY t.model ORDER BY (SUM(t.input_tokens)+SUM(t.output_tokens)+SUM(t.cache_creation_input_tokens)+SUM(t.cache_read_input_tokens)) DESC`,
     )
     .all(...w.params) as any[];
-  const byModel = modelRows.map((u) => ({
+  return modelRows.map((u) => ({
     model: u.model,
     tokens: { input: u.i ?? 0, output: u.o ?? 0, cache_creation: u.cw ?? 0, cache_read: u.cr ?? 0 },
     total_tokens: (u.i ?? 0) + (u.o ?? 0) + (u.cw ?? 0) + (u.cr ?? 0),
@@ -272,15 +275,19 @@ export function dashboardBreakdowns(db: DB, f: DashFilters) {
     sessions: u.sessions ?? 0,
     priced: !!rateForModel(u.model),
   }));
+}
 
-  const bySource = db
+function sourceBreakdown(db: DB, w: Where) {
+  return db
     .prepare(
       `SELECT COALESCE(s.source_id, '(none)') source, COUNT(*) sessions, SUM(s.turn_count) turns
        FROM sessions s ${w.sql} GROUP BY s.source_id ORDER BY sessions DESC`,
     )
     .all(...w.params);
+}
 
-  // Category / complexity over MAIN sessions only (subagents inherit the parent's task).
+/** Category + complexity over MAIN sessions only (subagents inherit the parent's task). */
+function classificationBreakdowns(db: DB, w: Where) {
   const mainW = { sql: w.sql ? w.sql + " AND s.is_sidechain = 0" : "WHERE s.is_sidechain = 0", params: w.params };
   const byCategory = db
     .prepare(
@@ -294,65 +301,76 @@ export function dashboardBreakdowns(db: DB, f: DashFilters) {
        ${mainW.sql} GROUP BY c.complexity_band ORDER BY n DESC`,
     )
     .all(...mainW.params);
+  return { byCategory, byComplexity };
+}
 
-  const tools = db
+function toolBreakdown(db: DB, w: Where) {
+  return db
     .prepare(
       `SELECT tc.tool_name name, COUNT(*) n FROM tool_calls tc JOIN sessions s ON s.id = tc.session_id
        ${w.sql} GROUP BY tc.tool_name ORDER BY n DESC LIMIT 20`,
     )
     .all(...w.params);
+}
 
+/** Skill firings by name, plus the per-version breakdown for the grouped skill bar chart: each
+ * captured version's firing count, with the version id + its last-seen time so the chart can
+ * stack/hover and deep-link to /skill/:name?v=<id>. Both share the same source/from/to filter. */
+function skillBreakdowns(db: DB, w: Where) {
   const skills = db
     .prepare(
       `SELECT tc.skill_name name, COUNT(*) n FROM tool_calls tc JOIN sessions s ON s.id = tc.session_id
-       ${w.sql ? w.sql + " AND" : "WHERE"} tc.skill_name IS NOT NULL GROUP BY tc.skill_name ORDER BY n DESC LIMIT 20`,
+       ${andWhere(w)} tc.skill_name IS NOT NULL GROUP BY tc.skill_name ORDER BY n DESC LIMIT 20`,
     )
     .all(...w.params);
 
-  // Per-version breakdown for the grouped skill bar chart: each captured version's firing count,
-  // with the version id + its last-seen time so the chart can stack/hover and deep-link to
-  // /skill/:name?v=<id>. Same source/from/to filter as the by-name `skills` query above.
   const skillVersions = db
     .prepare(
       `SELECT tc.skill_name name, sk.id version_id, sk.summary, sk.last_seen, COUNT(*) n
        FROM tool_calls tc
        JOIN skills sk ON sk.id = tc.skill_id
        JOIN sessions s ON s.id = tc.session_id
-       ${w.sql ? w.sql + " AND" : "WHERE"} tc.skill_id IS NOT NULL
+       ${andWhere(w)} tc.skill_id IS NOT NULL
        GROUP BY tc.skill_name, sk.id ORDER BY name, n DESC`,
     )
     .all(...w.params);
 
-  // Subagent fan-out: spawns by type, plus a per-(main-)session histogram of subagent calls.
+  return { skills, skillVersions };
+}
+
+/** Subagent fan-out: spawns by type, plus a per-(main-)session histogram of subagent calls. */
+function subagentFanoutBreakdown(db: DB, w: Where) {
   const subagentByType = db
     .prepare(
       `SELECT tc.agent_type type, COUNT(*) n FROM tool_calls tc JOIN sessions s ON s.id = tc.session_id
-       ${w.sql ? w.sql + " AND" : "WHERE"} tc.agent_type IS NOT NULL GROUP BY tc.agent_type ORDER BY n DESC`,
+       ${andWhere(w)} tc.agent_type IS NOT NULL GROUP BY tc.agent_type ORDER BY n DESC`,
     )
     .all(...w.params);
   const perSession = db
     .prepare(
       `SELECT COUNT(*) n FROM tool_calls tc JOIN sessions s ON s.id = tc.session_id
-       ${w.sql ? w.sql + " AND" : "WHERE"} s.is_sidechain = 0 AND tc.tool_name IN ('Agent','Task')
+       ${andWhere(w)} s.is_sidechain = 0 AND tc.tool_name IN ('Agent','Task')
        GROUP BY tc.session_id`,
     )
     .all(...w.params) as any[];
   const counts = perSession.map((r) => r.n as number);
-  const subagentFanout = {
+  return {
     by_type: subagentByType,
     sessions_with_subagents: counts.length,
     total_spawns: counts.reduce((a, b) => a + b, 0),
     max_per_session: counts.length ? Math.max(...counts) : 0,
     avg_per_session: counts.length ? Number((counts.reduce((a, b) => a + b, 0) / counts.length).toFixed(2)) : 0,
   };
+}
 
-  // Errored tool calls by heuristic error_type, with failures-vs-rejections totals. error_type is
-  // populated only for status='error' rows (see errors.ts); the raw count is authoritative, the bucket
-  // is the heuristic. Ordered most-frequent first.
+/** Errored tool calls by heuristic error_type, with failures-vs-rejections totals. error_type is
+ * populated only for status='error' rows (see errors.ts); the raw count is authoritative, the bucket
+ * is the heuristic. Ordered most-frequent first. */
+function errorTypeBreakdown(db: DB, w: Where) {
   const errorRows = db
     .prepare(
       `SELECT COALESCE(tc.error_type, 'other') type, COUNT(*) n FROM tool_calls tc JOIN sessions s ON s.id = tc.session_id
-       ${w.sql ? w.sql + " AND" : "WHERE"} tc.status = 'error' GROUP BY tc.error_type ORDER BY n DESC`,
+       ${andWhere(w)} tc.status = 'error' GROUP BY tc.error_type ORDER BY n DESC`,
     )
     .all(...w.params) as Array<{ type: string; n: number }>;
   let failures = 0;
@@ -363,7 +381,23 @@ export function dashboardBreakdowns(db: DB, f: DashFilters) {
     else failures += r.n;
     return { type: r.type, kind, n: r.n };
   });
-  const errorTypes = { by_type: byType, failures, rejections };
+  return { by_type: byType, failures, rejections };
+}
 
-  return { by_model: byModel, by_source: bySource, by_category: byCategory, by_complexity: byComplexity, tools, skills, skill_versions: skillVersions, subagent_fanout: subagentFanout, error_types: errorTypes };
+export function dashboardBreakdowns(db: DB, f: DashFilters) {
+  const w = sessionWhere(f);
+  const { byCategory, byComplexity } = classificationBreakdowns(db, w);
+  const { skills, skillVersions } = skillBreakdowns(db, w);
+
+  return {
+    by_model: modelBreakdown(db, w),
+    by_source: sourceBreakdown(db, w),
+    by_category: byCategory,
+    by_complexity: byComplexity,
+    tools: toolBreakdown(db, w),
+    skills,
+    skill_versions: skillVersions,
+    subagent_fanout: subagentFanoutBreakdown(db, w),
+    error_types: errorTypeBreakdown(db, w),
+  };
 }
