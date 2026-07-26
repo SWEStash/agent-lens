@@ -63,7 +63,10 @@ export function metaProjection(hasMeta: boolean): string {
  * inline, and the invariant stays next to the string it protects (SLOP-071).
  */
 export function orderBy<K extends string>(columns: Record<K, string>, sort: string | undefined, fallback: K, dir?: string): string {
-  const col = (sort !== undefined && sort in columns ? columns[sort as K] : undefined) ?? columns[fallback];
+  // Object.hasOwn, not `in` / `map[key] ?? fallback`: both walk the prototype chain, so `?sort=toString`
+  // resolves to Function.prototype.toString and its SOURCE TEXT lands in the query (a 500, not an
+  // injection — but exactly what this helper exists to prevent).
+  const col = sort !== undefined && Object.hasOwn(columns, sort) ? columns[sort as K] : columns[fallback];
   return `${col} ${dir === "asc" ? "ASC" : "DESC"}`;
 }
 

@@ -323,8 +323,10 @@ pnpm typecheck     # type-check every package (tsc --noEmit)
 pnpm test          # build, then run the vitest suite
 ```
 
-Tests cover the ingest engine, the compute layer (pricing, dashboard aggregates, classifier),
-and the server API. Metric correctness is verified end to end by a five-layer harness — see
+Tests cover the ingest engine, the compute layer (pricing, dashboard aggregates, classifier), the
+server API, and the SPA (pure transcript logic plus hooks/components under jsdom — `packages/web`
+carries its own vitest config, referenced as a project by the root one). Metric correctness is
+verified end to end by a five-layer harness — see
 [docs/VALIDATION.md](docs/VALIDATION.md):
 
 ```bash
