@@ -3,6 +3,7 @@ import { Link, useParams } from "react-router-dom";
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { type WorkflowAgent, type WorkflowDetail, type WorkflowProgressEntry } from "./api";
+import { AgentRow } from "./AgentRow";
 import { AsyncBoundary } from "./AsyncBoundary";
 import { useFetch } from "./useFetch";
 import { fmtCost, fmtDate, fmtDuration, fmtTokens, shortModel } from "./format";
@@ -70,26 +71,6 @@ function buildPhaseGraph(progress: WorkflowProgressEntry[] | null | undefined, f
     if (nodes.size) return [...nodes.keys()].sort((a, b) => a - b).map((k) => nodes.get(k)!);
   }
   return fallbackTitles.map((title) => ({ title, agentCount: 0, models: [] }));
-}
-
-/** One spawned-agent row in a workflow run, linking to its full transcript. Mirrors SessionView's
- * SubagentItem look so the two fan-out views read the same. */
-function AgentRow({ a }: { a: WorkflowAgent }) {
-  const title = a.agent_description || a.title || a.id.slice(0, 12);
-  return (
-    <li>
-      <Link to={`/session/${a.id}`}>{title}</Link>
-      {a.agent_type && <span className="tag subagent meta-type">{a.agent_type}</span>}
-      {a.spawn_depth != null && a.spawn_depth > 1 && (
-        <span className="tag meta-depth" title={`nested ${a.spawn_depth} levels deep`}>↳{a.spawn_depth}</span>
-      )}
-      <span className="muted">
-        {" "}· {(a.models ?? "").split(",").filter(Boolean).map(shortModel).join(", ") || "—"} ·{" "}
-        {fmtTokens(a.tokens)} tok · {fmtCost(a.cost)}
-        {a.duration_ms != null ? ` · ${fmtDuration(a.duration_ms)}` : ""}
-      </span>
-    </li>
-  );
 }
 
 /** Detail page for a single Workflow-tool run (route /workflow/:run_id). Shows what launched it, the

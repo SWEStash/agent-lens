@@ -1,4 +1,5 @@
 import { useEffect, useId, useMemo, useRef, useState } from "react";
+import { useOutsideClick } from "./useOutsideClick";
 
 export interface FilterOption {
   value: string;
@@ -31,7 +32,7 @@ export function FilterSelect({
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [active, setActive] = useState(0);
-  const rootRef = useRef<HTMLDivElement>(null);
+  const rootRef = useOutsideClick<HTMLDivElement>(() => setOpen(false), open);
   const inputRef = useRef<HTMLInputElement>(null);
   const listId = useId();
   const optId = (i: number) => `${listId}-opt-${i}`;
@@ -43,16 +44,6 @@ export function FilterSelect({
     if (!q) return options;
     return options.filter((o) => o.label.toLowerCase().includes(q));
   }, [options, query]);
-
-  // Close on outside click.
-  useEffect(() => {
-    if (!open) return;
-    const onDoc = (e: MouseEvent) => {
-      if (rootRef.current && !rootRef.current.contains(e.target as Node)) setOpen(false);
-    };
-    document.addEventListener("mousedown", onDoc);
-    return () => document.removeEventListener("mousedown", onDoc);
-  }, [open]);
 
   // On open: focus the search box and highlight the current selection.
   useEffect(() => {

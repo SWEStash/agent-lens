@@ -1,5 +1,5 @@
 import { exportUrl } from "../api";
-import { useDetailsAutoClose } from "../useDetailsAutoClose";
+import { useDetailsAutoClose } from "../useOutsideClick";
 
 /** Export-to-Markdown control. A <details> menu (shares the `.col-customizer`/`.col-menu` styles)
  * offering the redacted default, an aggressive structure-only scrub, and an explicit verbatim

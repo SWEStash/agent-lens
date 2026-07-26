@@ -4,7 +4,7 @@ import { type Project, type SessionSummary, type Source } from "./api";
 import { useFetch, useLookup } from "./useFetch";
 import { useQueryState } from "./useQueryState";
 import { ErrorAlert, Loading } from "./AsyncBoundary";
-import { useDetailsAutoClose } from "./useDetailsAutoClose";
+import { useDetailsAutoClose } from "./useOutsideClick";
 import { fmtCost, fmtDate, fmtDuration, fmtTokens, shortModel, tokenSplitTitle } from "./format";
 import { FilterSelect } from "./FilterSelect";
 import { Pager } from "./Pager";
