@@ -16,6 +16,7 @@ import { posix as path } from "node:path";
 import { bumpSeverity, type Severity, type SecurityCategoryKey } from "@agent-lens/core";
 import type { DB } from "./db.js";
 import { createDirtySet } from "./dirtyset.js";
+import { parseStored } from "./storedjson.js";
 
 // Bump on any rule/severity change so a re-run is attributable to an engine version (mirrors
 // CLASSIFIER_VERSION). Recorded on every row + in signals_json. Finding ids are independent of this
@@ -650,12 +651,7 @@ function buildContext(
   projectPath: string | null,
   ownedConfigDirs: string[],
 ): RuleContext {
-  let input: any = null;
-  try {
-    input = row.input_json ? JSON.parse(row.input_json) : null;
-  } catch {
-    input = null;
-  }
+  const input: any = parseStored(row.input_json, "detect: tool_calls.input_json");
   const command = typeof input?.command === "string" ? input.command : null;
   const views = command != null ? commandViews(command) : null;
   const commandCode = views?.code ?? null;

@@ -53,3 +53,24 @@ export function metaProjection(hasMeta: boolean): string {
     ? ", sm.agent_type, sm.agent_description, sm.spawn_depth"
     : ", NULL AS agent_type, NULL AS agent_description, NULL AS spawn_depth";
 }
+
+/**
+ * Resolve a request's `sort`/`dir` into an `ORDER BY` fragment. SQLite can't parameterize an ORDER BY
+ * expression, so it has to be interpolated — which makes this the one place a request value could
+ * reach the SQL text. It can't: the expression is always a value from the caller's literal `columns`
+ * map (an unknown key falls back to `fallback`, which must itself be a key of that map), and the
+ * direction collapses to one of two literals. Route the interpolation through here, never build it
+ * inline, and the invariant stays next to the string it protects (SLOP-071).
+ */
+export function orderBy<K extends string>(columns: Record<K, string>, sort: string | undefined, fallback: K, dir?: string): string {
+  const col = (sort !== undefined && sort in columns ? columns[sort as K] : undefined) ?? columns[fallback];
+  return `${col} ${dir === "asc" ? "ASC" : "DESC"}`;
+}
+
+/** Append `value` to the list stored at `key`, creating the list on first use. Group-by-key is the
+ * shape half this module's loaders end in (findings by tool call, tool calls by event). */
+export function pushGrouped<K, V>(map: Map<K, V[]>, key: K, value: V): void {
+  const list = map.get(key);
+  if (list) list.push(value);
+  else map.set(key, [value]);
+}

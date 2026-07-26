@@ -10,6 +10,7 @@
  */
 import type { DB } from "./db.js";
 import { createDirtySet } from "./dirtyset.js";
+import { parseStored } from "./storedjson.js";
 
 // v2 (ADR-004): realistic complexity ceilings so real (long, substantial) main sessions spread
 // across bands instead of pegging in "large"; subagent sessions categorized by their spawner role
@@ -54,12 +55,8 @@ const OPS_FILE = /(^|\/)(dockerfile|docker-compose|\.github\/|\.gitlab-ci|makefi
 /** LoC contribution of a single Edit/Write tool call, parsed from its verbatim input_json. */
 export function locDelta(toolName: string, inputJson: string | null): { added: number; removed: number; file: string | null } {
   if (!inputJson) return { added: 0, removed: 0, file: null };
-  let input: Record<string, unknown>;
-  try {
-    input = JSON.parse(inputJson) as Record<string, unknown>;
-  } catch {
-    return { added: 0, removed: 0, file: null };
-  }
+  const input = parseStored<Record<string, unknown>>(inputJson, "classify: tool_calls.input_json");
+  if (!input) return { added: 0, removed: 0, file: null };
   const file = typeof input?.file_path === "string" ? input.file_path : null;
   if (toolName === "Write") return { added: countLines(input?.content), removed: 0, file };
   if (toolName === "Edit") return { added: countLines(input?.new_string), removed: countLines(input?.old_string), file };
