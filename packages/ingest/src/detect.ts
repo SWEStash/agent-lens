@@ -119,23 +119,23 @@ const SQL_CLIENT = /\b(psql|pgcli|mysql|mysqladmin|mariadb|sqlite3?|sqlcmd|usql|
 // NOTE: this intentionally does NOT blank all quoted strings — `psql -c "DROP …"`, `sh -c "…"` carry
 // executed code inside quotes, which must still be detected. Value-scanning rules (secret_in_data)
 // keep using the raw command, since a secret value is exposed whether or not it was "executed".
-const stripComments = (c: string): string => c.replace(/(^|\s)#[^\n]*/g, "$1");
-const neutralizeEcho = (c: string): string =>
+export const stripComments = (c: string): string => c.replace(/(^|\s)#[^\n]*/g, "$1");
+export const neutralizeEcho = (c: string): string =>
   c.replace(/((?:^|[;&|\n(])\s*)(?:echo|printf)\b(?:"(?:[^"\\]|\\.)*"|'[^']*'|[^;&|\n])*/gi, "$1echo");
 // A heredoc body (`cmd <<EOF … EOF`) is data written to a file/stdin, not commands the shell runs, so a
 // `sudo`/`rm -rf` line inside it is inert (unless the resulting file is then executed — see
 // execGeneratedScript). Replace the whole heredoc, body included, with a placeholder.
-const blankHeredoc = (c: string): string => c.replace(/<<-?\s*(['"]?)(\w+)\1[\s\S]*?\n\s*\2\b/g, "<<HEREDOC");
+export const blankHeredoc = (c: string): string => c.replace(/<<-?\s*(['"]?)(\w+)\1[\s\S]*?\n\s*\2\b/g, "<<HEREDOC");
 // `codeOf`: quotes INTACT (so `psql -c "DROP …"` — executed code inside quotes — still matches), with
 // comments, heredoc bodies, and echo/printf output neutralized.
-const codeOf = (c: string): string => neutralizeEcho(stripComments(blankHeredoc(c)));
+export const codeOf = (c: string): string => neutralizeEcho(stripComments(blankHeredoc(c)));
 // Blank the CONTENTS of quoted string literals. A dangerous token inside a quoted *argument*
 // (`node -e '… sudo …'`, `grep "sudo"`, `git commit -m "… rm -rf …"`) is data passed to a program,
 // not a shell command word — so the command-verb rules must not match it. (Tradeoff: a command truly
 // executed via `sh -c "sudo …"` is missed; that inline form is rare and worth the far fewer false
 // positives.) codeOf runs first so in-string separators are already gone from the parts we keep.
-const blankQuoted = (c: string): string => c.replace(/"(?:[^"\\]|\\.)*"/g, '""').replace(/'[^']*'/g, "''");
-const bareOf = (c: string): string => blankQuoted(codeOf(c));
+export const blankQuoted = (c: string): string => c.replace(/"(?:[^"\\]|\\.)*"/g, '""').replace(/'[^']*'/g, "''");
+export const bareOf = (c: string): string => blankQuoted(codeOf(c));
 
 // A file is "executed" when passed to an interpreter (sh/bash/…), sourced (`source`/`.`), or invoked
 // as a path (`./f`, `/abs/f`). Detects the write-a-script-then-run-it pattern (`echo … > f.sh; sh f.sh`)
