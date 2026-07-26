@@ -123,15 +123,44 @@ function ChartCustomizer({ hidden, onToggle }: { hidden: Set<string>; onToggle: 
 
 type SkillVersionRow = DashBreakdowns["skill_versions"][number];
 
+/* Recharts hands its render-prop callbacks (tooltip `content`, axis `tick`, bar/legend `onClick`)
+ * shapes its own exported types don't usefully narrow, which is how `any` had spread through this
+ * file — SLOP-047. Declared here instead are the shapes the dashboard actually reads. The inline
+ * `formatter` props keep their annotations narrow for the same reason; note every field a formatter
+ * reads off `payload` must stay OPTIONAL, or the function is no longer assignable to Recharts'
+ * `Formatter` and the chart stops compiling. */
+
+/** A charted row, as Recharts hands it back — either the datum itself or wrapped in `payload`. */
+type ChartDatum = Record<string, unknown> & { payload?: Record<string, unknown> };
+
+/** What a `content={<X />}` tooltip receives. */
+interface TooltipProps {
+  active?: boolean;
+  payload?: Array<{ payload?: Record<string, unknown> }>;
+}
+
+/** What an axis `tick` render prop receives. */
+interface AxisTickProps {
+  x?: number;
+  y?: number;
+  payload?: { value?: string };
+}
+
+/** Read a string field off a clicked datum, wherever Recharts put it. */
+function datumField(d: ChartDatum | undefined, field: string): string | null {
+  const v = d?.payload?.[field] ?? d?.[field];
+  return typeof v === "string" && v !== "" ? v : null;
+}
+
 /** Read-only hover for the grouped skill bar: the skill's total + each version's firing count.
  * (Recharts tooltips aren't interactive, so the per-version links live on the skill page; click the
  * bar to go there.) */
-function SkillTooltip({ active, payload, versionsByName }: any) {
+function SkillTooltip({ active, payload, versionsByName }: TooltipProps & { versionsByName: Map<string, SkillVersionRow[]> }) {
   const { C, tooltipStyle } = useChartTokens();
   if (!active || !payload?.length) return null;
-  const name: string = payload[0]?.payload?.name;
-  const total: number = payload[0]?.payload?.n ?? 0;
-  const versions: SkillVersionRow[] = versionsByName.get(name) ?? [];
+  const name = String(payload[0]?.payload?.name ?? "");
+  const total = Number(payload[0]?.payload?.n ?? 0);
+  const versions = versionsByName.get(name) ?? [];
   return (
     <div style={{ ...tooltipStyle.contentStyle, padding: "8px 10px", maxWidth: 280 }}>
       <div style={{ color: C.text, fontWeight: 600, marginBottom: 4 }}>{name}</div>
@@ -150,9 +179,9 @@ function SkillTooltip({ active, payload, versionsByName }: any) {
 /** A clickable category-axis label for drill-down bar charts, so a bar too short to click is still
  * reachable via its label. Renders the tick text with a pointer cursor; clicking calls `onSelect` with
  * the label value. Styled via `.axis-link` (muted → accent + underline on hover). */
-function AxisLink({ x, y, payload, onSelect, title }: any) {
+function AxisLink({ x, y, payload, onSelect, title }: AxisTickProps & { onSelect: (value: string) => void; title?: string }) {
   return (
-    <text x={x} y={y} dy={4} textAnchor="end" className="axis-link" fontSize={11} onClick={() => onSelect(payload?.value)}>
+    <text x={x} y={y} dy={4} textAnchor="end" className="axis-link" fontSize={11} onClick={() => payload?.value && onSelect(payload.value)}>
       {title && <title>{title}</title>}
       {payload?.value}
     </text>
@@ -260,7 +289,7 @@ export default function Dashboard() {
   const drillFilter = (param: string, value: string | null | undefined) => {
     if (value != null && value !== "") navigate(sessionsFilterUrl(param, value));
   };
-  const drillTo = (param: string, field: string) => (datum: any) => drillFilter(param, datum?.payload?.[field] ?? datum?.[field]);
+  const drillTo = (param: string, field: string) => (datum: ChartDatum) => drillFilter(param, datumField(datum, field));
 
   return (
     <div>
@@ -363,11 +392,11 @@ export default function Dashboard() {
                   <CartesianGrid {...gridProps} />
                   <XAxis dataKey="bucket" {...axisProps} minTickGap={24} />
                   <YAxis {...axisProps} tickFormatter={(v) => fmtTokens(v as number)} width={48} />
-                  <Tooltip {...tooltipStyle} formatter={(v: any, n: any) => [fmtTokens(Number(v)), n]} />
+                  <Tooltip {...tooltipStyle} formatter={(v: number | string, n: string) => [fmtTokens(Number(v)), n]} />
                   <Legend
                     wrapperStyle={{ fontSize: 12, cursor: "pointer" }}
-                    onClick={(o: any) => o?.dataKey && toggleTokenSeries(String(o.dataKey))}
-                    formatter={(value: any, entry: any) => (
+                    onClick={(o: { dataKey?: unknown }) => o?.dataKey && toggleTokenSeries(String(o.dataKey))}
+                    formatter={(value: React.ReactNode, entry: { dataKey?: unknown }) => (
                       <span style={{ opacity: hiddenTokenSeries.has(String(entry?.dataKey)) ? 0.4 : 1 }}>{value}</span>
                     )}
                   />
@@ -385,7 +414,7 @@ export default function Dashboard() {
                   <CartesianGrid {...gridProps} />
                   <XAxis dataKey="bucket" {...axisProps} minTickGap={24} />
                   <YAxis {...axisProps} tickFormatter={(v) => "$" + v} width={48} />
-                  <Tooltip {...tooltipStyle} formatter={(v: any) => fmtCost(Number(v))} />
+                  <Tooltip {...tooltipStyle} formatter={(v: number | string) => fmtCost(Number(v))} />
                   <Line type="monotone" dataKey="cost" stroke={C.red} strokeWidth={2} dot={false} />
                 </LineChart>
               </ResponsiveContainer>
@@ -442,9 +471,9 @@ export default function Dashboard() {
                       dataKey="name"
                       {...axisProps}
                       width={130}
-                      tick={(p: any) => <AxisLink {...p} title="click to filter sessions" onSelect={(v: string) => drillFilter("error_type", v)} />}
+                      tick={(p: AxisTickProps) => <AxisLink {...p} title="click to filter sessions" onSelect={(v: string) => drillFilter("error_type", v)} />}
                     />
-                    <Tooltip {...tooltipStyle} formatter={(v: any, _n: any, p: any) => [`${v} (${p.payload.kind})`, "count"]} />
+                    <Tooltip {...tooltipStyle} formatter={(v: number | string, _n: string, p: { payload?: { kind?: string } }) => [`${v} (${p.payload?.kind})`, "count"]} />
                     <Bar dataKey="n" cursor="pointer" onClick={drillTo("error_type", "name")}>
                       {topN(errorTypeData, "errors").map((d, i) => (
                         <Cell key={i} fill={d.kind === "rejection" ? C.muted : C.red} />
@@ -479,11 +508,11 @@ export default function Dashboard() {
                     dataKey="name"
                     {...axisProps}
                     width={120}
-                    tick={(p: any) => (
+                    tick={(p: AxisTickProps) => (
                       <AxisLink {...p} title="click to filter sessions" onSelect={(v: string) => drillFilter("model", modelData.find((m) => m.name === v)?.model)} />
                     )}
                   />
-                  <Tooltip {...tooltipStyle} formatter={(_v: any, _n: any, p: any) => [`${fmtTokens(Number(p.payload.tokens))} · ${fmtCost(p.payload.cost)}`, modelMetric]} />
+                  <Tooltip {...tooltipStyle} formatter={(_v: number | string, _n: string, p: { payload?: { tokens?: number; cost?: number } }) => [`${fmtTokens(Number(p.payload?.tokens))} · ${fmtCost(Number(p.payload?.cost))}`, modelMetric]} />
                   <Bar dataKey={modelMetric} cursor="pointer" onClick={drillTo("model", "model")}>
                     {modelData.map((_, i) => (
                       <Cell key={i} fill={PALETTE[i % PALETTE.length]} />
@@ -561,15 +590,15 @@ export default function Dashboard() {
                       dataKey="name"
                       {...axisProps}
                       width={140}
-                      tick={(p: any) => <AxisLink {...p} title="click to open skill" onSelect={(v: string) => v && navigate(`/skill/${encodeURIComponent(v)}`)} />}
+                      tick={(p: AxisTickProps) => <AxisLink {...p} title="click to open skill" onSelect={(v: string) => v && navigate(`/skill/${encodeURIComponent(v)}`)} />}
                     />
                     <Tooltip cursor={{ fill: C.border, fillOpacity: 0.25 }} content={<SkillTooltip versionsByName={versionsByName} />} />
                     <Bar
                       dataKey="n"
                       fill={C.gold}
                       cursor="pointer"
-                      onClick={(d: any) => {
-                        const nm = d?.payload?.name ?? d?.name;
+                      onClick={(d: ChartDatum) => {
+                        const nm = datumField(d, "name");
                         if (nm) navigate(`/skill/${encodeURIComponent(nm)}`);
                       }}
                     />
