@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { useNavigate, useSearchParams } from "react-router-dom";
+import { useNavigate } from "react-router-dom";
 import {
   ResponsiveContainer,
   AreaChart,
@@ -18,6 +18,7 @@ import {
 import { Link } from "react-router-dom";
 import { api, type DashOverview, type DashTimeseries, type DashBreakdowns, type TokenSplit, type SecuritySummary, type Source } from "./api";
 import { useAsync, useLookup } from "./useFetch";
+import { useQueryState } from "./useQueryState";
 import { ErrorAlert, Loading } from "./AsyncBoundary";
 import { fmtCost, fmtTokens, fmtDuration, shortModel } from "./format";
 import { ChartCard, Kpi, useChartTokens } from "./charts/theme";
@@ -160,7 +161,7 @@ function AxisLink({ x, y, payload, onSelect, title }: any) {
 
 export default function Dashboard() {
   const { C, TOKEN_COLORS, PALETTE, axisProps, gridProps, tooltipStyle } = useChartTokens();
-  const [params, setParams] = useSearchParams();
+  const { get, set: setParam, pick } = useQueryState();
   const navigate = useNavigate();
   const sources = useLookup<Source[]>("/sources", []);
   // Security summary is global (not source/date filtered), so fetch it once on mount like sources.
@@ -202,11 +203,7 @@ export default function Dashboard() {
     });
 
   // The three range-filtered payloads load as one unit: a partial dashboard would mix ranges.
-  const qs = new URLSearchParams();
-  for (const k of ["source", "from", "to", "bucket"]) {
-    const v = params.get(k);
-    if (v) qs.set(k, v);
-  }
+  const qs = pick(["source", "from", "to", "bucket"]);
   const s = qs.toString() ? "?" + qs.toString() : "";
   const { data: dash, loading, error } = useAsync(
     () =>
@@ -218,13 +215,6 @@ export default function Dashboard() {
     [s],
   );
   const [overview, ts, bd] = dash ?? NOT_LOADED;
-
-  function setParam(key: string, value: string) {
-    const next = new URLSearchParams(params);
-    if (value) next.set(key, value);
-    else next.delete(key);
-    setParams(next);
-  }
 
   const categoryData = (bd?.by_category ?? []).map((c) => ({ name: c.category, value: c.n }));
   const complexityData = BAND_ORDER.map((band) => ({
@@ -276,7 +266,7 @@ export default function Dashboard() {
     <div>
       <h1 className="sr-only">Dashboard</h1>
       <div className="filters">
-        <select aria-label="Filter by source" value={params.get("source") ?? ""} onChange={(e) => setParam("source", e.target.value)}>
+        <select aria-label="Filter by source" value={get("source")} onChange={(e) => setParam({ source: e.target.value })}>
           <option value="">all sources</option>
           {sources.map((s) => (
             <option key={s.id} value={s.id}>
@@ -285,12 +275,12 @@ export default function Dashboard() {
           ))}
         </select>
         <label className="ctl">
-          from <input type="date" value={params.get("from") ?? ""} onChange={(e) => setParam("from", e.target.value)} />
+          from <input type="date" value={get("from")} onChange={(e) => setParam({ from: e.target.value })} />
         </label>
         <label className="ctl">
-          to <input type="date" value={params.get("to") ?? ""} onChange={(e) => setParam("to", e.target.value)} />
+          to <input type="date" value={get("to")} onChange={(e) => setParam({ to: e.target.value })} />
         </label>
-        <select aria-label="Time bucket" value={params.get("bucket") ?? ""} onChange={(e) => setParam("bucket", e.target.value)}>
+        <select aria-label="Time bucket" value={get("bucket")} onChange={(e) => setParam({ bucket: e.target.value })}>
           <option value="">bucket: auto{ts ? ` (${ts.bucket})` : ""}</option>
           <option value="day">day</option>
           <option value="week">week</option>

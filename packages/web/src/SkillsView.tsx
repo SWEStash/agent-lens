@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
-import { Link, useSearchParams } from "react-router-dom";
+import { Link } from "react-router-dom";
 import { type Project, type SkillSummary, type Source } from "./api";
 import { useFetch, useLookup } from "./useFetch";
+import { useQueryState } from "./useQueryState";
 import { ErrorAlert, Loading } from "./AsyncBoundary";
 import { fmtDate } from "./format";
 import { FilterSelect } from "./FilterSelect";
@@ -23,33 +24,22 @@ const SKILL_SORT: Record<SkillSortKey, (s: SkillSummary) => string | number | nu
  * source, project). Each row links to the skill's detail page. Counts come from GET /api/skills.
  */
 export default function SkillsView() {
-  const [params, setParams] = useSearchParams();
+  const { params, get, set: setParam, pick } = useQueryState();
   const sources = useLookup<Source[]>("/sources", []);
   const projects = useLookup<Project[]>("/projects", []);
-  const [qInput, setQInput] = useState(params.get("q") ?? "");
+  const [qInput, setQInput] = useState(get("q"));
   // Sorting is client-side: the /skills endpoint returns the whole filtered list, so a sort here spans
   // every skill, not just a page. Default mirrors the server order (most-fired).
   const { sort, toggle } = useSort<SkillSortKey>("fired", "desc");
   // Pagination is client-side too: sort the whole list, then slice the visible page.
   const [page, setPage] = useState(1);
 
-  const qs = new URLSearchParams();
-  for (const k of ["source", "project", "q"]) {
-    const v = params.get(k);
-    if (v) qs.set(k, v);
-  }
+  const qs = pick(["source", "project", "q"]);
   const { data: skills, loading, error } = useFetch<SkillSummary[]>("/skills" + (qs.toString() ? "?" + qs : ""));
-
-  function setParam(key: string, value: string) {
-    const next = new URLSearchParams(params);
-    if (value) next.set(key, value);
-    else next.delete(key);
-    setParams(next);
-  }
 
   function submitSearch(e: React.FormEvent) {
     e.preventDefault();
-    setParam("q", qInput.trim());
+    setParam({ q: qInput.trim() });
   }
 
   // A filter or sort change returns to page 1 (mirrors the sessions list).
@@ -73,8 +63,8 @@ export default function SkillsView() {
             onChange={(e) => setQInput(e.target.value)}
           />
           <button type="submit">Search</button>
-          {params.get("q") && (
-            <button type="button" className="ghost" onClick={() => (setQInput(""), setParam("q", ""))}>
+          {get("q") && (
+            <button type="button" className="ghost" onClick={() => (setQInput(""), setParam({ q: "" }))}>
               clear
             </button>
           )}
@@ -82,7 +72,7 @@ export default function SkillsView() {
         {/* Source/project filters scope the list to skills fired in matching sessions. No "(count)"
             suffix here: the /sources and /projects endpoints report SESSION counts, which are
             unrelated to skills and only confuse on this page. */}
-        <select aria-label="Filter by source" value={params.get("source") ?? ""} onChange={(e) => setParam("source", e.target.value)}>
+        <select aria-label="Filter by source" value={get("source")} onChange={(e) => setParam({ source: e.target.value })}>
           <option value="">all sources</option>
           {sources.map((s) => (
             <option key={s.id} value={s.id}>
@@ -93,8 +83,8 @@ export default function SkillsView() {
         <FilterSelect
           ariaLabel="Filter by project"
           searchPlaceholder="Find project…"
-          value={params.get("project") ?? ""}
-          onChange={(v) => setParam("project", v)}
+          value={get("project")}
+          onChange={(v) => setParam({ project: v })}
           options={[
             { value: "", label: "all projects" },
             ...projects.map((p) => ({ value: p.id, label: p.path.replace(/^.*\//, "") })),

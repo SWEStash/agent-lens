@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Link, useSearchParams } from "react-router-dom";
+import { Link } from "react-router-dom";
 import { apiPost, SNAPSHOT, type Finding, type FindingsPage, type MuteRow, type Project, type SecuritySummary, type Source } from "./api";
 import { useFetch, useLookup } from "./useFetch";
+import { useQueryState } from "./useQueryState";
 import { ErrorAlert, Loading } from "./AsyncBoundary";
 import { SortHeader, useSort } from "./sort";
 import { Pager } from "./Pager";
@@ -22,7 +23,7 @@ type SortKey = "severity" | "session" | "rule" | "category" | "time";
  * those controls are hidden in the static snapshot build (no backend). Reads: GET /api/security/*.
  */
 export default function SecurityView() {
-  const [params, setParams] = useSearchParams();
+  const { get, set: setParam, clear: clearFilters } = useQueryState();
   const sources = useLookup<Source[]>("/sources", []);
   const projects = useLookup<Project[]>("/projects", []);
   const [actionError, setActionError] = useState<string | null>(null);
@@ -32,15 +33,15 @@ export default function SecurityView() {
   const [reloadKey, setReloadKey] = useState(0);
   const { sort, toggle } = useSort<SortKey>("severity", "desc");
 
-  const severity = params.get("severity") ?? "";
-  const category = params.get("category") ?? "";
-  const rule = params.get("rule") ?? "";
-  const session = params.get("session") ?? "";
-  const source = params.get("source") ?? "";
-  const project = params.get("project") ?? "";
-  const from = params.get("from") ?? "";
-  const to = params.get("to") ?? "";
-  const status = params.get("status") ?? "open";
+  const severity = get("severity");
+  const category = get("category");
+  const rule = get("rule");
+  const session = get("session");
+  const source = get("source");
+  const project = get("project");
+  const from = get("from");
+  const to = get("to");
+  const status = get("status", "open");
 
   // The active filter as a query string (shared by the list fetch and dismiss-all-matching).
   const filterQs = useMemo(() => {
@@ -69,15 +70,6 @@ export default function SecurityView() {
   const error = actionError ?? listError;
   useEffect(() => setActionError(null), [filterQs, sort.key, sort.dir, pageNum, reloadKey]);
   const { total, findings } = page ?? EMPTY_PAGE;
-
-  const setParam = useCallback(
-    (patch: Record<string, string>) => {
-      const next = new URLSearchParams(params);
-      for (const [k, v] of Object.entries(patch)) v ? next.set(k, v) : next.delete(k);
-      setParams(next);
-    },
-    [params, setParams],
-  );
 
   // Writes: run the action, then clear selection + reload summary/list/mutes.
   const act = useCallback(async (fn: () => Promise<unknown>) => {
@@ -213,7 +205,7 @@ export default function SecurityView() {
           </span>
         )}
         {anyFilter && (
-          <button type="button" className="ghost" onClick={() => setParams(new URLSearchParams())}>clear filters</button>
+          <button type="button" className="ghost" onClick={clearFilters}>clear filters</button>
         )}
       </div>
 

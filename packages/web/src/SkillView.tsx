@@ -1,10 +1,11 @@
 import { useMemo } from "react";
-import { Link, useParams, useSearchParams } from "react-router-dom";
+import { Link, useParams } from "react-router-dom";
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { type SkillDetail } from "./api";
 import { AsyncBoundary } from "./AsyncBoundary";
 import { useFetch } from "./useFetch";
+import { useQueryState } from "./useQueryState";
 import { fmtDate } from "./format";
 
 function fmtBytes(n: number | null): string {
@@ -35,14 +36,14 @@ export default function SkillView() {
 }
 
 function SkillDetailView({ data }: { data: SkillDetail }) {
-  const [params, setParams] = useSearchParams();
+  const { get, set: setParam } = useQueryState();
+  const version = get("v");
 
   // Selected version: the ?v= one if it exists, else the most recent (versions[0]).
   const selected = useMemo(() => {
     if (!data.versions.length) return null;
-    const v = params.get("v");
-    return data.versions.find((x) => x.id === v) ?? data.versions[0];
-  }, [data, params]);
+    return data.versions.find((x) => x.id === version) ?? data.versions[0];
+  }, [data, version]);
 
   const sessionsForVersion = useMemo(
     () => (selected ? data.sessions.filter((s) => s.version_id === selected.id) : []),
@@ -51,9 +52,7 @@ function SkillDetailView({ data }: { data: SkillDetail }) {
   const unversionedFires = useMemo(() => data.sessions.filter((s) => !s.version_id).length, [data]);
 
   function pickVersion(id: string) {
-    const next = new URLSearchParams(params);
-    next.set("v", id);
-    setParams(next);
+    setParam({ v: id });
   }
 
   return (
