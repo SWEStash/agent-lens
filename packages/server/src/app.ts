@@ -13,6 +13,7 @@ import { dashboardOverview, dashboardTimeseries, dashboardBreakdowns, type DashF
 import { writeBlocked, runRefresh, LOOPBACK_HOSTS } from "./refresh.js";
 import { openTriage, dismiss, reopen, muteRule, unmute, listMutes, type TriageDB, type MuteScope } from "./triage.js";
 import { PREFS_SCHEMA_SQL, getPref, setPref } from "./prefs.js";
+import { pageLimit, pageOffset } from "./sql-util.js";
 
 export interface CreateAppOpts {
   /** Absolute path to the built web SPA; when present it is served with a history fallback. */
@@ -167,8 +168,8 @@ export async function createApp(db: DB, opts: CreateAppOpts = {}): Promise<Fasti
       errorType: q.error_type ? q.error_type.split(",").filter(Boolean) : undefined,
       sort: (["started", "title", "turns", "tokens", "cost", "duration", "errors", "security"] as const).find((s) => s === q.sort),
       dir: q.dir === "asc" ? "asc" : q.dir === "desc" ? "desc" : undefined,
-      limit: Math.min(Number(q.limit) || 50, 200),
-      offset: Number(q.offset) || 0,
+      limit: pageLimit(q.limit, 50, 200),
+      offset: pageOffset(q.offset),
     });
   });
 
@@ -206,8 +207,8 @@ export async function createApp(db: DB, opts: CreateAppOpts = {}): Promise<Fasti
       ...findingFilters(q),
       sort: (["severity", "session", "rule", "category", "time"] as const).find((s) => s === q.sort),
       dir: q.dir === "asc" ? "asc" : q.dir === "desc" ? "desc" : undefined,
-      limit: Math.min(Number(q.limit) || 50, 5000),
-      offset: Number(q.offset) || 0,
+      limit: pageLimit(q.limit, 50, 5000),
+      offset: pageOffset(q.offset),
     });
   });
 
@@ -281,8 +282,8 @@ export async function createApp(db: DB, opts: CreateAppOpts = {}): Promise<Fasti
       project: q.project,
       sort,
       dir: q.dir === "asc" ? "asc" : "desc",
-      limit: Math.min(Number(q.limit) || 50, 200),
-      offset: Number(q.offset) || 0,
+      limit: pageLimit(q.limit, 50, 200),
+      offset: pageOffset(q.offset),
     });
   });
 

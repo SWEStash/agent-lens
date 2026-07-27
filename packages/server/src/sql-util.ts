@@ -70,6 +70,31 @@ export function orderBy<K extends string>(columns: Record<K, string>, sort: stri
   return `${col} ${dir === "asc" ? "ASC" : "DESC"}`;
 }
 
+/**
+ * Resolve a request's `?limit=` into a row count within `[1, max]`.
+ *
+ * `Math.min(Number(q.limit) || 50, max)` looks equivalent and is not: it guards only the UPPER bound,
+ * so `?limit=-1` yields -1, and SQLite reads a negative LIMIT as "no limit" — the page cap is gone and
+ * the whole table comes back in one response. Non-integers are floored for the same reason `offset`
+ * needs it (see {@link pageOffset}).
+ */
+export function pageLimit(raw: unknown, fallback: number, max: number): number {
+  const n = Math.floor(Number(raw));
+  if (!Number.isFinite(n) || n < 1) return Math.min(fallback, max);
+  return Math.min(n, max);
+}
+
+/**
+ * Resolve a request's `?offset=` into a non-negative integer.
+ *
+ * `Number(q.offset) || 0` passes a non-integer straight through — `?offset=1.5` is truthy, reaches
+ * better-sqlite3, and throws (a 500) because it will not bind a float to an integer parameter.
+ */
+export function pageOffset(raw: unknown): number {
+  const n = Math.floor(Number(raw));
+  return Number.isFinite(n) && n > 0 ? n : 0;
+}
+
 /** Append `value` to the list stored at `key`, creating the list on first use. Group-by-key is the
  * shape half this module's loaders end in (findings by tool call, tool calls by event). */
 export function pushGrouped<K, V>(map: Map<K, V[]>, key: K, value: V): void {
