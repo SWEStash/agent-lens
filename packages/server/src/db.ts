@@ -1,6 +1,7 @@
 import Database from "better-sqlite3";
-import { costForUsage, SCHEMA_VERSION, unpackRaw, severityRank, SECURITY_CATEGORIES, errorKind } from "@agent-lens/core";
-import { tableExists } from "./sql-util.js";
+import { SCHEMA_VERSION, unpackRaw, severityRank, SECURITY_CATEGORIES, errorKind } from "@agent-lens/core";
+import { tableExists, queryAll, pushDateRange, metaJoin, metaProjection } from "./sql-util.js";
+import { sessionUsage, splitOf, tokensOf, costOf, USAGE_SUMS, type UsageRow } from "./usage.js";
 
 export type DB = Database.Database;
 
@@ -131,8 +132,7 @@ export function listSessions(db: DB, f: SessionFilters) {
   if (f.source) (where.push("s.source_id = ?"), params.push(f.source));
   if (f.project) (where.push("s.project_id = ?"), params.push(f.project));
   // Date-inclusive on both ends (see findingWhere): a picked `to` day must include that day's sessions.
-  if (f.from) (where.push("date(s.started_at) >= date(?)"), params.push(f.from));
-  if (f.to) (where.push("date(s.started_at) <= date(?)"), params.push(f.to));
+  pushDateRange(where, params, "s.started_at", f.from, f.to);
   if (f.kind === "main") where.push("s.is_sidechain = 0");
   if (f.kind === "subagent") where.push("s.is_sidechain = 1");
   // Multi-select: session has ≥1 finding of any listed severity / ≥1 errored tool call of any listed type.
@@ -230,42 +230,32 @@ export function listSessions(db: DB, f: SessionFilters) {
  * are grouped by model so per-model rates apply. IDs are chunked so the whole-list sort path (which can
  * pass thousands of sessions) stays under SQLite's bound-parameter limit. */
 function attachSessionCost(db: DB, rows: any[]) {
-  type Acc = { tokens: number; cost: number; split: { input: number; output: number; cache_creation: number; cache_read: number } };
-  const costBySession = new Map<string, Acc>();
+  // Group each session's per-model usage rows, then reuse the shared split/cost helpers. IDs are
+  // chunked so the whole-list sort path (which can pass thousands of sessions) stays under SQLite's
+  // bound-parameter limit.
+  const usageBySession = new Map<string, UsageRow[]>();
   const ids = rows.map((r) => r.id);
   const CHUNK = 800;
   for (let i = 0; i < ids.length; i += CHUNK) {
     const batch = ids.slice(i, i + CHUNK);
     const ph = batch.map(() => "?").join(",");
-    const usage = db
-      .prepare(
-        `SELECT session_id, model,
-                SUM(input_tokens) i, SUM(output_tokens) o,
-                SUM(cache_creation_input_tokens) cw, SUM(cache_read_input_tokens) cr
-         FROM token_usage WHERE session_id IN (${ph}) GROUP BY session_id, model`,
-      )
-      .all(...batch) as any[];
+    const usage = queryAll<UsageRow & { session_id: string }>(
+      db,
+      `SELECT session_id, model, ${USAGE_SUMS} FROM token_usage WHERE session_id IN (${ph}) GROUP BY session_id, model`,
+      ...batch,
+    );
     for (const u of usage) {
-      const acc = costBySession.get(u.session_id) ?? { tokens: 0, cost: 0, split: { input: 0, output: 0, cache_creation: 0, cache_read: 0 } };
-      acc.tokens += u.i + u.o + u.cw + u.cr;
-      acc.split.input += u.i;
-      acc.split.output += u.o;
-      acc.split.cache_creation += u.cw;
-      acc.split.cache_read += u.cr;
-      acc.cost += costForUsage(u.model, {
-        input_tokens: u.i,
-        output_tokens: u.o,
-        cache_creation_input_tokens: u.cw,
-        cache_read_input_tokens: u.cr,
-      });
-      costBySession.set(u.session_id, acc);
+      const list = usageBySession.get(u.session_id) ?? [];
+      list.push(u);
+      usageBySession.set(u.session_id, list);
     }
   }
   for (const r of rows) {
-    const c = costBySession.get(r.id);
-    r.tokens = c?.tokens ?? 0;
-    r.token_split = c?.split ?? { input: 0, output: 0, cache_creation: 0, cache_read: 0 };
-    r.cost = c ? Number(c.cost.toFixed(4)) : 0;
+    const u = usageBySession.get(r.id) ?? [];
+    const split = splitOf(u);
+    r.tokens = tokensOf(split);
+    r.token_split = split;
+    r.cost = costOf(u);
     r.title = r.ai_title || r.slug || null;
   }
 }
@@ -365,33 +355,14 @@ export function getSession(db: DB, id: string) {
     };
   });
 
-  const usage = db
-    .prepare(
-      `SELECT model, SUM(input_tokens) i, SUM(output_tokens) o,
-              SUM(cache_creation_input_tokens) cw, SUM(cache_read_input_tokens) cr
-       FROM token_usage WHERE session_id = ? GROUP BY model`,
-    )
-    .all(id) as any[];
   // Keep the token categories split so the UI can show input/output/cache-write/cache-read
   // separately. Cache stays IN the total and IS cost-attributed (at its discounted rate) — it is
   // differentiated, never dropped.
-  const split = { input: 0, output: 0, cache_creation: 0, cache_read: 0 };
-  let cost = 0;
-  for (const u of usage) {
-    split.input += u.i;
-    split.output += u.o;
-    split.cache_creation += u.cw;
-    split.cache_read += u.cr;
-    cost += costForUsage(u.model, {
-      input_tokens: u.i,
-      output_tokens: u.o,
-      cache_creation_input_tokens: u.cw,
-      cache_read_input_tokens: u.cr,
-    });
-  }
-  session.tokens = split.input + split.output + split.cache_creation + split.cache_read;
+  const usage = sessionUsage(db, id);
+  const split = splitOf(usage);
+  session.tokens = tokensOf(split);
   session.token_split = split;
-  session.cost = Number(cost.toFixed(4));
+  session.cost = costOf(usage);
   session.title = session.ai_title || session.slug || null;
 
   // Heuristic classification (Phase 4): category + complexity + the signals that produced them
@@ -444,24 +415,16 @@ export function getSession(db: DB, id: string) {
     .prepare(
       `SELECT s.id, s.ai_title, s.slug, s.turn_count, s.started_at, s.workflow_run_id,
               (SELECT GROUP_CONCAT(DISTINCT model) FROM token_usage t WHERE t.session_id = s.id) AS models
-              ${hasMeta ? ", sm.agent_type, sm.agent_description, sm.spawn_depth" : ", NULL AS agent_type, NULL AS agent_description, NULL AS spawn_depth"}
-       FROM sessions s ${hasMeta ? "LEFT JOIN session_meta sm ON sm.session_id = s.id" : ""}
+              ${metaProjection(hasMeta)}
+       FROM sessions s ${metaJoin(hasMeta)}
        WHERE s.parent_session_id = ? ORDER BY s.started_at`,
     )
     .all(id) as any[];
   for (const ch of children) {
     ch.title = ch.ai_title || ch.slug || null;
-    const u = db
-      .prepare(
-        `SELECT model, SUM(input_tokens) i, SUM(output_tokens) o,
-                SUM(cache_creation_input_tokens) cw, SUM(cache_read_input_tokens) cr
-         FROM token_usage WHERE session_id = ? GROUP BY model`,
-      )
-      .all(ch.id) as any[];
-    ch.tokens = u.reduce((a, r) => a + r.i + r.o + r.cw + r.cr, 0);
-    ch.cost = Number(
-      u.reduce((a, r) => a + costForUsage(r.model, { input_tokens: r.i, output_tokens: r.o, cache_creation_input_tokens: r.cw, cache_read_input_tokens: r.cr }), 0).toFixed(4),
-    );
+    const u = sessionUsage(db, ch.id);
+    ch.tokens = tokensOf(splitOf(u));
+    ch.cost = costOf(u);
   }
 
   // Workflow runs launched from THIS session: each Workflow tool_call carries a run id + name and sits
@@ -553,8 +516,8 @@ export function getWorkflow(db: DB, runId: string) {
     .prepare(
       `SELECT s.id, s.ai_title, s.slug, s.turn_count, s.started_at, s.ended_at, s.duration_ms,
               (SELECT GROUP_CONCAT(DISTINCT model) FROM token_usage t WHERE t.session_id = s.id) AS models
-              ${hasMeta ? ", sm.agent_type, sm.agent_description, sm.spawn_depth" : ", NULL AS agent_type, NULL AS agent_description, NULL AS spawn_depth"}
-       FROM sessions s ${hasMeta ? "LEFT JOIN session_meta sm ON sm.session_id = s.id" : ""}
+              ${metaProjection(hasMeta)}
+       FROM sessions s ${metaJoin(hasMeta)}
        WHERE s.workflow_run_id = ? ORDER BY s.started_at`,
     )
     .all(runId) as any[];
@@ -565,17 +528,9 @@ export function getWorkflow(db: DB, runId: string) {
   let ended_at: string | null = null;
   for (const a of agents) {
     a.title = a.ai_title || a.slug || null;
-    const u = db
-      .prepare(
-        `SELECT model, SUM(input_tokens) i, SUM(output_tokens) o,
-                SUM(cache_creation_input_tokens) cw, SUM(cache_read_input_tokens) cr
-         FROM token_usage WHERE session_id = ? GROUP BY model`,
-      )
-      .all(a.id) as any[];
-    a.tokens = u.reduce((acc, r) => acc + r.i + r.o + r.cw + r.cr, 0);
-    a.cost = Number(
-      u.reduce((acc, r) => acc + costForUsage(r.model, { input_tokens: r.i, output_tokens: r.o, cache_creation_input_tokens: r.cw, cache_read_input_tokens: r.cr }), 0).toFixed(4),
-    );
+    const u = sessionUsage(db, a.id);
+    a.tokens = tokensOf(splitOf(u));
+    a.cost = costOf(u);
     total_tokens += a.tokens;
     total_cost += a.cost;
     if (a.started_at && (!started_at || a.started_at < started_at)) started_at = a.started_at;
@@ -936,8 +891,7 @@ function findingWhere(f: FindingFilters): { sql: string[]; params: any[] } {
   if (f.project) (sql.push("s.project_id = ?"), params.push(f.project));
   // Compare on the DATE part so a picked day is inclusive on both ends — `to = 2026-07-14` must include
   // 2026-07-14 events (a plain `started_at <= '2026-07-14'` would exclude that whole day's timestamps).
-  if (f.from) (sql.push("date(s.started_at) >= date(?)"), params.push(f.from));
-  if (f.to) (sql.push("date(s.started_at) <= date(?)"), params.push(f.to));
+  pushDateRange(sql, params, "s.started_at", f.from, f.to);
   return { sql, params };
 }
 

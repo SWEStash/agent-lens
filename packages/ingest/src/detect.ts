@@ -15,6 +15,7 @@ import { createHash } from "node:crypto";
 import { posix as path } from "node:path";
 import { bumpSeverity, type Severity, type SecurityCategoryKey } from "@agent-lens/core";
 import type { DB } from "./db.js";
+import { createDirtySet } from "./dirtyset.js";
 
 // Bump on any rule/severity change so a re-run is attributable to an engine version (mirrors
 // CLASSIFIER_VERSION). Recorded on every row + in signals_json. Finding ids are independent of this
@@ -666,14 +667,7 @@ interface ToolRow {
  */
 export function detect(db: DB, dirty?: Set<string> | null): { count: number; version: number } {
   const incremental = dirty != null;
-  if (incremental) {
-    db.exec("DROP TABLE IF EXISTS _dirty_sec");
-    db.exec("CREATE TEMP TABLE _dirty_sec (id TEXT PRIMARY KEY)");
-    const ins = db.prepare("INSERT OR IGNORE INTO _dirty_sec (id) VALUES (?)");
-    db.transaction((ids: Iterable<string>) => {
-      for (const id of ids) ins.run(id);
-    })(dirty);
-  }
+  if (dirty != null) createDirtySet(db, "_dirty_sec", dirty);
   const scope = incremental ? " WHERE tc.session_id IN (SELECT id FROM _dirty_sec)" : "";
 
   // Agent-owned config roots — the configured sources' `config_dir`s (seeded from the project config

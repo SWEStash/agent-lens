@@ -9,6 +9,7 @@
  * for later. `classifier_version` lets a future (e.g. local-LLM) classifier supersede these rows.
  */
 import type { DB } from "./db.js";
+import { createDirtySet } from "./dirtyset.js";
 
 // v2 (ADR-004): realistic complexity ceilings so real (long, substantial) main sessions spread
 // across bands instead of pegging in "large"; subagent sessions categorized by their spawner role
@@ -41,8 +42,8 @@ function categoryForSubagentRole(role: string | undefined): Category | null {
 }
 
 /** Number of lines in a string (0 for empty/undefined). Trailing newline doesn't add a line. */
-function countLines(s: string | undefined | null): number {
-  if (!s) return 0;
+function countLines(s: unknown): number {
+  if (typeof s !== "string" || s.length === 0) return 0;
   const trimmed = s.endsWith("\n") ? s.slice(0, -1) : s;
   return trimmed.length === 0 ? 0 : trimmed.split("\n").length;
 }
@@ -53,9 +54,9 @@ const OPS_FILE = /(^|\/)(dockerfile|docker-compose|\.github\/|\.gitlab-ci|makefi
 /** LoC contribution of a single Edit/Write tool call, parsed from its verbatim input_json. */
 export function locDelta(toolName: string, inputJson: string | null): { added: number; removed: number; file: string | null } {
   if (!inputJson) return { added: 0, removed: 0, file: null };
-  let input: any;
+  let input: Record<string, unknown>;
   try {
-    input = JSON.parse(inputJson);
+    input = JSON.parse(inputJson) as Record<string, unknown>;
   } catch {
     return { added: 0, removed: 0, file: null };
   }
@@ -189,14 +190,7 @@ export function classify(db: DB, dirty?: Set<string> | null): { count: number; v
   // Every signal bulk-load is scoped to the same set so memory and work track the delta, not the whole
   // DB (ADR-010). `null`/undefined → classify all sessions (the `--full` / standalone metrics path).
   const incremental = dirty != null;
-  if (incremental) {
-    db.exec("DROP TABLE IF EXISTS _dirty");
-    db.exec("CREATE TEMP TABLE _dirty (id TEXT PRIMARY KEY)");
-    const ins = db.prepare("INSERT OR IGNORE INTO _dirty (id) VALUES (?)");
-    db.transaction((ids: Iterable<string>) => {
-      for (const id of ids) ins.run(id);
-    })(dirty);
-  }
+  if (dirty != null) createDirtySet(db, "_dirty", dirty);
   const wSess = incremental ? " WHERE session_id IN (SELECT id FROM _dirty)" : "";
   const aSess = incremental ? " AND session_id IN (SELECT id FROM _dirty)" : "";
 
@@ -206,13 +200,13 @@ export function classify(db: DB, dirty?: Set<string> | null): { count: number; v
 
   // Bulk-load per-session signals once, then assemble in JS (scales to many sessions).
   const toolMix = new Map<string, Record<string, number>>();
-  for (const r of db.prepare(`SELECT session_id, tool_name, COUNT(*) c FROM tool_calls${wSess} GROUP BY session_id, tool_name`).all() as any[]) {
+  for (const r of db.prepare(`SELECT session_id, tool_name, COUNT(*) c FROM tool_calls${wSess} GROUP BY session_id, tool_name`).all() as Array<{ session_id: string; tool_name: string; c: number }>) {
     const m = toolMix.get(r.session_id) ?? {};
     m[r.tool_name] = r.c;
     toolMix.set(r.session_id, m);
   }
   const skillMix = new Map<string, Record<string, number>>();
-  for (const r of db.prepare(`SELECT session_id, skill_name, COUNT(*) c FROM tool_calls WHERE skill_name IS NOT NULL${aSess} GROUP BY session_id, skill_name`).all() as any[]) {
+  for (const r of db.prepare(`SELECT session_id, skill_name, COUNT(*) c FROM tool_calls WHERE skill_name IS NOT NULL${aSess} GROUP BY session_id, skill_name`).all() as Array<{ session_id: string; skill_name: string; c: number }>) {
     const m = skillMix.get(r.session_id) ?? {};
     m[r.skill_name] = r.c;
     skillMix.set(r.session_id, m);
@@ -224,12 +218,12 @@ export function classify(db: DB, dirty?: Set<string> | null): { count: number; v
               SUM(cache_creation_input_tokens) cw, SUM(cache_read_input_tokens) cr
        FROM token_usage${wSess} GROUP BY session_id`,
     )
-    .all() as any[]) {
+    .all() as Array<{ session_id: string; i: number | null; o: number | null; cw: number | null; cr: number | null }>) {
     tokens.set(r.session_id, { work: (r.i ?? 0) + (r.o ?? 0) + (r.cw ?? 0), cacheRead: r.cr ?? 0 });
   }
   // LoC + files from Edit/Write inputs.
   const loc = new Map<string, { added: number; removed: number; files: Set<string> }>();
-  for (const r of db.prepare(`SELECT session_id, tool_name, input_json FROM tool_calls WHERE tool_name IN ('Edit','Write')${aSess}`).all() as any[]) {
+  for (const r of db.prepare(`SELECT session_id, tool_name, input_json FROM tool_calls WHERE tool_name IN ('Edit','Write')${aSess}`).all() as Array<{ session_id: string; tool_name: string; input_json: string | null }>) {
     const d = locDelta(r.tool_name, r.input_json);
     const acc = loc.get(r.session_id) ?? { added: 0, removed: 0, files: new Set<string>() };
     acc.added += d.added;
@@ -239,7 +233,7 @@ export function classify(db: DB, dirty?: Set<string> | null): { count: number; v
   }
   // Prompt text for keyword signals.
   const promptText = new Map<string, string>();
-  for (const r of db.prepare(`SELECT session_id, prompt_preview FROM turns WHERE prompt_preview IS NOT NULL${aSess}`).all() as any[]) {
+  for (const r of db.prepare(`SELECT session_id, prompt_preview FROM turns WHERE prompt_preview IS NOT NULL${aSess}`).all() as Array<{ session_id: string; prompt_preview: string }>) {
     promptText.set(r.session_id, (promptText.get(r.session_id) ?? "") + " " + r.prompt_preview);
   }
   // Subagent role from the spawning Task/Agent tool_call (schema-v3 linkage). Lets us categorize a
@@ -249,7 +243,7 @@ export function classify(db: DB, dirty?: Set<string> | null): { count: number; v
     .prepare(
       `SELECT s.id id, tc.agent_type role FROM sessions s JOIN tool_calls tc ON tc.spawned_session_id = s.id WHERE s.is_sidechain = 1 AND tc.agent_type IS NOT NULL${incremental ? " AND s.id IN (SELECT id FROM _dirty)" : ""}`,
     )
-    .all() as any[]) {
+    .all() as Array<{ id: string; role: string }>) {
     if (!subagentRole.has(r.id)) subagentRole.set(r.id, r.role);
   }
 

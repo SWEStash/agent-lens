@@ -15,11 +15,19 @@ export interface LeakPattern {
   re: RegExp;
 }
 
+// Base (non-global) patterns reused across the leak-scan sets and the /g masking sets below, so a
+// tightening happens once (the module's "single source of truth" promise). The masking sets derive a
+// global copy via `new RegExp(base.source, "g")`; the leak-scan sets (findLeak → `re.exec`, non-global,
+// always searches from 0) can share the object directly.
+const EMAIL = /[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/;
+const IPV4 = /\b\d{1,3}(?:\.\d{1,3}){3}\b/;
+const HOME_PATH_WITH_USER = /\/(?:home|Users)\/(?!user\b)[A-Za-z0-9._-]+/;
+
 /** Patterns that must NEVER appear in redacted CORPUS output (strict, forbids URLs/IPs entirely). */
 export const LEAK_PATTERNS: LeakPattern[] = [
-  { name: "email", re: /[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/ },
-  { name: "home-path-with-user", re: /\/(?:home|Users)\/(?!user\b)[A-Za-z0-9._-]+/ },
-  { name: "ipv4", re: /\b\d{1,3}(?:\.\d{1,3}){3}\b/ },
+  { name: "email", re: EMAIL },
+  { name: "home-path-with-user", re: HOME_PATH_WITH_USER },
+  { name: "ipv4", re: IPV4 },
   { name: "url", re: /https?:\/\/[^\s"']+/ },
   { name: "aws-key", re: /AKIA[0-9A-Z]{16}/ },
   { name: "bearer/token", re: /\b(?:sk|pk|ghp|gho|xox[abp])[-_][A-Za-z0-9]{8,}/ },
@@ -78,8 +86,8 @@ function maskEnvAssignments(text: string): string {
 
 /** PII value patterns → placeholder label (home paths are handled separately, username-strip only). */
 const PII_PATTERNS: Array<{ re: RegExp; label: string }> = [
-  { re: /[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g, label: "EMAIL" },
-  { re: /\b\d{1,3}(?:\.\d{1,3}){3}\b/g, label: "IP" },
+  { re: new RegExp(EMAIL.source, "g"), label: "EMAIL" },
+  { re: new RegExp(IPV4.source, "g"), label: "IP" },
 ];
 
 /** Strip only the `<user>` segment of a home path so `/home/alice/x` → `/home/user/x` (rest kept). */
@@ -116,8 +124,8 @@ export function maskSecrets(text: string): string {
  */
 export const SHARE_LEAK: LeakPattern[] = [
   ...SECRET_PATTERNS.map(({ re, label }) => ({ name: label, re: new RegExp(re.source) })),
-  { name: "email", re: /[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/ },
-  { name: "home-path-with-user", re: /\/(?:home|Users)\/(?!user\b)[A-Za-z0-9._-]+/ },
+  { name: "email", re: EMAIL },
+  { name: "home-path-with-user", re: HOME_PATH_WITH_USER },
   { name: "encoded-home-with-user", re: /(?<![A-Za-z0-9])-(?:home|Users)-(?!user-)[A-Za-z0-9._]+-/ },
   { name: "url-credentials", re: /:\/\/[^/\s:@"'`]+:[^/\s@"'`]+@/ },
 ];

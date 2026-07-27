@@ -1,3 +1,5 @@
+import type { Severity, SessionRow, TurnRow } from "@agent-lens/contracts";
+
 // Snapshot mode: when built with VITE_SNAPSHOT=1 the SPA is a static, read-only bundle (e.g. GitHub
 // Pages) with no live API — each endpoint's default response was pre-exported to
 // `<base>/snapshot/<path>.json` by scripts/export-snapshot.mjs. Query params (filters, pagination)
@@ -123,7 +125,8 @@ export interface ToolCall {
   findings?: Finding[];
 }
 
-export type Severity = "info" | "low" | "medium" | "high" | "critical";
+// Severity comes from the shared @agent-lens/contracts leaf (node-free) so web and server can't drift.
+export type { Severity };
 
 /** The explainability blob behind a finding, written verbatim by the detector (detect.ts). */
 export interface FindingSignals {
@@ -282,9 +285,23 @@ export interface WorkflowRun {
   status: string | null;
 }
 
+/** The session row on a detail payload: the stored `sessions` columns (shared SessionRow) plus the
+ *  fields getSession computes/joins on — project path, cost/token roll-ups, and the error split. */
+export interface SessionDetailData extends SessionRow {
+  project_path: string | null;
+  tokens: number;
+  token_split: TokenSplit;
+  cost: number;
+  title: string | null;
+  tool_call_count: number;
+  tool_error_count: number;
+  tool_rejection_count: number;
+  tool_failure_count: number;
+}
+
 export interface SessionDetail {
-  session: any;
-  turns: any[];
+  session: SessionDetailData;
+  turns: TurnRow[];
   events: EventNode[];
   classification: Classification | null;
   parent: SessionParent | null;

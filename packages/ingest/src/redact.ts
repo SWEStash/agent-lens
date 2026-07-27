@@ -108,68 +108,72 @@ export class Redactor {
     return findLeak(rebuilt) ? null : rebuilt;
   }
 
-  private toolInput(name: string, input: any): any {
+  private toolInput(name: string, input: unknown): Record<string, unknown> {
     if (!input || typeof input !== "object") return {};
-    const out: any = {};
+    const inp = input as Record<string, unknown>;
+    const out: Record<string, unknown> = {};
     // Skill name (skill_name metric); only the Skill tool's command is non-sensitive enough to keep.
-    if (typeof input.skill === "string") out.skill = input.skill;
-    if (name === "Skill" && typeof input.command === "string") out.command = input.command;
+    if (typeof inp.skill === "string") out.skill = inp.skill;
+    if (name === "Skill" && typeof inp.command === "string") out.command = inp.command;
     // Subagent type (agent_type metric).
-    if ((name === "Task" || name === "Agent") && typeof input.subagent_type === "string") out.subagent_type = input.subagent_type;
+    if ((name === "Task" || name === "Agent") && typeof inp.subagent_type === "string") out.subagent_type = inp.subagent_type;
     // LoC-bearing payloads: keep line counts + a pseudonymized path with its extension.
     if (name === "Write") {
-      out.file_path = this.path(input.file_path);
-      out.content = dummyLines(countLines(input.content));
+      out.file_path = this.path(inp.file_path);
+      out.content = dummyLines(countLines(inp.content));
     } else if (name === "Edit") {
-      out.file_path = this.path(input.file_path);
-      out.old_string = dummyLines(countLines(input.old_string));
-      out.new_string = dummyLines(countLines(input.new_string));
+      out.file_path = this.path(inp.file_path);
+      out.old_string = dummyLines(countLines(inp.old_string));
+      out.new_string = dummyLines(countLines(inp.new_string));
     }
     return out;
   }
 
-  private block(b: any): any {
+  private block(b: unknown): unknown {
     if (!b || typeof b !== "object") return b;
-    switch (b.type) {
+    const blk = b as Record<string, unknown>;
+    switch (blk.type) {
       case "text":
-        return { type: "text", text: this.skillText(b.text) ?? this.text(b.text) };
+        return { type: "text", text: this.skillText(blk.text) ?? this.text(blk.text) };
       case "thinking":
-        return { type: "thinking", thinking: this.text(b.thinking) };
+        return { type: "thinking", thinking: this.text(blk.thinking) };
       case "tool_use":
-        return { type: "tool_use", id: b.id, name: b.name, input: this.toolInput(String(b.name), b.input), ...(b.caller ? { caller: b.caller } : {}) };
+        return { type: "tool_use", id: blk.id, name: blk.name, input: this.toolInput(String(blk.name), blk.input), ...(blk.caller ? { caller: blk.caller } : {}) };
       case "tool_result":
-        return { type: "tool_result", tool_use_id: b.tool_use_id, content: PLACEHOLDER, ...(b.is_error ? { is_error: true } : {}) };
+        return { type: "tool_result", tool_use_id: blk.tool_use_id, content: PLACEHOLDER, ...(blk.is_error ? { is_error: true } : {}) };
       default:
-        return { type: b.type };
+        return { type: blk.type };
     }
   }
 
-  private message(m: any): any {
+  private message(m: unknown): unknown {
     if (!m || typeof m !== "object") return m;
-    const out: any = {};
-    for (const k of ["role", "id", "model", "type", "usage", "stop_reason", "stop_sequence"]) if (k in m) out[k] = m[k];
-    if (typeof m.content === "string") out.content = this.skillText(m.content) ?? this.text(m.content);
-    else if (Array.isArray(m.content)) out.content = m.content.map((b: any) => this.block(b));
+    const msg = m as Record<string, unknown>;
+    const out: Record<string, unknown> = {};
+    for (const k of ["role", "id", "model", "type", "usage", "stop_reason", "stop_sequence"]) if (k in msg) out[k] = msg[k];
+    if (typeof msg.content === "string") out.content = this.skillText(msg.content) ?? this.text(msg.content);
+    else if (Array.isArray(msg.content)) out.content = msg.content.map((b: unknown) => this.block(b));
     return out;
   }
 
   /** Redact one parsed transcript line (object). */
-  line(r: any): any {
+  line(r: unknown): unknown {
     if (!r || typeof r !== "object") return r;
-    const out: any = {};
+    const rec = r as Record<string, unknown>;
+    const out: Record<string, unknown> = {};
     // Structural / metric-bearing scalars kept verbatim.
-    for (const k of ["uuid", "parentUuid", "type", "timestamp", "isSidechain", "isMeta", "agentId", "userType", "version"]) if (k in r) out[k] = r[k];
-    if (typeof r.cwd === "string") out.cwd = this.path(r.cwd);
-    if (typeof r.gitBranch === "string") out.gitBranch = this.ident("branch", r.gitBranch);
-    if (typeof r.slug === "string") out.slug = this.ident("slug", r.slug);
-    if (r.type === "ai-title") out.aiTitle = "Redacted session";
-    if (r.toolUseResult && typeof r.toolUseResult === "object") {
-      const t = r.toolUseResult;
-      const tu: any = {};
+    for (const k of ["uuid", "parentUuid", "type", "timestamp", "isSidechain", "isMeta", "agentId", "userType", "version"]) if (k in rec) out[k] = rec[k];
+    if (typeof rec.cwd === "string") out.cwd = this.path(rec.cwd);
+    if (typeof rec.gitBranch === "string") out.gitBranch = this.ident("branch", rec.gitBranch);
+    if (typeof rec.slug === "string") out.slug = this.ident("slug", rec.slug);
+    if (rec.type === "ai-title") out.aiTitle = "Redacted session";
+    if (rec.toolUseResult && typeof rec.toolUseResult === "object") {
+      const t = rec.toolUseResult as Record<string, unknown>;
+      const tu: Record<string, unknown> = {};
       for (const k of ["status", "agentType", "agentId", "resolvedModel", "totalDurationMs", "totalTokens", "totalToolUseCount"]) if (k in t) tu[k] = t[k];
       out.toolUseResult = tu;
     }
-    if ("message" in r) out.message = this.message(r.message);
+    if ("message" in rec) out.message = this.message(rec.message);
     return out;
   }
 
@@ -178,7 +182,7 @@ export class Redactor {
     const lines: string[] = [];
     for (const raw of content.split("\n")) {
       if (!raw.trim()) continue;
-      let obj: any;
+      let obj: unknown;
       try {
         obj = JSON.parse(raw);
       } catch {
