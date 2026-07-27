@@ -40,5 +40,23 @@ export function renderSessionExport(
     { level },
   );
   const suffix = level === "off" ? "" : ".redacted";
-  return { markdown, filename: `session-${id.slice(0, 8)}${suffix}.md` };
+  return { markdown, filename: `session-${filenameSafe(id.slice(0, 8))}${suffix}.md` };
+}
+
+/**
+ * Reduce a session id to characters that are safe in a `content-disposition` filename.
+ *
+ * The header is built by interpolation — `attachment; filename="<name>"` (app.ts) — so a `"` in the
+ * id would close the quoted-string early and the rest would be parsed as header parameters. Ids are
+ * ours today (uuids and slugs), which makes this defence-in-depth rather than a live hole, but the id
+ * is a path segment the caller supplies and nothing else validates it before it reaches the header.
+ * Sanitizing at the point the filename is BUILT keeps the guarantee with the naming convention
+ * instead of leaving it to every future caller of this function (SLOP-077).
+ *
+ * Anything outside `[A-Za-z0-9._-]` collapses to `_`, including the CR/LF that would otherwise permit
+ * header injection. An id that is entirely unsafe still yields a usable name rather than an empty one.
+ */
+function filenameSafe(s: string): string {
+  const cleaned = s.replace(/[^A-Za-z0-9._-]/g, "_");
+  return cleaned === "" ? "session" : cleaned;
 }
