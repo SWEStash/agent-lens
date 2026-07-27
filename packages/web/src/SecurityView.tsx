@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
-import { api, apiPost, SNAPSHOT, type Finding, type FindingsPage, type MuteRow, type Project, type SecuritySummary } from "./api";
+import { api, apiPost, SNAPSHOT, type Finding, type FindingsPage, type MuteRow, type Project, type SecuritySummary, type Source } from "./api";
 import { SortHeader, useSort } from "./sort";
 import { Pager } from "./Pager";
 import { FilterSelect } from "./FilterSelect";
@@ -9,7 +9,6 @@ import { SeverityTag, SEVERITIES } from "./severity";
 
 const PAGE = 50;
 type SortKey = "severity" | "session" | "rule" | "category" | "time";
-interface Source { id: string; label: string; session_count: number }
 
 /**
  * Security page (ADR-017/018) — a browsable, filterable, triageable list of the findings the detector

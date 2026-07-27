@@ -5,12 +5,12 @@
  * be driven by the CLI entry (index.ts, with .listen) and by tests (app.inject, no socket).
  */
 import { existsSync } from "node:fs";
-import Fastify, { type FastifyInstance } from "fastify";
+import Fastify, { type FastifyInstance, type FastifyReply } from "fastify";
 import fastifyStatic from "@fastify/static";
 import { renderSessionExport, parseRedactionLevel } from "./export.js";
-import { type DB, lastIngested, schemaStatus, listSources, listProjects, listModels, listSessions, getSession, getWorkflow, listSkills, getSkill, listFindings, securitySummary, listFiles, getFileTimeline } from "./db.js";
+import { type DB, lastIngested, schemaStatus, listSources, listProjects, listModels, listSessions, getSession, getWorkflow, listSkills, getSkill, listFindings, securitySummary, listFiles, getFileTimeline, safeJson } from "./db.js";
 import { dashboardOverview, dashboardTimeseries, dashboardBreakdowns, type DashFilters } from "./dashboard.js";
-import { writeBlocked, runRefresh } from "./refresh.js";
+import { writeBlocked, runRefresh, LOOPBACK_HOSTS } from "./refresh.js";
 import { openTriage, dismiss, reopen, muteRule, unmute, listMutes, type TriageDB, type MuteScope } from "./triage.js";
 import { PREFS_SCHEMA_SQL, getPref, setPref } from "./prefs.js";
 
@@ -25,9 +25,11 @@ export interface CreateAppOpts {
   enforceLoopbackHost?: boolean;
 }
 
-/** Loopback host authorities (hostname only; any port). A request Host outside this set is treated
- *  as a DNS-rebinding attempt and rejected before any handler runs. */
-const LOOPBACK_HOSTS = new Set(["127.0.0.1", "localhost", "[::1]"]);
+/** Structured 404 envelope. Every not-found response shares this shape so a client can uniformly read
+ *  `err.error.code` — the rest of the API already uses `{ error: { code, message } }`. */
+function notFound(reply: FastifyReply, message = "not found") {
+  return reply.code(404).send({ error: { code: "NOT_FOUND", message } });
+}
 
 export async function createApp(db: DB, opts: CreateAppOpts = {}): Promise<FastifyInstance> {
   const app = Fastify({ logger: false });
@@ -133,7 +135,8 @@ export async function createApp(db: DB, opts: CreateAppOpts = {}): Promise<Fasti
     if (!PREF_KEY.test(key)) return reply.code(400).send({ error: { code: "BAD_KEY", message: "invalid pref key" } });
     if (!triageDb) return { value: null };
     const raw = getPref(triageDb, key);
-    return { value: raw == null ? null : JSON.parse(raw) };
+    // safeJson tolerates a malformed stored value (returns null) rather than throwing a 500.
+    return { value: safeJson(raw) };
   });
   app.put("/api/prefs/:key", async (req, reply) => {
     const { key } = req.params as { key: string };
@@ -166,14 +169,14 @@ export async function createApp(db: DB, opts: CreateAppOpts = {}): Promise<Fasti
   app.get("/api/sessions/:id", async (req, reply) => {
     const { id } = req.params as { id: string };
     const result = getSession(db, id);
-    if (!result) return reply.code(404).send({ error: "not found" });
+    if (!result) return notFound(reply);
     return result;
   });
 
   app.get("/api/workflows/:run_id", async (req, reply) => {
     const { run_id } = req.params as { run_id: string };
     const result = getWorkflow(db, run_id);
-    if (!result) return reply.code(404).send({ error: "not found" });
+    if (!result) return notFound(reply);
     return result;
   });
 
@@ -249,8 +252,15 @@ export async function createApp(db: DB, opts: CreateAppOpts = {}): Promise<Fasti
 
   app.get("/api/skills/:name", async (req, reply) => {
     const { name } = req.params as { name: string };
-    const result = getSkill(db, decodeURIComponent(name));
-    if (!result) return reply.code(404).send({ error: "not found" });
+    let decoded: string;
+    try {
+      decoded = decodeURIComponent(name);
+    } catch {
+      // A malformed percent-escape (e.g. `%zz`) throws URIError — that's a bad request, not a 500.
+      return reply.code(400).send({ error: { code: "BAD_NAME", message: "invalid skill name encoding" } });
+    }
+    const result = getSkill(db, decoded);
+    if (!result) return notFound(reply);
     return result;
   });
 
@@ -272,9 +282,9 @@ export async function createApp(db: DB, opts: CreateAppOpts = {}): Promise<Fasti
 
   app.get("/api/file", async (req, reply) => {
     const q = req.query as Record<string, string>;
-    if (!q.path) return reply.code(400).send({ error: "missing path" });
+    if (!q.path) return reply.code(400).send({ error: { code: "MISSING_PATH", message: "missing path" } });
     const result = getFileTimeline(db, q.path, q.project || undefined);
-    if (!result) return reply.code(404).send({ error: "not found" });
+    if (!result) return notFound(reply);
     return result;
   });
 
@@ -284,7 +294,7 @@ export async function createApp(db: DB, opts: CreateAppOpts = {}): Promise<Fasti
     // `off` = explicit verbatim opt-out. Anything unrecognized falls back to the safe default.
     const level = parseRedactionLevel((req.query as { redact?: string }).redact);
     const out = renderSessionExport(db, id, level);
-    if (!out) return reply.code(404).send({ error: "not found" });
+    if (!out) return notFound(reply);
     reply
       .header("content-type", "text/markdown; charset=utf-8")
       .header("content-disposition", `attachment; filename="${out.filename}"`)
@@ -295,7 +305,7 @@ export async function createApp(db: DB, opts: CreateAppOpts = {}): Promise<Fasti
   if (opts.webDist && existsSync(opts.webDist)) {
     await app.register(fastifyStatic, { root: opts.webDist });
     app.setNotFoundHandler((req, reply) => {
-      if (req.url.startsWith("/api/")) return reply.code(404).send({ error: "not found" });
+      if (req.url.startsWith("/api/")) return notFound(reply);
       return reply.sendFile("index.html");
     });
   }

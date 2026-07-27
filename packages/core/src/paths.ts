@@ -47,7 +47,7 @@ export function findRepoRoot(from: string = moduleDir): string | null {
 }
 
 /** Per-user data directory used when not running from the repo (installed CLI). */
-export function userDataDir(): string {
+function userDataDir(): string {
   const home = homedir();
   if (platform() === "win32") {
     return join(process.env.LOCALAPPDATA || join(home, "AppData", "Local"), "agent-lens");

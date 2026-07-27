@@ -7,6 +7,7 @@
  */
 import { costForUsage, rateForModel, errorKind } from "@agent-lens/core";
 import type { DB } from "./db.js";
+import { tableExists } from "./sql-util.js";
 
 export interface DashFilters {
   source?: string;
@@ -46,10 +47,6 @@ function pct(sorted: number[], p: number): number {
   if (sorted.length === 0) return 0;
   const rank = Math.ceil((p / 100) * sorted.length) - 1;
   return sorted[Math.min(Math.max(rank, 0), sorted.length - 1)]!;
-}
-
-function tableExists(db: DB, name: string): boolean {
-  return !!db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name = ?").get(name);
 }
 
 /** WHERE over `workflow_results` own columns (its own source_id / started_at, not the sessions alias). */

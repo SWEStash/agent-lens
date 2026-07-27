@@ -77,7 +77,7 @@ function maskEnvAssignments(text: string): string {
 }
 
 /** PII value patterns → placeholder label (home paths are handled separately, username-strip only). */
-export const PII_PATTERNS: Array<{ re: RegExp; label: string }> = [
+const PII_PATTERNS: Array<{ re: RegExp; label: string }> = [
   { re: /[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g, label: "EMAIL" },
   { re: /\b\d{1,3}(?:\.\d{1,3}){3}\b/g, label: "IP" },
 ];

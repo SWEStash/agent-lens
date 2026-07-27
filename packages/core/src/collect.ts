@@ -51,8 +51,6 @@ export interface CollectOptions {
   sources?: Source[];
   /** Real project paths to exclude. Default: loadExcludes(). */
   excludes?: string[];
-  /** Shared run timestamp for .versions/<ts>/. Default: now (local time). */
-  runTimestamp?: string;
   /** Progress sink. Default: console.log. */
   log?: (msg: string) => void;
 }
@@ -68,7 +66,7 @@ export interface CollectStats {
 }
 
 /** `YYYYMMDDTHHMMSSmmm` in local time (matches `date +%Y%m%dT%H%M%S%3N`). */
-export function collectTimestamp(d: Date = new Date()): string {
+function collectTimestamp(d: Date = new Date()): string {
   const p = (n: number, w = 2) => String(n).padStart(w, "0");
   return (
     `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}T` +
@@ -314,7 +312,7 @@ export function collectAll(opts: CollectOptions = {}): CollectStats {
   const archiveBase = opts.archiveBase ?? resolveArchiveDir();
   const sources = opts.sources ?? loadSources();
   const excludedDirs = (opts.excludes ?? loadExcludes()).map(encodeProjectPath);
-  const runTs = opts.runTimestamp ?? collectTimestamp();
+  const runTs = collectTimestamp();
 
   ensureDir(archiveBase);
   const stats: CollectStats = { sources: 0, scanned: 0, copied: 0, appended: 0, diverged: 0, compacted: 0, snapshots: 0 };

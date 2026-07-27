@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
-import { api, type Project, type SkillSummary } from "./api";
+import { api, type Project, type SkillSummary, type Source } from "./api";
 import { fmtDate } from "./format";
 import { FilterSelect } from "./FilterSelect";
 import { Pager } from "./Pager";
@@ -15,11 +15,6 @@ const SKILL_SORT: Record<SkillSortKey, (s: SkillSummary) => string | number | nu
   last_fired: (s) => s.last_fired, // ISO 8601 strings sort chronologically as text
 };
 
-interface Source {
-  id: string;
-  label: string;
-  session_count: number;
-}
 
 /**
  * Skills list — every fired skill (grouped by name), filterable like the sessions list (name search,

@@ -10,7 +10,7 @@
  */
 import { createHash } from "node:crypto";
 import { sessionToMarkdown, type MarkdownSession, type MarkdownEvent } from "./markdown.js";
-import { maskSecrets, findLeak, deriveHomeUsers, scrubUsernames, LEAK_PATTERNS, SHARE_LEAK, type LeakPattern } from "./secrets.js";
+import { maskSecrets, deriveHomeUsers, scrubUsernames, LEAK_PATTERNS, SHARE_LEAK, type LeakPattern } from "./secrets.js";
 
 export type RedactionLevel = "secrets" | "structure";
 export interface ExportOptions {
@@ -48,7 +48,7 @@ function scrub(s: string | null): string | null {
 }
 
 /** Apply the chosen redaction policy to the export data model, returning fresh copies. */
-export function redactSession(
+function redactSession(
   session: MarkdownSession,
   events: MarkdownEvent[],
   level: RedactionLevel,
@@ -123,5 +123,3 @@ export function exportMarkdown(session: MarkdownSession, events: MarkdownEvent[]
   const { md, caught } = sweep(rendered, scanSet);
   return { markdown: `${disclaimer(level)}\n\n${md}`, residualLeak: caught, level };
 }
-
-export { maskSecrets, findLeak };

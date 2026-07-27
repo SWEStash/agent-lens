@@ -1,7 +1,9 @@
 name: Release
 
 # Publishes the `agent-lens` CLI to npm via semantic-release on every push to main.
-# Conventional-commit history drives the version bump, changelog, git tag, and GitHub release.
+# Conventional-commit history drives the version bump, generated release notes, git tag, and GitHub
+# release. There is no @semantic-release/changelog or /git plugin, so nothing is committed back to the
+# repo — the release notes live on the GitHub release, not in a committed CHANGELOG.
 # The full test + tarball gate must pass before anything is published.
 on:
   push:
@@ -14,7 +16,7 @@ concurrency:
   cancel-in-progress: false
 
 permissions:
-  contents: write # semantic-release commits the changelog + version bump and pushes the tag
+  contents: write # lets semantic-release create the git tag + GitHub release (nothing is committed back)
   issues: write # comments on released issues/PRs
   pull-requests: write
   id-token: write # npm provenance / OIDC

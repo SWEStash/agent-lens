@@ -43,7 +43,7 @@ export interface ToolErrorClass {
 }
 
 /** Error types that represent a human/harness declining the tool use — NOT the agent's tool failing. */
-export const REJECTION_TYPES: ReadonlySet<ToolErrorType> = new Set<ToolErrorType>(["user-rejected", "guardrail-blocked"]);
+const REJECTION_TYPES: ReadonlySet<ToolErrorType> = new Set<ToolErrorType>(["user-rejected", "guardrail-blocked"]);
 
 /** The kind (failure vs rejection) implied by an error type — the single mapping used everywhere. */
 export function errorKind(type: ToolErrorType): ToolErrorKind {
@@ -51,20 +51,21 @@ export function errorKind(type: ToolErrorType): ToolErrorKind {
 }
 
 // Ordered most-specific → fallback; first match wins. Rejection patterns are checked first because a
-// rejection message can also mention a command that would otherwise look like a real failure.
-const PATTERNS: Array<{ re: RegExp; type: ToolErrorType; kind: ToolErrorKind }> = [
+// rejection message can also mention a command that would otherwise look like a real failure. `kind` is
+// derived from `type` via errorKind() — the single source of that mapping — not re-encoded per row.
+const PATTERNS: Array<{ re: RegExp; type: ToolErrorType }> = [
   // — Rejections / blocks: is_error, but the agent's tool didn't fail — a human or guardrail stopped it.
-  { re: /interrupted by user|tool use was rejected|does(?:n['’]| not)t want to proceed|\bCancelled:/i, type: "user-rejected", kind: "rejection" },
-  { re: /\bBlocked:/i, type: "guardrail-blocked", kind: "rejection" },
+  { re: /interrupted by user|tool use was rejected|does(?:n['’]| not)t want to proceed|\bCancelled:/i, type: "user-rejected" },
+  { re: /\bBlocked:/i, type: "guardrail-blocked" },
   // — Real tool failures.
-  { re: /String to replace not found/i, type: "string-not-found", kind: "failure" },
-  { re: /exceeds maximum allowed tokens/i, type: "token-limit", kind: "failure" },
+  { re: /String to replace not found/i, type: "string-not-found" },
+  { re: /exceeds maximum allowed tokens/i, type: "token-limit" },
   // A non-zero Bash exit code is a command failure regardless of what its stderr text mentions — check
   // it before the file-state fs-error patterns, since ENOENT/EISDIR also appear inside command stderr
   // (e.g. `Exit code 2 npm error ENOENT`). The file-state patterns then catch the Read/Write/Edit
   // tool_use_errors, which carry no exit code.
-  { re: /\bExit code\b/i, type: "command-failed", kind: "failure" },
-  { re: /has not been read yet|modified since (?:you |it was )?read|File (?:content )?does not exist|\bEISDIR\b|\bENOENT\b/i, type: "file-state", kind: "failure" },
+  { re: /\bExit code\b/i, type: "command-failed" },
+  { re: /has not been read yet|modified since (?:you |it was )?read|File (?:content )?does not exist|\bEISDIR\b|\bENOENT\b/i, type: "file-state" },
 ];
 
 /**
@@ -75,7 +76,7 @@ const PATTERNS: Array<{ re: RegExp; type: ToolErrorType; kind: ToolErrorKind }> 
 export function classifyToolError(resultSummary: string | null | undefined): ToolErrorClass {
   const s = resultSummary ?? "";
   for (const p of PATTERNS) {
-    if (p.re.test(s)) return { type: p.type, kind: p.kind };
+    if (p.re.test(s)) return { type: p.type, kind: errorKind(p.type) };
   }
-  return { type: "other", kind: "failure" };
+  return { type: "other", kind: errorKind("other") };
 }

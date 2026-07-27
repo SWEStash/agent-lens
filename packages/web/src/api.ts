@@ -94,6 +94,13 @@ export interface Project {
   session_count: number;
 }
 
+/** A labeled source (agent install) in the filter dropdowns. Shared by every view. */
+export interface Source {
+  id: string;
+  label: string;
+  session_count: number;
+}
+
 export interface ToolCall {
   id: string | null;
   tool_name: string;

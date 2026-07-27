@@ -27,7 +27,8 @@ export interface MarkdownEvent {
   toolCalls: MarkdownToolCall[];
 }
 
-function fence(s: string): string {
+/** Cap long prose/JSON at 2000 chars so an export stays readable — this truncates, it does not fence. */
+function truncate(s: string): string {
   return s.length > 2000 ? s.slice(0, 2000) + "\n… (truncated)" : s;
 }
 
@@ -54,14 +55,14 @@ export function sessionToMarkdown(s: MarkdownSession, events: MarkdownEvent[]): 
     if (e.thinking) {
       out.push(`### 🧠 thinking${ts}`);
       out.push("");
-      out.push(fence(e.thinking));
+      out.push(truncate(e.thinking));
       out.push("");
     }
     if (e.text) {
       const icon = who === "user" ? "👤" : who === "assistant" ? "🤖" : "⚙️";
       out.push(`### ${icon} ${who}${ts}`);
       out.push("");
-      out.push(fence(e.text));
+      out.push(truncate(e.text));
       out.push("");
     }
     for (const tc of e.toolCalls) {
@@ -74,7 +75,7 @@ export function sessionToMarkdown(s: MarkdownSession, events: MarkdownEvent[]): 
       out.push(`> 🔧 **${label}**${status}`);
       if (tc.input_json && tc.input_json !== "{}") {
         out.push("```json");
-        out.push(fence(tc.input_json));
+        out.push(truncate(tc.input_json));
         out.push("```");
       }
       out.push("");

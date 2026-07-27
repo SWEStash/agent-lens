@@ -82,9 +82,11 @@ describe("server API smoke", () => {
     expect(body.parent).toBeNull(); // main session, no spawning parent
   });
 
-  it("GET /api/sessions/:id → 404 for unknown id", async () => {
+  it("GET /api/sessions/:id → 404 for unknown id, with the structured error envelope", async () => {
     const r = await app.inject({ method: "GET", url: "/api/sessions/nope" });
     expect(r.statusCode).toBe(404);
+    // Every not-found shares { error: { code, message } } so clients read err.error.code uniformly.
+    expect(r.json().error.code).toBe("NOT_FOUND");
   });
 
   it("GET /api/sessions?q= → plain term matches", async () => {
