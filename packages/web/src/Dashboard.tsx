@@ -23,6 +23,9 @@ import { ErrorAlert, Loading } from "./AsyncBoundary";
 import { fmtCost, fmtTokens, fmtDuration, shortModel } from "./format";
 import { ChartCard, Kpi, useChartTokens } from "./charts/theme";
 import { loadPrefLocal, fetchPref, savePref } from "./prefs";
+import { AxisLink, SkillTooltip, datumField, type AxisTickProps, type ChartDatum, type SkillVersionRow } from "./dashboard/recharts-types";
+import { useExpanded } from "./dashboard/useExpanded";
+import { useDrilldown } from "./dashboard/useDrilldown";
 
 /** Dashboard security tile: OPEN critical/high counts (global; dismissed + muted excluded), linking to
  * the /security page. A muted, all-clear tile when nothing open remains. */
@@ -80,12 +83,6 @@ const NOT_LOADED: [DashOverview | null, DashTimeseries | null, DashBreakdowns | 
 
 const BAND_ORDER = ["trivial", "small", "medium", "large", "xl"];
 
-/** Default rows shown for a ranked bar list before the user expands it ("show all"). Keeps every card
- * at the standard height so grid rows stay even; the full list is one click away. */
-const TOP_N = 8;
-/** Approx px per horizontal bar row, used to size a card when it is expanded to show its full list. */
-const ROW_PX = 26;
-
 /** Every dashboard chart, in render order — the source of truth for the show/hide customizer. Ids are
  * stable keys; the persisted pref stores the HIDDEN ids (so a chart added later defaults to visible). */
 const CHART_REGISTRY: Array<{ id: string; label: string }> = [
@@ -121,73 +118,6 @@ function ChartCustomizer({ hidden, onToggle }: { hidden: Set<string>; onToggle: 
   );
 }
 
-type SkillVersionRow = DashBreakdowns["skill_versions"][number];
-
-/* Recharts hands its render-prop callbacks (tooltip `content`, axis `tick`, bar/legend `onClick`)
- * shapes its own exported types don't usefully narrow, which is how `any` had spread through this
- * file — SLOP-047. Declared here instead are the shapes the dashboard actually reads. The inline
- * `formatter` props keep their annotations narrow for the same reason; note every field a formatter
- * reads off `payload` must stay OPTIONAL, or the function is no longer assignable to Recharts'
- * `Formatter` and the chart stops compiling. */
-
-/** A charted row, as Recharts hands it back — either the datum itself or wrapped in `payload`. */
-type ChartDatum = Record<string, unknown> & { payload?: Record<string, unknown> };
-
-/** What a `content={<X />}` tooltip receives. */
-interface TooltipProps {
-  active?: boolean;
-  payload?: Array<{ payload?: Record<string, unknown> }>;
-}
-
-/** What an axis `tick` render prop receives. */
-interface AxisTickProps {
-  x?: number;
-  y?: number;
-  payload?: { value?: string };
-}
-
-/** Read a string field off a clicked datum, wherever Recharts put it. */
-function datumField(d: ChartDatum | undefined, field: string): string | null {
-  const v = d?.payload?.[field] ?? d?.[field];
-  return typeof v === "string" && v !== "" ? v : null;
-}
-
-/** Read-only hover for the grouped skill bar: the skill's total + each version's firing count.
- * (Recharts tooltips aren't interactive, so the per-version links live on the skill page; click the
- * bar to go there.) */
-function SkillTooltip({ active, payload, versionsByName }: TooltipProps & { versionsByName: Map<string, SkillVersionRow[]> }) {
-  const { C, tooltipStyle } = useChartTokens();
-  if (!active || !payload?.length) return null;
-  const name = String(payload[0]?.payload?.name ?? "");
-  const total = Number(payload[0]?.payload?.n ?? 0);
-  const versions = versionsByName.get(name) ?? [];
-  return (
-    <div style={{ ...tooltipStyle.contentStyle, padding: "8px 10px", maxWidth: 280 }}>
-      <div style={{ color: C.text, fontWeight: 600, marginBottom: 4 }}>{name}</div>
-      <div style={{ color: C.muted, marginBottom: versions.length ? 6 : 0 }}>{total} firing{total === 1 ? "" : "s"} total</div>
-      {versions.map((v) => (
-        <div key={v.version_id} style={{ color: C.text, display: "flex", justifyContent: "space-between", gap: 12 }}>
-          <span style={{ color: C.muted }}>{v.version_id.slice(0, 8)}</span>
-          <span>{v.n}</span>
-        </div>
-      ))}
-      {versions.length > 0 && <div style={{ color: C.muted, marginTop: 6, fontSize: 11 }}>click to open skill →</div>}
-    </div>
-  );
-}
-
-/** A clickable category-axis label for drill-down bar charts, so a bar too short to click is still
- * reachable via its label. Renders the tick text with a pointer cursor; clicking calls `onSelect` with
- * the label value. Styled via `.axis-link` (muted → accent + underline on hover). */
-function AxisLink({ x, y, payload, onSelect, title }: AxisTickProps & { onSelect: (value: string) => void; title?: string }) {
-  return (
-    <text x={x} y={y} dy={4} textAnchor="end" className="axis-link" fontSize={11} onClick={() => payload?.value && onSelect(payload.value)}>
-      {title && <title>{title}</title>}
-      {payload?.value}
-    </text>
-  );
-}
-
 export default function Dashboard() {
   const { C, TOKEN_COLORS, PALETTE, axisProps, gridProps, tooltipStyle } = useChartTokens();
   const { get, set: setParam, pick } = useQueryState();
@@ -195,15 +125,8 @@ export default function Dashboard() {
   const sources = useLookup<Source[]>("/sources", []);
   // Security summary is global (not source/date filtered), so fetch it once on mount like sources.
   const security = useLookup<SecuritySummary | null>("/security/summary", null);
-  // Which ranked bar cards are expanded to their full list (see TOP_N). Ephemeral view state.
-  const [expanded, setExpanded] = useState<Set<string>>(new Set());
-  const toggleExpand = (id: string) =>
-    setExpanded((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
+  const { topN, expandHeight, expandBtn } = useExpanded();
+  const { drillFilter, drillTo } = useDrilldown();
   // Hidden chart ids (persisted). Paint from localStorage, then reconcile with the server pref.
   const [hiddenCharts, setHiddenCharts] = useState<Set<string>>(() => new Set(loadPrefLocal<string[]>(CHARTS_PREF_KEY, [])));
   useEffect(() => {
@@ -268,28 +191,6 @@ export default function Dashboard() {
     arr.push(v);
     versionsByName.set(v.name, arr);
   }
-
-  // Ranked bar lists show a top-N by default (even card heights) and expand on demand. `topN` slices,
-  // `expandBtn` renders the header toggle, and `expandHeight` grows just that card while expanded.
-  const topN = <T,>(arr: T[], id: string): T[] => (expanded.has(id) ? arr : arr.slice(0, TOP_N));
-  const expandHeight = (id: string, total: number, rowPx = ROW_PX): number | undefined =>
-    expanded.has(id) ? Math.max(240, total * rowPx) : undefined;
-  const expandBtn = (id: string, total: number) => {
-    if (total <= TOP_N) return undefined;
-    return (
-      <button type="button" className="link-btn" onClick={() => toggleExpand(id)}>
-        {expanded.has(id) ? `show top ${TOP_N}` : `show all (${total})`}
-      </button>
-    );
-  };
-  // Open the Sessions list (the index route "/") filtered to a slice, reusing the Sessions view's URL
-  // filters (`error_type`, `model`, …). `sessionsFilterUrl` builds the link; `drillTo` is the
-  // bar/label click handler; `field` is the datum field to read the value from.
-  const sessionsFilterUrl = (param: string, value: string) => `/?${param}=${encodeURIComponent(value)}`;
-  const drillFilter = (param: string, value: string | null | undefined) => {
-    if (value != null && value !== "") navigate(sessionsFilterUrl(param, value));
-  };
-  const drillTo = (param: string, field: string) => (datum: ChartDatum) => drillFilter(param, datumField(datum, field));
 
   return (
     <div>
