@@ -1,45 +1,19 @@
 /**
- * Server smoke tests — build the Fastify app via createApp() over an in-memory DB seeded with a
- * minimal-but-valid graph, and exercise the read-only API with app.inject() (no socket bound).
+ * Server API over an in-memory DB, exercised through app.inject() (no socket bound).
+ *
+ * Covers the read paths the SPA depends on — sessions list/detail, search, sources, health — plus the
+ * query-parameter boundaries, which are the parts a client can actually attack with garbage. The sort
+ * ALLOWLIST itself is pinned in sql-util.test.ts; here we only assert that a bad value is refused
+ * rather than reaching SQLite. Workflow fan-out lives in workflows.test.ts, prefs in prefs.test.ts.
  */
 import { describe, it, expect, beforeAll } from "vitest";
-import Database from "better-sqlite3";
-import { SCHEMA_SQL, packRaw } from "@agent-lens/core";
-import { createApp } from "../dist/app.js";
+import { packRaw } from "@agent-lens/core";
 import { extractParts } from "../dist/db.js";
+import { addEvent, addSession, addSource, addTool, addTurn, appFor, freshDb, seedBasic } from "./helpers/seed";
 
-function seed(): Database.Database {
-  const db = new Database(":memory:");
-  db.pragma("foreign_keys = ON");
-  db.exec(SCHEMA_SQL);
-  db.exec(`
-    INSERT INTO agents (id, name, kind) VALUES ('claude-code', 'Claude Code CLI', 'cli');
-    INSERT INTO sources (id, label, agent_id, config_dir) VALUES ('test', 'test', 'claude-code', NULL);
-    INSERT INTO projects (id, agent_id, path, encoded_dir, first_seen, last_seen)
-      VALUES ('proj1', 'claude-code', '/tmp/proj', '-tmp-proj', '2026-01-01T00:00:00Z', '2026-01-01T00:10:00Z');
-    INSERT INTO sessions (id, agent_id, source_id, project_id, ai_title, is_sidechain, started_at, ended_at, duration_ms, event_count, turn_count)
-      VALUES ('sess1', 'claude-code', 'test', 'proj1', 'Demo session', 0, '2026-01-01T00:00:00Z', '2026-01-01T00:05:00Z', 300000, 2, 1);
-    INSERT INTO turns (id, session_id, seq, user_event_uuid, prompt_preview, model, started_at, ended_at, duration_ms)
-      VALUES ('sess1:0', 'sess1', 0, 'e1', 'hello world', 'claude-opus-4-8', '2026-01-01T00:00:00Z', '2026-01-01T00:05:00Z', 300000);
-    INSERT INTO events (uuid, session_id, turn_id, seq, type, role, timestamp, model, is_sidechain, is_meta, text, raw_json)
-      VALUES ('e1', 'sess1', 'sess1:0', 0, 'user', 'user', '2026-01-01T00:00:00Z', NULL, 0, 0, 'hello world',
-              '{"message":{"content":"hello world"}}');
-    INSERT INTO events (uuid, session_id, turn_id, seq, type, role, timestamp, model, is_sidechain, is_meta, text, raw_json)
-      VALUES ('e2', 'sess1', 'sess1:0', 1, 'assistant', 'assistant', '2026-01-01T00:05:00Z', 'claude-opus-4-8', 0, 0, 'hi',
-              '{"message":{"content":[{"type":"text","text":"hi"}]}}');
-    INSERT INTO token_usage (event_uuid, session_id, turn_id, model, input_tokens, output_tokens, cache_creation_input_tokens, cache_read_input_tokens)
-      VALUES ('e2', 'sess1', 'sess1:0', 'claude-opus-4-8', 100, 50, 0, 0);
-    INSERT INTO tool_calls (id, event_uuid, session_id, turn_id, tool_name, skill_name)
-      VALUES ('tc1', 'e2', 'sess1', 'sess1:0', 'Skill', 'test-suite-design');
-  `);
-  return db;
-}
-
-let app: Awaited<ReturnType<typeof createApp>>;
-
+let app: Awaited<ReturnType<typeof appFor>>;
 beforeAll(async () => {
-  app = await createApp(seed());
-  await app.ready();
+  app = await appFor(seedBasic());
 });
 
 describe("server API smoke", () => {
@@ -54,11 +28,7 @@ describe("server API smoke", () => {
   });
 
   it("POST /api/refresh → blocks a cross-site Origin (CSRF guard) before doing any work", async () => {
-    const r = await app.inject({
-      method: "POST",
-      url: "/api/refresh",
-      headers: { origin: "https://evil.example" },
-    });
+    const r = await app.inject({ method: "POST", url: "/api/refresh", headers: { origin: "https://evil.example" } });
     expect(r.statusCode).toBe(403);
     expect(r.json().error.code).toBe("FORBIDDEN_ORIGIN");
   });
@@ -68,8 +38,7 @@ describe("server API smoke", () => {
     expect(r.statusCode).toBe(200);
     const body = r.json();
     expect(body.total).toBe(1);
-    expect(body.sessions[0].id).toBe("sess1");
-    expect(body.sessions[0].title).toBe("Demo session");
+    expect(body.sessions[0]).toMatchObject({ id: "sess1", title: "Demo session" });
   });
 
   it("GET /api/sessions/:id → transcript detail", async () => {
@@ -77,8 +46,8 @@ describe("server API smoke", () => {
     expect(r.statusCode).toBe(200);
     const body = r.json();
     expect(body.session.id).toBe("sess1");
-    expect(body.turns.length).toBe(1);
-    expect(body.events.length).toBe(2);
+    expect(body.turns).toHaveLength(1);
+    expect(body.events).toHaveLength(2);
     expect(body.parent).toBeNull(); // main session, no spawning parent
   });
 
@@ -89,218 +58,182 @@ describe("server API smoke", () => {
     expect(r.json().error.code).toBe("NOT_FOUND");
   });
 
-  it("GET /api/sessions?q= → plain term matches", async () => {
-    const r = await app.inject({ method: "GET", url: "/api/sessions?q=hello" });
-    expect(r.statusCode).toBe(200);
-    expect(r.json().sessions[0].id).toBe("sess1");
-  });
-
-  it("GET /api/sessions?q=<hyphenated> → 200, input is literal (regression: was SQLITE_ERROR)", async () => {
-    // A hyphen/colon was parsed as FTS5 query syntax → `no such column`. Now quoted as a phrase, so
-    // "hello-world" matches the adjacent tokens "hello world".
-    const r = await app.inject({ method: "GET", url: "/api/sessions?q=" + encodeURIComponent("hello-world") });
-    expect(r.statusCode).toBe(200);
-    expect(r.json().sessions[0].id).toBe("sess1");
-  });
-
-  it("GET /api/sessions?q=<colon/operators> → 200, no FTS syntax error", async () => {
-    for (const q of ["foo:bar", "swe-workflow", "a OR b", "-x"]) {
-      const r = await app.inject({ method: "GET", url: "/api/sessions?q=" + encodeURIComponent(q) });
-      expect(r.statusCode).toBe(200); // literal terms; no match, but never a 500
-    }
-  });
-
-  it("GET /api/sessions?q=<session name> → matches slug/ai_title, not just transcript text", async () => {
-    // "Demo" is the ai_title, and appears in NO event text (events say "hello world"/"hi"), so this
-    // only passes because search now also matches the session's own name.
-    const r = await app.inject({ method: "GET", url: "/api/sessions?q=Demo" });
-    expect(r.statusCode).toBe(200);
-    expect(r.json().sessions.map((s: any) => s.id)).toContain("sess1");
-  });
-
-  it("GET /api/sessions?q=<project name> → matches the project path", async () => {
-    // "proj" is only in the project path (/tmp/proj), never in the transcript.
-    const r = await app.inject({ method: "GET", url: "/api/sessions?q=proj" });
-    expect(r.statusCode).toBe(200);
-    expect(r.json().sessions.map((s: any) => s.id)).toContain("sess1");
-  });
-
   it("GET /api/dashboard/overview → aggregates", async () => {
     const r = await app.inject({ method: "GET", url: "/api/dashboard/overview" });
     expect(r.statusCode).toBe(200);
-    const body = r.json();
-    expect(body.sessions).toBe(1);
-    expect(body.total_tokens).toBe(150);
+    expect(r.json()).toMatchObject({ sessions: 1, total_tokens: 150 });
   });
 
   it("GET /api/dashboard/breakdowns → includes skills", async () => {
     const r = await app.inject({ method: "GET", url: "/api/dashboard/breakdowns" });
     expect(r.statusCode).toBe(200);
-    const body = r.json();
-    expect(body.skills.some((s: any) => s.name === "test-suite-design")).toBe(true);
+    expect(r.json().skills.some((s: { name: string }) => s.name === "test-suite-design")).toBe(true);
   });
 });
 
-// Session detail groups workflow fan-out by run: each Workflow tool_call carries a run id + name and
-// sits on a turn, and the spawned agents (sessions.workflow_run_id) attribute to it — so the UI can
-// show "🔀 <name> · N agents · turn X" instead of one flat, unattributed list.
-describe("session detail exposes workflow run grouping", () => {
-  it("GET /api/sessions/:id → workflow_runs + children carry workflow_run_id", async () => {
-    const db = new Database(":memory:");
-    db.pragma("foreign_keys = ON");
-    db.exec(SCHEMA_SQL);
-    db.exec(`
-      INSERT INTO agents (id, name, kind) VALUES ('claude-code', 'Claude Code CLI', 'cli');
-      INSERT INTO sources (id, label, agent_id, config_dir) VALUES ('test', 'test', 'claude-code', NULL);
-      INSERT INTO sessions (id, agent_id, source_id, is_sidechain, event_count, turn_count) VALUES
-        ('orch', 'claude-code', 'test', 0, 2, 1);
-      INSERT INTO turns (id, session_id, seq, user_event_uuid, prompt_preview, started_at, ended_at, duration_ms)
-        VALUES ('orch:0', 'orch', 0, 'oe1', 'run it', '2026-01-01T00:00:00Z', '2026-01-01T00:01:00Z', 60000);
-      INSERT INTO events (uuid, session_id, turn_id, seq, type, role, timestamp, is_sidechain, is_meta, text, raw_json)
-        VALUES ('oe1', 'orch', 'orch:0', 0, 'user', 'user', '2026-01-01T00:00:00Z', 0, 0, 'run it', '{"message":{"content":"run it"}}'),
-               ('oe2', 'orch', 'orch:0', 1, 'assistant', 'assistant', '2026-01-01T00:00:30Z', 0, 0, NULL, '{"message":{"content":[]}}');
-      INSERT INTO tool_calls (id, event_uuid, session_id, turn_id, tool_name, workflow_run_id, workflow_name)
-        VALUES ('tu_wf', 'oe2', 'orch', 'orch:0', 'Workflow', 'wf_run1', 'my-flow');
-      INSERT INTO sessions (id, agent_id, source_id, is_sidechain, workflow_run_id, parent_session_id, parent_turn_id, event_count, turn_count) VALUES
-        ('agent-x', 'claude-code', 'test', 1, 'wf_run1', 'orch', 'orch:0', 1, 1),
-        ('agent-y', 'claude-code', 'test', 1, 'wf_run1', 'orch', 'orch:0', 1, 1);
-    `);
-    const app2 = await createApp(db);
-    await app2.ready();
-    const body = (await app2.inject({ method: "GET", url: "/api/sessions/orch" })).json();
-    expect(body.workflow_runs).toHaveLength(1);
-    expect(body.workflow_runs[0]).toMatchObject({ run_id: "wf_run1", name: "my-flow", turn_seq: 0, agent_count: 2 });
-    expect(body.children).toHaveLength(2);
-    expect(body.children.every((c: any) => c.workflow_run_id === "wf_run1")).toBe(true);
-    // The launching Workflow tool_call exposes its run for the transcript block.
-    const wfTool = body.events.flatMap((e: any) => e.toolCalls).find((t: any) => t.tool_name === "Workflow");
-    expect(wfTool.workflow_name).toBe("my-flow");
-    expect(wfTool.workflow_agent_count).toBe(2);
-    await app2.close();
+describe("session search", () => {
+  it("matches a plain term in the transcript text", async () => {
+    const r = await app.inject({ method: "GET", url: "/api/sessions?q=hello" });
+    expect(r.statusCode).toBe(200);
+    expect(r.json().sessions[0].id).toBe("sess1");
+  });
+
+  it("treats FTS5 operators as literal input rather than query syntax", async () => {
+    // A hyphen/colon used to be parsed as FTS5 syntax → `no such column` → 500. Input is quoted as a
+    // phrase now, so "hello-world" matches the adjacent tokens "hello world".
+    const hyphenated = await app.inject({ method: "GET", url: "/api/sessions?q=" + encodeURIComponent("hello-world") });
+    expect(hyphenated.statusCode).toBe(200);
+    expect(hyphenated.json().sessions[0].id).toBe("sess1");
+
+    for (const q of ["foo:bar", "swe-workflow", "a OR b", "-x", '"', "*", "NEAR(a b)", "^x"]) {
+      const r = await app.inject({ method: "GET", url: "/api/sessions?q=" + encodeURIComponent(q) });
+      expect(r.statusCode, `q=${q}`).toBe(200); // literal terms; no match, but never a 500
+    }
+  });
+
+  it("matches the session's own name, not just transcript text", async () => {
+    // "Demo" is the ai_title and appears in NO event text (events say "hello world"/"hi").
+    const r = await app.inject({ method: "GET", url: "/api/sessions?q=Demo" });
+    expect(r.statusCode).toBe(200);
+    expect(r.json().sessions.map((s: { id: string }) => s.id)).toContain("sess1");
+  });
+
+  it("matches the project path", async () => {
+    // "proj" is only in the project path (/tmp/proj), never in the transcript.
+    const r = await app.inject({ method: "GET", url: "/api/sessions?q=proj" });
+    expect(r.statusCode).toBe(200);
+    expect(r.json().sessions.map((s: { id: string }) => s.id)).toContain("sess1");
+  });
+
+  it("returns an empty page for a term nothing matches", async () => {
+    const r = await app.inject({ method: "GET", url: "/api/sessions?q=zzzznotpresent" });
+    expect(r.statusCode).toBe(200);
+    expect(r.json()).toMatchObject({ total: 0, sessions: [] });
   });
 });
 
-// The workflow detail endpoint (/api/workflows/:run_id) backs the workflow detail page: it resolves
-// the launching Workflow tool_call (name, parent crumb) and the agents fanned out under the run id,
-// with roll-up stats.
-describe("workflow detail endpoint", () => {
-  async function appWithRun() {
-    const db = new Database(":memory:");
-    db.pragma("foreign_keys = ON");
-    db.exec(SCHEMA_SQL);
-    db.exec(`
-      INSERT INTO agents (id, name, kind) VALUES ('claude-code', 'Claude Code CLI', 'cli');
-      INSERT INTO sources (id, label, agent_id, config_dir) VALUES ('test', 'test', 'claude-code', NULL);
-      INSERT INTO sessions (id, agent_id, source_id, ai_title, is_sidechain, event_count, turn_count) VALUES
-        ('orch', 'claude-code', 'test', 'Orchestrator', 0, 2, 1);
-      INSERT INTO turns (id, session_id, seq, user_event_uuid, prompt_preview, started_at, ended_at, duration_ms)
-        VALUES ('orch:0', 'orch', 0, 'oe1', 'run it', '2026-01-01T00:00:00Z', '2026-01-01T00:01:00Z', 60000);
-      INSERT INTO events (uuid, session_id, turn_id, seq, type, role, timestamp, is_sidechain, is_meta, text, raw_json)
-        VALUES ('oe2', 'orch', 'orch:0', 1, 'assistant', 'assistant', '2026-01-01T00:00:30Z', 0, 0, NULL, '{"message":{"content":[]}}');
-      INSERT INTO events (uuid, session_id, turn_id, seq, type, role, timestamp, is_sidechain, is_meta, text, raw_json)
-        VALUES ('oe3', 'orch', 'orch:0', 2, 'user', 'user', '2026-01-01T00:02:00Z', 0, 0,
-                '<task-notification><tool-use-id>tu_wf</tool-use-id><status>completed</status><summary>flow done</summary><result>{"ok":true}</result><failures>none</failures></task-notification>',
-                '{"message":{"content":"<task-notification><tool-use-id>tu_wf</tool-use-id><status>completed</status><summary>flow done</summary><result>{\\"ok\\":true}</result><failures>none</failures></task-notification>"}}');
-      INSERT INTO tool_calls (id, event_uuid, session_id, turn_id, tool_name, workflow_run_id, workflow_name, status, result_summary, input_json)
-        VALUES ('tu_wf', 'oe2', 'orch', 'orch:0', 'Workflow', 'wf_run1', 'my-flow', 'async_launched', 'all done', '{"description":"do the thing","args":"[{\\"skill\\":\\"a\\"}]"}');
-      INSERT INTO sessions (id, agent_id, source_id, ai_title, is_sidechain, workflow_run_id, parent_session_id, parent_turn_id, started_at, ended_at, event_count, turn_count) VALUES
-        ('agent-x', 'claude-code', 'test', 'Agent X', 1, 'wf_run1', 'orch', 'orch:0', '2026-01-01T00:00:40Z', '2026-01-01T00:00:50Z', 1, 1),
-        ('agent-y', 'claude-code', 'test', 'Agent Y', 1, 'wf_run1', 'orch', 'orch:0', '2026-01-01T00:00:45Z', '2026-01-01T00:01:10Z', 1, 1);
-    `);
-    const app2 = await createApp(db);
-    await app2.ready();
-    return app2;
-  }
+// Query params arrive from a URL, so every one of these is reachable by hand-editing the address bar.
+// None may 500, and none may reach SQLite as a negative/unbounded LIMIT or OFFSET.
+describe("query parameter boundaries", () => {
+  const listOk = async (qs: string) => {
+    const r = await app.inject({ method: "GET", url: "/api/sessions?" + qs });
+    expect(r.statusCode, qs).toBe(200);
+    const body = r.json();
+    expect(Array.isArray(body.sessions), qs).toBe(true);
+    return body;
+  };
 
-  it("GET /api/workflows/:run_id → name, parent crumb, agents + stats", async () => {
-    const app2 = await appWithRun();
-    const r = await app2.inject({ method: "GET", url: "/api/workflows/wf_run1" });
+  it("ignores a non-numeric or negative offset", async () => {
+    for (const qs of ["offset=-1", "offset=-99999", "offset=abc", "offset=", "offset=1e9"]) {
+      const body = await listOk(qs);
+      expect(body.sessions.length, qs).toBeLessThanOrEqual(1);
+    }
+  });
+
+  it("caps an oversized limit and defaults a zero / non-numeric one", async () => {
+    for (const qs of ["limit=0", "limit=999999", "limit=abc", "limit="]) {
+      const body = await listOk(qs);
+      expect(body.sessions.length, qs).toBeLessThanOrEqual(1);
+    }
+  });
+
+  /* CHARACTERIZATION — these two pin what the code does TODAY, not what it should do. Both are real
+   * defects found while adding this coverage (SLOP-042); they are fixed in the following commit, where
+   * these expectations flip. Kept as executable documentation in between so the refactor commit stays
+   * behaviour-preserving.
+   *
+   * `limit` and `offset` are parsed as `Math.min(Number(q.limit) || 50, 200)` / `Number(q.offset) || 0`
+   * (app.ts). Neither guards the lower bound or integrality. */
+  it("CHARACTERIZATION: a negative limit bypasses the page cap entirely", async () => {
+    const db = freshDb();
+    for (let i = 0; i < 250; i++) addSession(db, `s${i}`);
+    const local = await appFor(db);
+
+    // Math.min(-1, 200) = -1, and SQLite reads a negative LIMIT as "no limit" — so the 200-row cap is
+    // gone and the whole table comes back in one response.
+    const all = await local.inject({ method: "GET", url: "/api/sessions?limit=-1" });
+    expect(all.json().sessions).toHaveLength(250);
+    // For contrast, the cap does hold against an oversized positive limit.
+    expect((await local.inject({ method: "GET", url: "/api/sessions?limit=999999" })).json().sessions).toHaveLength(200);
+    await local.close();
+  });
+
+  it("CHARACTERIZATION: a non-integer offset 500s instead of being coerced", async () => {
+    // Number("1.5") is truthy and non-integer, so it reaches better-sqlite3, which refuses to bind it.
+    const r = await app.inject({ method: "GET", url: "/api/sessions?offset=1.5" });
+    expect(r.statusCode).toBe(500);
+  });
+
+  it("does not 500 on an unknown sort key or direction", async () => {
+    // The allowlist itself is pinned in sql-util.test.ts — this only asserts nothing reaches SQLite.
+    for (const qs of ["sort=bogus", "sort=id;DROP TABLE sessions", "dir=sideways", "sort=&dir=", "sort=started_at&dir=ASC--"]) {
+      const r = await app.inject({ method: "GET", url: "/api/sessions?" + qs });
+      expect([200, 400], qs).toContain(r.statusCode);
+    }
+    // The table is still there.
+    expect((await app.inject({ method: "GET", url: "/api/sessions" })).json().total).toBe(1);
+  });
+
+  it("falls back to the safe redaction level for a malformed ?redact", async () => {
+    const base = await app.inject({ method: "GET", url: "/api/sessions/sess1/export.md" });
+    expect(base.statusCode).toBe(200);
+    for (const q of ["?redact=garbage", "?redact=", "?redact=OFF", "?redact=structure%00"]) {
+      const r = await app.inject({ method: "GET", url: "/api/sessions/sess1/export.md" + q });
+      expect(r.statusCode, q).toBe(200);
+      // Anything unrecognized must land on the default, i.e. match the no-param response exactly.
+      expect(r.body, q).toBe(base.body);
+    }
+  });
+
+  it("serves the two recognized redaction levels distinctly", async () => {
+    const def = await app.inject({ method: "GET", url: "/api/sessions/sess1/export.md" });
+    const off = await app.inject({ method: "GET", url: "/api/sessions/sess1/export.md?redact=off" });
+    const structure = await app.inject({ method: "GET", url: "/api/sessions/sess1/export.md?redact=structure" });
+    for (const r of [off, structure]) expect(r.statusCode).toBe(200);
+    // `off` is the explicit verbatim opt-out, so it must NOT equal the aggressive scrub.
+    expect(structure.body).not.toBe(off.body);
+    expect(def.body).not.toBe(structure.body);
+  });
+
+  it("rejects /api/file with no path instead of querying for everything", async () => {
+    const r = await app.inject({ method: "GET", url: "/api/file" });
+    expect(r.statusCode).toBe(400);
+    expect(r.json().error.code).toBe("MISSING_PATH");
+  });
+});
+
+// Stored JSON is written by the ingester, but a partial write or an older/newer schema can leave a
+// row the read path still has to survive — degrade the one row, never fail the whole request.
+describe("malformed stored JSON degrades instead of 500ing", () => {
+  it("serves a session whose tool input_json and raw_json are not valid JSON", async () => {
+    const db = freshDb();
+    addSession(db, "bad", { events: 2, turns: 1 });
+    const turn = addTurn(db, "bad", 0, { userEvent: "b1" });
+    addEvent(db, "bad", "b1", { turn, seq: 0, role: "user", text: "hi", raw: "{not json at all" });
+    addEvent(db, "bad", "b2", { turn, seq: 1, role: "assistant", raw: '{"message":{"content":[' });
+    addTool(db, "bad", "b2", "tc_bad", "Bash", { turn, inputRaw: "{oops" });
+    const local = await appFor(db);
+
+    const r = await local.inject({ method: "GET", url: "/api/sessions/bad" });
     expect(r.statusCode).toBe(200);
     const body = r.json();
-    expect(body).toMatchObject({ run_id: "wf_run1", name: "my-flow", status: "async_launched", result_summary: "all done" });
-    // The launch payload is exposed so the page can render it (LaunchView) for async runs.
-    expect(body.input_json).toContain('"description":"do the thing"');
-    expect(body.parent).toMatchObject({ id: "orch", title: "Orchestrator", turn_seq: 0 });
-    expect(body.agents.map((a: any) => a.id).sort()).toEqual(["agent-x", "agent-y"]);
-    expect(body.stats.agent_count).toBe(2);
-    // Wall-clock span = earliest start (00:00:40) → latest end (00:01:10) = 30s.
-    expect(body.stats.duration_ms).toBe(30000);
-    // The completion comes from the <task-notification>, not the launch ack (result_summary).
-    expect(body.completion).toMatchObject({ status: "completed", summary: "flow done", result: '{"ok":true}', failures: "none" });
-    await app2.close();
+    expect(body.session.id).toBe("bad");
+    expect(body.events).toHaveLength(2);
+    // The tool call still lists, even though its input could not be parsed.
+    expect(body.events.flatMap((e: { toolCalls: unknown[] }) => e.toolCalls)).toHaveLength(1);
+    await local.close();
   });
 
-  it("GET /api/workflows/:run_id → 404 for unknown run", async () => {
-    const app2 = await appWithRun();
-    const r = await app2.inject({ method: "GET", url: "/api/workflows/nope" });
-    expect(r.statusCode).toBe(404);
-    await app2.close();
-  });
+  it("lists and searches a session with malformed rows without erroring", async () => {
+    const db = freshDb();
+    addSession(db, "bad", { title: "Broken" });
+    const turn = addTurn(db, "bad", 0, { userEvent: "b1" });
+    addEvent(db, "bad", "b1", { turn, role: "user", text: "searchable", raw: "<<<not json>>>" });
+    const local = await appFor(db);
 
-  it("prefers the result sidecar (workflow_results) over the transcript notification", async () => {
-    // Seed a Workflow tool_call (async_launched, no completion notification) plus the ingested result
-    // sidecar for the same run; the sidecar must supply status + completion + the run roll-up.
-    const db = new Database(":memory:");
-    db.pragma("foreign_keys = ON");
-    db.exec(SCHEMA_SQL);
-    db.exec(`
-      INSERT INTO agents (id, name, kind) VALUES ('claude-code', 'Claude Code CLI', 'cli');
-      INSERT INTO sources (id, label, agent_id, config_dir) VALUES ('test', 'test', 'claude-code', NULL);
-      INSERT INTO sessions (id, agent_id, source_id, ai_title, is_sidechain, event_count, turn_count) VALUES ('orch', 'claude-code', 'test', 'Orchestrator', 0, 1, 1);
-      INSERT INTO turns (id, session_id, seq, user_event_uuid) VALUES ('orch:0', 'orch', 0, 'oe1');
-      INSERT INTO events (uuid, session_id, turn_id, seq, type, role, timestamp, is_sidechain, is_meta, raw_json)
-        VALUES ('oe2', 'orch', 'orch:0', 1, 'assistant', 'assistant', '2026-01-01T00:00:30Z', 0, 0, '{"message":{"content":[]}}');
-      INSERT INTO tool_calls (id, event_uuid, session_id, turn_id, tool_name, workflow_run_id, workflow_name, status)
-        VALUES ('tu_wf', 'oe2', 'orch', 'orch:0', 'Workflow', 'wf_side', 'my-flow', 'async_launched');
-      INSERT INTO workflow_results (run_id, source_id, session_id, task_id, workflow_name, status, summary, default_model, result_json, phases_json, logs_json, agent_count, total_tokens, total_tool_calls, duration_ms, started_at, ended_at, ingested_at)
-        VALUES ('wf_side', 'test', 'orch', 'tk1', 'my-flow', 'completed', 'evals done', 'claude-fable-5',
-                '{"total":{"green":5}}', '[{"title":"Generate"},{"title":"Judge"}]', '["a: GREEN 5/5"]', 12, 500, 24, 5000, '2026-01-01T00:00:00Z', '2026-01-01T00:00:05Z', 'now');
-    `);
-    const app3 = await createApp(db);
-    await app3.ready();
-    const r = await app3.inject({ method: "GET", url: "/api/workflows/wf_side" });
-    expect(r.statusCode).toBe(200);
-    const body = r.json();
-    expect(body.status).toBe("completed"); // sidecar status, not the async_launched tool_call status
-    expect(body.completion).toMatchObject({ status: "completed", summary: "evals done", result: '{"total":{"green":5}}' });
-    expect(body.run).toMatchObject({ default_model: "claude-fable-5", agent_count: 12, total_tool_calls: 24, duration_ms: 5000 });
-    expect(body.run.phases.map((p: any) => p.title)).toEqual(["Generate", "Judge"]);
-    expect(body.run.logs).toEqual(["a: GREEN 5/5"]);
-    await app3.close();
-  });
-
-  it("serves the workflowProgress timeline as run.progress (backs the phase graph)", async () => {
-    const db = new Database(":memory:");
-    db.pragma("foreign_keys = ON");
-    db.exec(SCHEMA_SQL);
-    const progress = JSON.stringify([
-      { type: "workflow_phase", index: 1, title: "Generate" },
-      { type: "workflow_agent", phaseIndex: 1, phaseTitle: "Generate", agentId: "a1", model: "claude-fable-5", state: "done" },
-      { type: "workflow_phase", index: 2, title: "Judge" },
-      { type: "workflow_agent", phaseIndex: 2, phaseTitle: "Judge", agentId: "a2", model: "claude-opus-4-8", state: "done" },
-    ]);
-    db.exec(`
-      INSERT INTO agents (id, name, kind) VALUES ('claude-code', 'Claude Code CLI', 'cli');
-      INSERT INTO sources (id, label, agent_id, config_dir) VALUES ('test', 'test', 'claude-code', NULL);
-      INSERT INTO sessions (id, agent_id, source_id, is_sidechain, event_count, turn_count) VALUES ('orch', 'claude-code', 'test', 0, 1, 1);
-      INSERT INTO turns (id, session_id, seq, user_event_uuid) VALUES ('orch:0', 'orch', 0, 'oe1');
-      INSERT INTO events (uuid, session_id, turn_id, seq, type, role, timestamp, is_sidechain, is_meta, raw_json)
-        VALUES ('oe2', 'orch', 'orch:0', 1, 'assistant', 'assistant', '2026-01-01T00:00:30Z', 0, 0, '{"message":{"content":[]}}');
-      INSERT INTO tool_calls (id, event_uuid, session_id, turn_id, tool_name, workflow_run_id, workflow_name, status)
-        VALUES ('tu_wf', 'oe2', 'orch', 'orch:0', 'Workflow', 'wf_prog', 'my-flow', 'async_launched');
-      INSERT INTO workflow_results (run_id, source_id, session_id, workflow_name, status, progress_json, ingested_at)
-        VALUES ('wf_prog', 'test', 'orch', 'my-flow', 'completed', '${progress.replace(/'/g, "''")}', 'now');
-    `);
-    const app4 = await createApp(db);
-    await app4.ready();
-    const body = (await app4.inject({ method: "GET", url: "/api/workflows/wf_prog" })).json();
-    expect(Array.isArray(body.run.progress)).toBe(true);
-    expect(body.run.progress).toHaveLength(4);
-    expect(body.run.progress.filter((e: any) => e.type === "workflow_agent").map((e: any) => e.model)).toEqual([
-      "claude-fable-5",
-      "claude-opus-4-8",
-    ]);
-    await app4.close();
+    expect((await local.inject({ method: "GET", url: "/api/sessions" })).statusCode).toBe(200);
+    expect((await local.inject({ method: "GET", url: "/api/sessions?q=searchable" })).statusCode).toBe(200);
+    await local.close();
   });
 });
 
@@ -308,186 +241,72 @@ describe("workflow detail endpoint", () => {
 // while still tolerating legacy plain rows written before the migration.
 describe("extractParts decodes stored raw_json (ADR-011)", () => {
   it("decompresses a gzip BLOB into text + thinking", () => {
-    const line = JSON.stringify({
-      message: { content: [{ type: "text", text: "hi" }, { type: "thinking", thinking: "hmm" }] },
-    });
+    const line = JSON.stringify({ message: { content: [{ type: "text", text: "hi" }, { type: "thinking", thinking: "hmm" }] } });
     const { text, thinking } = extractParts(packRaw(line));
     expect(text).toBe("hi");
     expect(thinking).toBe("hmm");
   });
 
   it("still reads a legacy plain-string raw_json", () => {
-    const { text } = extractParts('{"message":{"content":"plain"}}');
-    expect(text).toBe("plain");
+    expect(extractParts('{"message":{"content":"plain"}}').text).toBe("plain");
   });
 });
 
-// Subagent metadata (session_meta) enriches both fan-out views: a subagent's authoritative type +
-// human description + nesting depth, LEFT JOINed onto the children/agents projections.
-describe("session_meta enriches subagent + workflow-agent rows", () => {
+// Subagent metadata (session_meta) enriches the fan-out views: a subagent's authoritative type +
+// human description + nesting depth, LEFT JOINed onto the children projection. A subagent with no
+// meta row must still list, with nulls.
+describe("session_meta enriches subagent rows", () => {
   it("GET /api/sessions/:id → children carry agent_type/agent_description/spawn_depth", async () => {
-    const db = new Database(":memory:");
-    db.pragma("foreign_keys = ON");
-    db.exec(SCHEMA_SQL);
-    db.exec(`
-      INSERT INTO agents (id, name, kind) VALUES ('claude-code', 'Claude Code CLI', 'cli');
-      INSERT INTO sources (id, label, agent_id, config_dir) VALUES ('test', 'test', 'claude-code', NULL);
-      INSERT INTO sessions (id, agent_id, source_id, is_sidechain, event_count, turn_count) VALUES
-        ('orch', 'claude-code', 'test', 0, 1, 1);
-      INSERT INTO sessions (id, agent_id, source_id, is_sidechain, parent_session_id, event_count, turn_count) VALUES
-        ('agent-a', 'claude-code', 'test', 1, 'orch', 1, 1),
-        ('agent-b', 'claude-code', 'test', 1, 'orch', 1, 1);
-      -- meta present for agent-a (typed + described + nested), absent for agent-b (still lists).
-      INSERT INTO session_meta (session_id, source_id, agent_type, agent_description, spawn_depth, tool_use_id, ingested_at)
-        VALUES ('agent-a', 'test', 'Explore', 'Explore the ingest pipeline', 2, 'toolu_1', 'now');
-    `);
-    const app2 = await createApp(db);
-    await app2.ready();
-    const body = (await app2.inject({ method: "GET", url: "/api/sessions/orch" })).json();
-    const a = body.children.find((c: any) => c.id === "agent-a");
-    const b = body.children.find((c: any) => c.id === "agent-b");
-    expect(a).toMatchObject({ agent_type: "Explore", agent_description: "Explore the ingest pipeline", spawn_depth: 2 });
-    expect(b).toMatchObject({ agent_type: null, agent_description: null, spawn_depth: null });
-    await app2.close();
-  });
+    const db = freshDb();
+    addSession(db, "orch");
+    addSession(db, "agent-a", { sidechain: true, parent: "orch" });
+    addSession(db, "agent-b", { sidechain: true, parent: "orch" });
+    db.prepare(
+      `INSERT INTO session_meta (session_id, source_id, agent_type, agent_description, spawn_depth, tool_use_id, ingested_at)
+       VALUES ('agent-a', 'test', 'Explore', 'Explore the ingest pipeline', 2, 'toolu_1', 'now')`,
+    ).run();
+    const local = await appFor(db);
 
-  it("GET /api/workflows/:run_id → agents carry meta fields", async () => {
-    const db = new Database(":memory:");
-    db.pragma("foreign_keys = ON");
-    db.exec(SCHEMA_SQL);
-    db.exec(`
-      INSERT INTO agents (id, name, kind) VALUES ('claude-code', 'Claude Code CLI', 'cli');
-      INSERT INTO sources (id, label, agent_id, config_dir) VALUES ('test', 'test', 'claude-code', NULL);
-      INSERT INTO sessions (id, agent_id, source_id, ai_title, is_sidechain, event_count, turn_count) VALUES ('orch', 'claude-code', 'test', 'Orch', 0, 1, 1);
-      INSERT INTO turns (id, session_id, seq, user_event_uuid) VALUES ('orch:0', 'orch', 0, 'oe1');
-      INSERT INTO events (uuid, session_id, turn_id, seq, type, role, timestamp, is_sidechain, is_meta, raw_json)
-        VALUES ('oe2', 'orch', 'orch:0', 1, 'assistant', 'assistant', '2026-01-01T00:00:30Z', 0, 0, '{"message":{"content":[]}}');
-      INSERT INTO tool_calls (id, event_uuid, session_id, turn_id, tool_name, workflow_run_id, workflow_name, status)
-        VALUES ('tu_wf', 'oe2', 'orch', 'orch:0', 'Workflow', 'wf_run1', 'my-flow', 'async_launched');
-      INSERT INTO sessions (id, agent_id, source_id, is_sidechain, workflow_run_id, started_at, event_count, turn_count) VALUES
-        ('agent-x', 'claude-code', 'test', 1, 'wf_run1', '2026-01-01T00:00:40Z', 1, 1);
-      INSERT INTO session_meta (session_id, source_id, agent_type, agent_description, spawn_depth, tool_use_id, ingested_at)
-        VALUES ('agent-x', 'test', 'ai-evaluation', 'gen-red for ai-evaluation', NULL, 'toolu_2', 'now');
-    `);
-    const app2 = await createApp(db);
-    await app2.ready();
-    const body = (await app2.inject({ method: "GET", url: "/api/workflows/wf_run1" })).json();
-    expect(body.agents[0]).toMatchObject({ id: "agent-x", agent_type: "ai-evaluation", agent_description: "gen-red for ai-evaluation" });
-    await app2.close();
+    const body = (await local.inject({ method: "GET", url: "/api/sessions/orch" })).json();
+    const children: Array<{ id: string }> = body.children;
+    expect(children.find((c) => c.id === "agent-a")).toMatchObject({
+      agent_type: "Explore",
+      agent_description: "Explore the ingest pipeline",
+      spawn_depth: 2,
+    });
+    expect(children.find((c) => c.id === "agent-b")).toMatchObject({ agent_type: null, agent_description: null, spawn_depth: null });
+    await local.close();
   });
 });
 
-// Spilled tool outputs (tool_results): when a tool result_summary is the "Full output saved to:
-// …/tool-results/<name>.txt" marker, getSession attaches the un-truncated text so the UI can expand it.
+// Spilled tool outputs (tool_results): when a result_summary is the "Full output saved to: …" marker,
+// getSession attaches the un-truncated text so the UI can expand it. The contract is "the marker
+// triggers the lookup and the full text is attached" — not the specific byte count seeded here.
 describe("getSession attaches spilled full tool results", () => {
-  it("GET /api/sessions/:id → tool call with a truncation marker gets full_result", async () => {
-    const db = new Database(":memory:");
-    db.pragma("foreign_keys = ON");
-    db.exec(SCHEMA_SQL);
-    db.exec(`
-      INSERT INTO agents (id, name, kind) VALUES ('claude-code', 'Claude Code CLI', 'cli');
-      INSERT INTO sources (id, label, agent_id, config_dir) VALUES ('test', 'test', 'claude-code', NULL);
-      INSERT INTO sessions (id, agent_id, source_id, is_sidechain, event_count, turn_count) VALUES ('sess1', 'claude-code', 'test', 0, 1, 1);
-      INSERT INTO turns (id, session_id, seq, user_event_uuid) VALUES ('sess1:0', 'sess1', 0, 'e1');
-      INSERT INTO events (uuid, session_id, turn_id, seq, type, role, timestamp, is_sidechain, is_meta, raw_json)
-        VALUES ('e2', 'sess1', 'sess1:0', 1, 'assistant', 'assistant', '2026-01-01T00:00:30Z', 0, 0, '{"message":{"content":[]}}');
-      INSERT INTO tool_calls (id, event_uuid, session_id, turn_id, tool_name, result_summary) VALUES
-        ('tc_big', 'e2', 'sess1', 'sess1:0', 'Bash', 'Output too large (32.1KB). Full output saved to: /home/u/.claude/projects/-x/sess1/tool-results/bk7e5i18g.txt Preview (first 2KB): …'),
-        ('tc_small', 'e2', 'sess1', 'sess1:0', 'Bash', 'ok, small result');
-      INSERT INTO tool_results (session_id, name, path, bytes, text, ingested_at)
-        VALUES ('sess1', 'bk7e5i18g', '/archive/.../tool-results/bk7e5i18g.txt', 32900, 'THE FULL UNTRUNCATED OUTPUT', 'now');
-    `);
-    const app2 = await createApp(db);
-    await app2.ready();
-    const body = (await app2.inject({ method: "GET", url: "/api/sessions/sess1" })).json();
-    const tools = body.events.flatMap((e: any) => e.toolCalls);
-    const big = tools.find((t: any) => t.id === "tc_big");
-    const small = tools.find((t: any) => t.id === "tc_small");
-    expect(big.full_result).toMatchObject({ text: "THE FULL UNTRUNCATED OUTPUT", bytes: 32900 });
-    expect(small.full_result).toBeUndefined(); // no marker → no lookup
-    await app2.close();
-  });
-});
-
-// UI preferences ride the writable sidecar (prefs.ts): a key→JSON store persisted so chart/column
-// visibility survives a cache-clear. Writes reuse the CSRF+availability guard; reads degrade to null
-// when no writable store is configured so the client keeps its localStorage value.
-describe("UI prefs store", () => {
-  async function appWithPrefs() {
-    const app2 = await createApp(seed(), { triageDbPath: ":memory:" });
-    await app2.ready();
-    return app2;
-  }
-
-  it("GET unset → null; PUT (same-origin) then GET round-trips the JSON", async () => {
-    const app2 = await appWithPrefs();
-    let r = await app2.inject({ method: "GET", url: "/api/prefs/dashboard.charts" });
-    expect(r.statusCode).toBe(200);
-    expect(r.json().value).toBeNull();
-
-    r = await app2.inject({
-      method: "PUT",
-      url: "/api/prefs/dashboard.charts",
-      headers: { origin: "http://localhost", "content-type": "application/json" },
-      payload: { value: ["cost-over-time", "activity"] },
+  it("GET /api/sessions/:id → only the tool call with a truncation marker gets full_result", async () => {
+    const db = freshDb();
+    addSession(db, "sess1");
+    const turn = addTurn(db, "sess1", 0, { userEvent: "e1" });
+    addEvent(db, "sess1", "e2", { turn, seq: 1, role: "assistant", timestamp: "2026-01-01T00:00:30Z" });
+    addTool(db, "sess1", "e2", "tc_big", "Bash", {
+      turn,
+      result:
+        "Output too large (32.1KB). Full output saved to: /home/u/.claude/projects/-x/sess1/tool-results/bk7e5i18g.txt Preview (first 2KB): …",
     });
-    expect(r.statusCode).toBe(200);
+    addTool(db, "sess1", "e2", "tc_small", "Bash", { turn, result: "ok, small result" });
+    db.prepare(
+      `INSERT INTO tool_results (session_id, name, path, bytes, text, ingested_at)
+       VALUES ('sess1', 'bk7e5i18g', '/archive/.../tool-results/bk7e5i18g.txt', 32900, 'THE FULL UNTRUNCATED OUTPUT', 'now')`,
+    ).run();
+    const local = await appFor(db);
 
-    r = await app2.inject({ method: "GET", url: "/api/prefs/dashboard.charts" });
-    expect(r.json().value).toEqual(["cost-over-time", "activity"]);
-    await app2.close();
-  });
-
-  it("PUT blocks a cross-site Origin (CSRF guard)", async () => {
-    const app2 = await appWithPrefs();
-    const r = await app2.inject({
-      method: "PUT",
-      url: "/api/prefs/dashboard.charts",
-      headers: { origin: "https://evil.example", "content-type": "application/json" },
-      payload: { value: [] },
-    });
-    expect(r.statusCode).toBe(403);
-    expect(r.json().error.code).toBe("FORBIDDEN_ORIGIN");
-    await app2.close();
-  });
-
-  it("rejects an invalid pref key", async () => {
-    const app2 = await appWithPrefs();
-    const r = await app2.inject({ method: "GET", url: "/api/prefs/" + encodeURIComponent("bad key!") });
-    expect(r.statusCode).toBe(400);
-    await app2.close();
-  });
-
-  it("degrades to null (GET) and 503 (PUT) when no writable store is configured", async () => {
-    const app2 = await createApp(seed()); // no triageDbPath
-    await app2.ready();
-    const g = await app2.inject({ method: "GET", url: "/api/prefs/dashboard.charts" });
-    expect(g.statusCode).toBe(200);
-    expect(g.json().value).toBeNull();
-    const w = await app2.inject({
-      method: "PUT",
-      url: "/api/prefs/dashboard.charts",
-      headers: { origin: "http://localhost", "content-type": "application/json" },
-      payload: { value: [] },
-    });
-    expect(w.statusCode).toBe(503);
-    await app2.close();
-  });
-});
-
-// Schema-version drift: /api/health flags a DB stamped by an older build so the UI can warn that a full
-// re-ingest is required (an incremental ingest can't migrate a schema bump).
-describe("health surfaces schema staleness", () => {
-  it("GET /api/health → schema_stale true when meta.schema_version mismatches the build", async () => {
-    const db = new Database(":memory:");
-    db.exec(SCHEMA_SQL);
-    db.prepare("INSERT INTO meta(key, value) VALUES ('schema_version', '1')").run(); // ancient stamp
-    const app2 = await createApp(db);
-    await app2.ready();
-    const body = (await app2.inject({ method: "GET", url: "/api/health" })).json();
-    expect(body.schema_version).toBe(1);
-    expect(body.schema_stale).toBe(true);
-    await app2.close();
+    const body = (await local.inject({ method: "GET", url: "/api/sessions/sess1" })).json();
+    const tools: Array<{ id: string; full_result?: { text: string } }> = body.events.flatMap(
+      (e: { toolCalls: Array<{ id: string }> }) => e.toolCalls,
+    );
+    expect(tools.find((t) => t.id === "tc_big")?.full_result?.text).toBe("THE FULL UNTRUNCATED OUTPUT");
+    expect(tools.find((t) => t.id === "tc_small")?.full_result).toBeUndefined(); // no marker → no lookup
+    await local.close();
   });
 });
 
@@ -496,24 +315,41 @@ describe("health surfaces schema staleness", () => {
 // sessions wildly inflates it (the reported 327-vs-27 bug).
 describe("source session_count counts main sessions only", () => {
   it("GET /api/sources → excludes subagent sidechains", async () => {
-    const db = new Database(":memory:");
-    db.pragma("foreign_keys = ON");
-    db.exec(SCHEMA_SQL);
-    db.exec(`
-      INSERT INTO agents (id, name, kind) VALUES ('claude-code', 'Claude Code CLI', 'cli');
-      INSERT INTO sources (id, label, agent_id, config_dir) VALUES ('isf', 'isf', 'claude-code', NULL);
-      INSERT INTO sessions (id, agent_id, source_id, is_sidechain, event_count, turn_count) VALUES
-        ('m1', 'claude-code', 'isf', 0, 3, 1),
-        ('a1', 'claude-code', 'isf', 1, 2, 1),
-        ('a2', 'claude-code', 'isf', 1, 2, 1),
-        ('a3', 'claude-code', 'isf', 1, 2, 1);
-    `);
-    const app2 = await createApp(db);
-    await app2.ready();
-    const r = await app2.inject({ method: "GET", url: "/api/sources" });
+    const db = freshDb({ source: "isf" });
+    addSession(db, "m1", { source: "isf", events: 3 });
+    for (const id of ["a1", "a2", "a3"]) addSession(db, id, { source: "isf", sidechain: true, events: 2 });
+    const local = await appFor(db);
+
+    const r = await local.inject({ method: "GET", url: "/api/sources" });
     expect(r.statusCode).toBe(200);
-    const src = r.json().find((s: any) => s.id === "isf");
+    const src = r.json().find((s: { id: string }) => s.id === "isf");
     expect(src.session_count).toBe(1); // 1 main, not 4 (3 subagents excluded)
-    await app2.close();
+    await local.close();
+  });
+
+  it("GET /api/sources → a source with no sessions still lists, at zero", async () => {
+    const db = freshDb({ source: "isf" });
+    addSource(db, "empty");
+    addSession(db, "m1", { source: "isf" });
+    const local = await appFor(db);
+
+    const rows = (await local.inject({ method: "GET", url: "/api/sources" })).json();
+    expect(rows.find((s: { id: string }) => s.id === "empty").session_count).toBe(0);
+    await local.close();
+  });
+});
+
+// Schema-version drift: /api/health flags a DB stamped by an older build so the UI can warn that a full
+// re-ingest is required (an incremental ingest can't migrate a schema bump).
+describe("health surfaces schema staleness", () => {
+  it("GET /api/health → schema_stale true when meta.schema_version mismatches the build", async () => {
+    const db = freshDb();
+    db.prepare("INSERT INTO meta(key, value) VALUES ('schema_version', '1')").run(); // ancient stamp
+    const local = await appFor(db);
+
+    const body = (await local.inject({ method: "GET", url: "/api/health" })).json();
+    expect(body.schema_version).toBe(1);
+    expect(body.schema_stale).toBe(true);
+    await local.close();
   });
 });
