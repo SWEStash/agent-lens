@@ -45,38 +45,44 @@ export default function SessionView() {
     });
 
   // Deep link `#ev-<event_uuid>` (e.g. from a security finding row) → scroll the flagged message into
-  // view and flash it. Runs once per hash, after the transcript renders; if the target message sits in
-  // a collapsed turn, expand that turn first and let the re-render bring the element into the DOM. The
-  // flash is React-owned (via FlashContext) so it survives the re-render the expansion triggers.
+  // view and flash it. The target is derived from the hash rather than stored.
+  const targetUuid = /^#ev-(.+)$/.exec(hash)?.[1] ?? null;
   const [flashUuid, setFlashUuid] = useState<string | null>(null);
+
+  // If the target sits in a collapsed turn, open that turn — the same one-time edit clicking its header
+  // would make, so the reader can collapse it again afterwards. Returning `prev` unchanged when there
+  // is nothing to open keeps this from queueing a pointless render.
+  useEffect(() => {
+    const turnId = targetUuid ? d?.events.find((e) => e.uuid === targetUuid)?.turn_id : null;
+    if (!turnId) return;
+    setCollapsed((prev) => {
+      if (!prev.has(turnId)) return prev;
+      const next = new Set(prev);
+      next.delete(turnId);
+      return next;
+    });
+  }, [d, targetUuid]);
+
+  // Scroll + flash once the target is actually in the DOM, which the effect above may have just caused.
+  // This one only READS `collapsed` — previously a single effect wrote to it to re-trigger itself, and
+  // the ref existed to absorb the extra passes that caused (SLOP-062). It is now a plain once-per-hash
+  // guard: re-navigating to the same hash should not re-scroll, but a later expansion should still be
+  // able to complete a scroll that had no element to find yet.
   const scrolledFor = useRef<string | null>(null);
   useEffect(() => {
-    if (!d) return;
-    const m = /^#ev-(.+)$/.exec(hash);
-    if (!m) {
+    if (!d || !targetUuid) {
       scrolledFor.current = null;
       return;
     }
     if (scrolledFor.current === hash) return;
-    const uuid = m[1];
-    const ev = d.events.find((e) => e.uuid === uuid);
-    if (ev?.turn_id && collapsed.has(ev.turn_id)) {
-      const turnId = ev.turn_id;
-      setCollapsed((prev) => {
-        const next = new Set(prev);
-        next.delete(turnId);
-        return next;
-      });
-      return; // re-render with the turn open, then this effect re-runs and scrolls
-    }
-    const el = document.getElementById("ev-" + uuid);
+    const el = document.getElementById("ev-" + targetUuid);
     if (!el) return;
     scrolledFor.current = hash;
     el.scrollIntoView({ block: "center", behavior: "smooth" });
-    setFlashUuid(uuid);
+    setFlashUuid(targetUuid);
     const t = window.setTimeout(() => setFlashUuid(null), 3000);
     return () => window.clearTimeout(t);
-  }, [d, hash, collapsed]);
+  }, [d, hash, targetUuid, collapsed]);
 
   if (error) return <ErrorAlert error={error} />;
   if (!d) return <Loading />;

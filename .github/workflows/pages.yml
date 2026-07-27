@@ -41,6 +41,10 @@ jobs:
       - name: Export the corpus API snapshot (static JSON)
         run: node scripts/export-snapshot.mjs
 
+      # Fail the deploy rather than publish a demo with dead links (see the CI job's copy).
+      - name: Check every SPA link resolves to an exported snapshot
+        run: node scripts/check-snapshot-links.mjs
+
       - name: Build the static SPA (snapshot mode, repo subpath)
         env:
           VITE_SNAPSHOT: "1"

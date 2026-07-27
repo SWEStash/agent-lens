@@ -1,8 +1,9 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { apiPost, SNAPSHOT, type Finding, type FindingsPage, type MuteRow, type Project, type SecuritySummary, type Source } from "./api";
 import { useFetch, useLookup } from "./useFetch";
 import { useQueryState } from "./useQueryState";
+import { useResetOn } from "./useResetOn";
 import { ErrorAlert, Loading } from "./AsyncBoundary";
 import { SortHeader, useSort } from "./sort";
 import { Pager } from "./Pager";
@@ -13,6 +14,8 @@ import { SeverityTag, SEVERITIES } from "./severity";
 const PAGE = 50;
 /** Identity-stable placeholder so the table renders empty before the first load. */
 const EMPTY_PAGE: FindingsPage = { total: 0, findings: [] };
+/** Identity-stable empty selection, so useResetOn does not hand out a fresh Set every render. */
+const EMPTY_SELECTION: Set<string> = new Set();
 type SortKey = "severity" | "session" | "rule" | "category" | "time";
 
 /**
@@ -26,10 +29,7 @@ export default function SecurityView() {
   const { get, set: setParam, clear: clearFilters } = useQueryState();
   const sources = useLookup<Source[]>("/sources", []);
   const projects = useLookup<Project[]>("/projects", []);
-  const [actionError, setActionError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const [pageNum, setPageNum] = useState(1);
-  const [selected, setSelected] = useState<Set<string>>(new Set());
   const [reloadKey, setReloadKey] = useState(0);
   const { sort, toggle } = useSort<SortKey>("severity", "desc");
 
@@ -54,8 +54,12 @@ export default function SecurityView() {
   // No backend in the snapshot build, so there are no mutes to fetch.
   const mutes = useLookup<MuteRow[]>(SNAPSHOT ? null : "/security/mutes", [], [reloadKey]);
 
-  useEffect(() => setPageNum(1), [filterQs.toString(), sort.key, sort.dir]);
-  useEffect(() => setSelected(new Set()), [filterQs.toString(), sort.key, sort.dir, pageNum, reloadKey]);
+  // Paging and selection belong to a particular filter+sort, and the error slot additionally belongs to
+  // a particular page load — so all three reset by key rather than by an effect that fires after the
+  // stale value has already been committed (SLOP-063).
+  const viewKey = `${filterQs.toString()}|${sort.key}|${sort.dir}`;
+  const [pageNum, setPageNum] = useResetOn(viewKey, 1);
+  const [selected, setSelected] = useResetOn<Set<string>>(`${viewKey}|${pageNum}|${reloadKey}`, EMPTY_SELECTION);
 
   const listQs = new URLSearchParams(filterQs);
   listQs.set("sort", sort.key);
@@ -66,9 +70,10 @@ export default function SecurityView() {
     deps: [reloadKey],
   });
   // One alert slot: a failed triage write is as relevant as a failed list load. A write error clears
-  // when the list reloads, which is what the shared error state used to do implicitly.
+  // when the list reloads, which is what the shared error state used to do implicitly — hence the
+  // reload key participating below.
+  const [actionError, setActionError] = useResetOn<string | null>(`${viewKey}|${pageNum}|${reloadKey}`, null);
   const error = actionError ?? listError;
-  useEffect(() => setActionError(null), [filterQs, sort.key, sort.dir, pageNum, reloadKey]);
   const { total, findings } = page ?? EMPTY_PAGE;
 
   // Writes: run the action, then clear selection + reload summary/list/mutes.
@@ -105,7 +110,7 @@ export default function SecurityView() {
     <div>
       <div className="detail-head">
         <h1>Security findings</h1>
-        <p className="muted" style={{ margin: "4px 0 0", maxWidth: 760 }}>
+        <p className="muted page-intro">
           Risky operations the agent performed, flagged after the fact by deterministic rules over each
           tool call. Counts show <strong>open</strong> findings — mark benign ones safe or mute a noisy
           rule so a real one stands out. agent-lens is retrospective; it surfaces what <em>happened</em>,
@@ -200,7 +205,7 @@ export default function SecurityView() {
         <label className="ctl">from <input type="date" value={from} onChange={(e) => setParam({ from: e.target.value })} /></label>
         <label className="ctl">to <input type="date" value={to} onChange={(e) => setParam({ to: e.target.value })} /></label>
         {session && (
-          <span className="tag" style={{ alignSelf: "center" }}>
+          <span className="tag filter-chip">
             session {session.slice(0, 8)}… <button type="button" className="linkish" onClick={() => setParam({ session: "" })}>✕</button>
           </span>
         )}
@@ -319,13 +324,13 @@ function FindingRow({
       )}
       <td>
         <SeverityTag severity={f.severity} />
-        {f.dismissed ? <span className="tag" style={{ marginLeft: 4 }} title={f.dismiss_note ?? ""}>safe</span> : null}
+        {f.dismissed ? <span className="tag dismissed" title={f.dismiss_note ?? ""}>safe</span> : null}
       </td>
       <td>
         <div className="finding-title">{f.title ?? f.rule_id}</div>
         <div className="muted small">
           <code>{f.rule_id}</code>
-          {f.framework_ref && <span className="tag framework" style={{ marginLeft: 6 }}>{f.framework_ref}</span>}
+          {f.framework_ref && <span className="tag framework">{f.framework_ref}</span>}
         </div>
       </td>
       <td className="small">{f.category}</td>
@@ -336,7 +341,7 @@ function FindingRow({
       <td className="small muted" title={f.started_at ?? ""}>{fmtDate(f.started_at ?? null)}</td>
       <td className="small">
         <Link to={to} className="title">{f.session_title || f.session_id.slice(0, 12)}</Link>
-        {f.is_sidechain ? <span className="tag subagent" style={{ marginLeft: 6 }}>subagent</span> : null}
+        {f.is_sidechain ? <span className="tag subagent">subagent</span> : null}
         {f.project_path && <div className="muted path">{f.project_path.replace(/^.*\//, "")}</div>}
       </td>
       {!SNAPSHOT && (
@@ -362,9 +367,9 @@ function MutedRulesPanel({ mutes, busy, onUnmute }: { mutes: MuteRow[]; busy: bo
         {mutes.map((m) => (
           <li key={`${m.rule_id}:${m.scope}:${m.scope_id}`}>
             <code>{m.rule_id}</code>
-            <span className="tag" style={{ marginLeft: 6 }}>{m.scope}{m.scope_id ? `: ${m.scope_id}` : ""}</span>
-            {m.note && <span className="muted small" style={{ marginLeft: 6 }}>{m.note}</span>}
-            <button type="button" className="linkish" style={{ marginLeft: 8 }} disabled={busy} onClick={() => onUnmute(m)}>unmute</button>
+            <span className="tag mute-scope">{m.scope}{m.scope_id ? `: ${m.scope_id}` : ""}</span>
+            {m.note && <span className="muted small mute-note">{m.note}</span>}
+            <button type="button" className="linkish unmute" disabled={busy} onClick={() => onUnmute(m)}>unmute</button>
           </li>
         ))}
       </ul>
@@ -378,7 +383,7 @@ function ReferenceSection({ summary }: { summary: SecuritySummary }) {
   return (
     <section className="sec-reference">
       <h2>Risk categories</h2>
-      <p className="muted small" style={{ marginTop: 0 }}>
+      <p className="muted small sec-reference-intro">
         What each category means and why it matters, anchored to OWASP Top 10 for Agentic Apps and MITRE ATLAS.
       </p>
       <div className="sec-ref-grid">
