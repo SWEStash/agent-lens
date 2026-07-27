@@ -163,3 +163,59 @@ describe("category — keyword + structural evidence, with subagent-role overrid
     expect(classOf(db, "agent-x").category).toBe("review"); // Explore → review, despite 'feature' prompt
   });
 });
+
+/**
+ * Whole-word keyword matching (SLOP-069, CLASSIFIER_VERSION 3). Scoring used `indexOf`, so a keyword
+ * fired anywhere inside a longer word — "review" inside "preview", "fix" inside "prefix". These pin
+ * that a word only counts when it IS a word, and that the fix did not cost real matches: four
+ * keywords used to carry a trailing space to fake a boundary, and that hack missed a keyword at the
+ * end of a line or before punctuation.
+ */
+describe("keyword scoring matches whole words, not substrings", () => {
+  const categoryFor = (prompt: string): string => {
+    const db = freshDb();
+    addSession(db, "s", { turns: 1 });
+    addTurn(db, "s", 0, prompt);
+    classify(db);
+    return classOf(db, "s").category;
+  };
+
+  it("does not fire a keyword buried inside a longer word", () => {
+    // Each of these contains a category keyword as a substring only. None may win its category:
+    // "preview"/"reviewer" ⊃ review, "prefix"/"suffix" ⊃ fix, "addressbook" ⊃ add, "docker" ⊃ dock.
+    expect(categoryFor("open the preview pane in the previewer")).not.toBe("review");
+    expect(categoryFor("rename the prefix and suffix helpers")).toBe("refactor"); // refactor/rename win; "fix" must not
+    expect(categoryFor("update the addressbook module")).not.toBe("feature");
+  });
+
+  it("still fires on the same word standing alone", () => {
+    expect(categoryFor("please review this")).toBe("review");
+    expect(categoryFor("fix the broken crash")).toBe("bugfix");
+  });
+
+  it("matches a keyword next to punctuation or at the end of the text, which the trailing-space hack missed", () => {
+    // "add "/"build "/"create "/"ci " previously required a following space.
+    for (const prompt of ["implement a feature; add", "add.", "add, then implement the feature"]) {
+      expect(categoryFor(prompt), prompt).toBe("feature");
+    }
+  });
+
+  it("counts each whole-word occurrence, so repetition still strengthens a category", () => {
+    const once = signalsFor("fix the bug");
+    const twice = signalsFor("fix the bug, then fix the other bug");
+    expect(twice.category_scores.bugfix).toBeGreaterThan(once.category_scores.bugfix);
+  });
+
+  it("handles a keyword containing regex metacharacters (ci/cd)", () => {
+    expect(categoryFor("set up the ci/cd pipeline for deploy")).toBe("ops");
+  });
+
+  function signalsFor(prompt: string) {
+    const db = freshDb();
+    addSession(db, "s", { turns: 1 });
+    addTurn(db, "s", 0, prompt);
+    classify(db);
+    return signalsOf(db, "s");
+  }
+});
+

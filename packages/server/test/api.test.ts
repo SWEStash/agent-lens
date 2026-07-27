@@ -137,31 +137,40 @@ describe("query parameter boundaries", () => {
     }
   });
 
-  /* CHARACTERIZATION — these two pin what the code does TODAY, not what it should do. Both are real
-   * defects found while adding this coverage (SLOP-042); they are fixed in the following commit, where
-   * these expectations flip. Kept as executable documentation in between so the refactor commit stays
-   * behaviour-preserving.
-   *
-   * `limit` and `offset` are parsed as `Math.min(Number(q.limit) || 50, 200)` / `Number(q.offset) || 0`
-   * (app.ts). Neither guards the lower bound or integrality. */
-  it("CHARACTERIZATION: a negative limit bypasses the page cap entirely", async () => {
+  /* These two were CHARACTERIZATION tests in the preceding commit, pinning real defects found while
+   * adding this coverage; `pageLimit`/`pageOffset` fixed them and the expectations flipped here. */
+  it("a negative limit cannot bypass the page cap", async () => {
     const db = freshDb();
     for (let i = 0; i < 250; i++) addSession(db, `s${i}`);
     const local = await appFor(db);
 
-    // Math.min(-1, 200) = -1, and SQLite reads a negative LIMIT as "no limit" — so the 200-row cap is
-    // gone and the whole table comes back in one response.
-    const all = await local.inject({ method: "GET", url: "/api/sessions?limit=-1" });
-    expect(all.json().sessions).toHaveLength(250);
-    // For contrast, the cap does hold against an oversized positive limit.
+    // The bug: Math.min(-1, 200) = -1, and SQLite reads a negative LIMIT as "no limit", so this
+    // returned all 250 rows. A negative limit is meaningless — fall back to the default page.
+    for (const qs of ["limit=-1", "limit=-5", "limit=-999999"]) {
+      expect((await local.inject({ method: "GET", url: "/api/sessions?" + qs })).json().sessions, qs).toHaveLength(50);
+    }
+    // An oversized positive limit still clamps to the cap rather than the default.
     expect((await local.inject({ method: "GET", url: "/api/sessions?limit=999999" })).json().sessions).toHaveLength(200);
+    // And a valid limit is honoured exactly.
+    expect((await local.inject({ method: "GET", url: "/api/sessions?limit=7" })).json().sessions).toHaveLength(7);
     await local.close();
   });
 
-  it("CHARACTERIZATION: a non-integer offset 500s instead of being coerced", async () => {
-    // Number("1.5") is truthy and non-integer, so it reaches better-sqlite3, which refuses to bind it.
-    const r = await app.inject({ method: "GET", url: "/api/sessions?offset=1.5" });
-    expect(r.statusCode).toBe(500);
+  it("a non-integer offset is floored instead of 500ing", async () => {
+    // The bug: Number("1.5") is truthy and non-integer, so it reached better-sqlite3, which refuses to
+    // bind a float to an integer parameter.
+    for (const qs of ["offset=1.5", "offset=0.9", "offset=1e0", "offset=-2.7"]) {
+      const r = await app.inject({ method: "GET", url: "/api/sessions?" + qs });
+      expect(r.statusCode, qs).toBe(200);
+    }
+    // Flooring must not silently change which page a valid request lands on.
+    const db = freshDb();
+    for (let i = 0; i < 5; i++) addSession(db, `s${i}`);
+    const local = await appFor(db);
+    const at2 = (await local.inject({ method: "GET", url: "/api/sessions?offset=2" })).json().sessions;
+    const at2point7 = (await local.inject({ method: "GET", url: "/api/sessions?offset=2.7" })).json().sessions;
+    expect(at2point7.map((s: { id: string }) => s.id)).toEqual(at2.map((s: { id: string }) => s.id));
+    await local.close();
   });
 
   it("does not 500 on an unknown sort key or direction", async () => {

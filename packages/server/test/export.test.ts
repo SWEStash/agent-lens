@@ -70,3 +70,43 @@ describe("GET /api/sessions/:id/export.md", () => {
     expect(r.statusCode).toBe(404);
   });
 });
+
+// The download name is interpolated into `attachment; filename="<name>"`, so a session id carrying a
+// quote, CRLF or a path separator must not be able to break out of the quoted string and inject
+// further header parameters. Ids are ours today, which makes this defence-in-depth (SLOP-077).
+describe("content-disposition filename is sanitized", () => {
+  const hostile = [
+    { id: 'a"b;x=y', label: "double quote closing the quoted string" },
+    { id: "a\r\nX-Injected: 1", label: "CRLF header injection" },
+    { id: "../../etc/passwd", label: "path traversal" },
+    { id: "a b/c\\d", label: "space, slash and backslash" },
+  ];
+
+  for (const { id, label } of hostile) {
+    it(`neutralizes ${label}`, async () => {
+      const db = seed();
+      db.prepare(
+        "INSERT INTO sessions (id, agent_id, source_id, is_sidechain, event_count, turn_count) VALUES (?, 'claude-code', 'test', 0, 0, 0)",
+      ).run(id);
+      const app2 = await createApp(db);
+      await app2.ready();
+
+      const r = await app2.inject({ method: "GET", url: `/api/sessions/${encodeURIComponent(id)}/export.md` });
+      expect(r.statusCode).toBe(200);
+      const cd = r.headers["content-disposition"] as string;
+      // Exactly one quoted filename, containing only safe characters, and no stray header syntax.
+      expect(cd).toMatch(/^attachment; filename="session-[A-Za-z0-9._-]+(\.redacted)?\.md"$/);
+      expect(cd).not.toContain("X-Injected");
+      await app2.close();
+    });
+  }
+
+  it("still produces the readable name for a normal id", async () => {
+    const app2 = await createApp(seed());
+    await app2.ready();
+    const r = await app2.inject({ method: "GET", url: "/api/sessions/sess1/export.md" });
+    expect(r.headers["content-disposition"]).toBe('attachment; filename="session-sess1.redacted.md"');
+    await app2.close();
+  });
+});
+

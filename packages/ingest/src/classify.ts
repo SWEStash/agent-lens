@@ -15,7 +15,9 @@ import { parseStored } from "./storedjson.js";
 // v2 (ADR-004): realistic complexity ceilings so real (long, substantial) main sessions spread
 // across bands instead of pegging in "large"; subagent sessions categorized by their spawner role
 // rather than keyword heuristics on a read-only exploration transcript.
-export const CLASSIFIER_VERSION = 2;
+// v3: keyword scoring matches whole words instead of substrings (SLOP-069) — "review" no longer
+// fires inside "preview", nor "fix" inside "prefix" — so stored categories from v2 are superseded.
+export const CLASSIFIER_VERSION = 3;
 
 export type Category = "feature" | "bugfix" | "refactor" | "docs" | "ops" | "review" | "chore";
 
@@ -83,15 +85,35 @@ interface Signals {
   is_sidechain: number;
 }
 
-/** Count keyword hits (whole-word-ish) of any phrase in `words` within `text`. */
+/** Compiled `\b<phrase>\b` matchers, keyed by phrase. The keyword lists are fixed and `hits` runs once
+ * per category per session, so compiling each pattern once matters at corpus scale. */
+const WORD_RE = new Map<string, RegExp>();
+function wordRe(phrase: string): RegExp {
+  let re = WORD_RE.get(phrase);
+  if (!re) {
+    // Escape regex metacharacters — phrases include "ci/cd" and could later include "c++".
+    const escaped = phrase.trim().replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    re = new RegExp(`\\b${escaped}\\b`, "g");
+    WORD_RE.set(phrase, re);
+  }
+  return re;
+}
+
+/**
+ * Count whole-word occurrences of any phrase in `words` within `text`.
+ *
+ * This used to scan with `indexOf`, which is substring matching: "review" hit inside "preview",
+ * "fix" inside "prefix", "add" inside "address". Four keywords compensated by carrying a trailing
+ * space in the list (`"add "`, `"build "`, `"create "`, `"ci "`), which only worked when the next
+ * character happened to be a space — a line-ending "add", or "add." mid-sentence, still missed.
+ * Real word boundaries do the job properly, so those four are now written bare (SLOP-069).
+ */
 function hits(text: string, words: string[]): number {
   let n = 0;
   for (const w of words) {
-    let i = text.indexOf(w);
-    while (i !== -1) {
-      n++;
-      i = text.indexOf(w, i + w.length);
-    }
+    const re = wordRe(w);
+    re.lastIndex = 0; // shared compiled regex: /g keeps state between calls
+    while (re.exec(text) !== null) n++;
   }
   return n;
 }
@@ -117,10 +139,10 @@ function scoreCategories(s: Signals, text: string, files: string[]): Record<Cate
   scores.bugfix += hits(t, ["bug", "fix", "broken", "crash", "regression", "traceback", "stack trace", "failing", "error", "exception", "not working"]) * 1.0;
   scores.refactor += hits(t, ["refactor", "clean up", "cleanup", "rename", "extract", "simplify", "dead code", "tidy", "reorganize", "restructure"]) * 1.0;
   scores.docs += hits(t, ["readme", "document", "documentation", "changelog", "docstring", "comment", "write docs", "usage guide"]) * 1.0;
-  scores.ops += hits(t, ["deploy", "docker", "pipeline", "ci/cd", "ci ", "systemd", "infra", "kubernetes", "terraform", "release", "rollback", "container"]) * 1.0;
+  scores.ops += hits(t, ["deploy", "docker", "pipeline", "ci/cd", "ci", "systemd", "infra", "kubernetes", "terraform", "release", "rollback", "container"]) * 1.0;
   scores.review += hits(t, ["review", "audit", "inspect", "look over", "feedback on"]) * 1.0;
   // "new " dropped — too noisy ("the new X", "new file"); "new feature" stays as a strong signal.
-  scores.feature += hits(t, ["add ", "implement", "build ", "create ", "feature", "support for", "new feature"]) * 0.8;
+  scores.feature += hits(t, ["add", "implement", "build", "create", "feature", "support for", "new feature"]) * 0.8;
 
   // Structural evidence (tools + files), scaled so it complements but doesn't drown keywords.
   const docFiles = s.loc.files > 0 ? countMatch(files, DOC_EXT) : 0;

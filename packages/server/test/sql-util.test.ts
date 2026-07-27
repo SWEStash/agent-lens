@@ -4,7 +4,7 @@
  * rather than only through the endpoints that use it. Imports the BUILT dist.
  */
 import { describe, it, expect } from "vitest";
-import { orderBy, pushGrouped } from "../dist/sql-util.js";
+import { orderBy, pageLimit, pageOffset, pushGrouped } from "../dist/sql-util.js";
 
 const COLUMNS = { started: "s.started_at", title: "COALESCE(s.ai_title, s.slug)", turns: "s.turn_count" };
 
@@ -41,5 +41,51 @@ describe("pushGrouped", () => {
     pushGrouped(m, "b", 3);
     expect(m.get("a")).toEqual([1, 2]);
     expect(m.get("b")).toEqual([3]);
+  });
+});
+
+// Pagination bounds. Both of these replaced an idiom that guarded only the upper bound
+// (`Math.min(Number(x) || d, max)` / `Number(x) || 0`), which let a negative limit disable the cap
+// entirely and let a non-integer offset reach — and crash — the SQLite driver.
+describe("pageLimit", () => {
+  it("honours a valid limit and clamps an oversized one", () => {
+    expect(pageLimit("7", 50, 200)).toBe(7);
+    expect(pageLimit("200", 50, 200)).toBe(200);
+    expect(pageLimit("999999", 50, 200)).toBe(200);
+  });
+
+  it("falls back to the default for anything not a usable count", () => {
+    for (const raw of [undefined, null, "", "abc", "0", "-1", "-999", NaN, Infinity, -Infinity]) {
+      expect(pageLimit(raw, 50, 200), String(raw)).toBe(50);
+    }
+  });
+
+  it("never exceeds max, even via the fallback", () => {
+    expect(pageLimit("abc", 500, 200)).toBe(200);
+  });
+
+  it("floors a fractional limit rather than passing a float to the driver", () => {
+    expect(pageLimit("7.9", 50, 200)).toBe(7);
+    // Floors below 1 → not a usable count → default.
+    expect(pageLimit("0.5", 50, 200)).toBe(50);
+  });
+});
+
+describe("pageOffset", () => {
+  it("passes a valid offset through", () => {
+    expect(pageOffset("0")).toBe(0);
+    expect(pageOffset("250")).toBe(250);
+  });
+
+  it("floors a fractional offset (the ?offset=1.5 500)", () => {
+    expect(pageOffset("1.5")).toBe(1);
+    expect(pageOffset("2.7")).toBe(2);
+    expect(Number.isInteger(pageOffset("1.5"))).toBe(true);
+  });
+
+  it("collapses negative and non-numeric input to 0", () => {
+    for (const raw of [undefined, null, "", "abc", "-1", "-0.5", NaN, Infinity, -Infinity]) {
+      expect(pageOffset(raw), String(raw)).toBe(0);
+    }
   });
 });
