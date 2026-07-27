@@ -16,14 +16,14 @@ import {
   SCHEMA_VERSION,
   type SourceAdapter,
 } from "@agent-lens/core";
-import { openDb, openRaw, readSchemaVersion, resetSchema } from "./db.js";
+import { openDb, openRaw, readSchemaVersion, resetSchema, type DB } from "./db.js";
 import { ClaudeCodeAdapter } from "./adapters/claude-code.js";
 import { classify, CLASSIFIER_VERSION } from "./classify.js";
 import { detect, DETECTOR_VERSION } from "./detect.js";
 import { classifyErrors } from "./errors.js";
 import { deriveFileChanges, FILECHANGES_VERSION } from "./filechanges.js";
 import { canonicalizeProjects } from "./canonicalize.js";
-import { ingestFile, newStats, prepareStatements, pruneExcluded, rebuildDerived } from "./pipeline.js";
+import { ingestFile, newStats, prepareStatements, pruneExcluded, rebuildDerived, type IngestStats } from "./pipeline.js";
 import { ingestWorkflowResults, newWorkflowStats } from "./workflows.js";
 import { ingestSubagentMeta, newMetaStats } from "./meta.js";
 import { ingestToolResults, newToolResultStats } from "./toolResults.js";
@@ -38,6 +38,85 @@ function parseIngestArgs(argv: string[]) {
     else if (argv[i] === "--archive") a.archive = argv[++i] ?? "";
   }
   return a;
+}
+
+/** Skip-state for one archive file, as recorded by the previous run. */
+type FileState = { size: number; mtime_ms: number; sha256: string; events_ingested: number } | undefined;
+
+/** What to do with one archive file this run.
+ * - `skip-stat`: unchanged size+mtime means unchanged content — skip without ever reading or hashing
+ *   the file. This is what restores true incrementality across the mirror + every .versions snapshot
+ *   (ADR-010, impact 1).
+ * - `skip-hash`: content is unchanged though mtime moved (e.g. an rsync --append-verify re-stat) —
+ *   skip the ingest but refresh size/mtime so the next run short-circuits on stat alone.
+ * - `ingest`: genuinely new/changed. `buf` is the whole file for the common case, null for a large
+ *   file that must be streamed instead. */
+type FileDecision =
+  | { action: "skip-stat" }
+  | { action: "skip-hash"; hash: string }
+  | { action: "ingest"; hash: string; buf: Buffer | null };
+
+function shouldReingest(path: string, size: number, mtimeMs: number, prev: FileState): FileDecision {
+  if (prev && prev.size === size && prev.mtime_ms === mtimeMs) return { action: "skip-stat" };
+
+  // Size/mtime moved: read + hash to decide. Whole-file for the common case; stream large files.
+  const small = size <= STREAM_THRESHOLD;
+  const buf = small ? readFileSync(path) : null;
+  const hash = small ? sha256(buf!) : sha256File(path);
+
+  if (prev && prev.sha256 === hash) return { action: "skip-hash", hash };
+  return { action: "ingest", hash, buf };
+}
+
+/** Everything the end-of-run report counts, gathered from the callers that produced it. */
+interface IngestReport {
+  stats: IngestStats;
+  pruned: number;
+  classified: { count: number };
+  detected: { count: number };
+  fileChanges: { count: number };
+  wfStats: { upserted: number; skipped: number; malformed: number };
+  metaStats: { upserted: number; skipped: number; malformed: number };
+  trStats: { upserted: number; skipped: number; malformed: number };
+}
+
+/** Tally the final table counts, close the DB, and print the one-block run summary. */
+function printIngestReport(db: DB, dbPath: string, r: IngestReport): void {
+  const count = (sql: string) => (db.prepare(sql).get() as any).n as number;
+  const sessions = count("SELECT COUNT(*) n FROM sessions");
+  const turns = count("SELECT COUNT(*) n FROM turns");
+  const events = count("SELECT COUNT(*) n FROM events");
+  const tools = count("SELECT COUNT(*) n FROM tool_calls");
+  const usageRows = db
+    .prepare("SELECT model, input_tokens, output_tokens, cache_creation_input_tokens, cache_read_input_tokens FROM token_usage")
+    .all() as any[];
+  let cost = 0;
+  let totalTokens = 0;
+  for (const u of usageRows) {
+    cost += costForUsage(u.model, u);
+    totalTokens += u.input_tokens + u.output_tokens + u.cache_creation_input_tokens + u.cache_read_input_tokens;
+  }
+
+  const wfRuns = count("SELECT COUNT(*) n FROM workflow_results");
+  const metaRows = count("SELECT COUNT(*) n FROM session_meta");
+  const trRows = count("SELECT COUNT(*) n FROM tool_results");
+  const sevCounts = db
+    .prepare("SELECT severity, COUNT(*) n FROM findings GROUP BY severity")
+    .all() as Array<{ severity: string; n: number }>;
+  const sevMap = Object.fromEntries(sevCounts.map((s) => [s.severity, s.n]));
+  const sevLine = ["critical", "high", "medium", "low", "info"].map((s) => `${s}=${sevMap[s] ?? 0}`).join(" ");
+
+  db.close();
+  console.log(
+    `agent-lens-ingest: files=${r.stats.files} skipped=${r.stats.skipped} new_events=${r.stats.newEvents} malformed=${r.stats.malformed}${r.pruned ? ` excluded_pruned=${r.pruned}` : ""}\n` +
+      `  sessions=${sessions} turns=${turns} events=${events} tool_calls=${tools} classified=${r.classified.count}\n` +
+      `  workflow_results=${wfRuns} (sidecar upserted=${r.wfStats.upserted} skipped=${r.wfStats.skipped} malformed=${r.wfStats.malformed})\n` +
+      `  session_meta=${metaRows} (upserted=${r.metaStats.upserted} skipped=${r.metaStats.skipped} malformed=${r.metaStats.malformed})\n` +
+      `  tool_results=${trRows} (upserted=${r.trStats.upserted} skipped=${r.trStats.skipped} malformed=${r.trStats.malformed})\n` +
+      `  findings=${r.detected.count} (${sevLine})\n` +
+      `  file_changes=${r.fileChanges.count}\n` +
+      `  tokens=${totalTokens.toLocaleString()} est_cost=$${cost.toFixed(2)} db=${dbPath}`,
+  );
 }
 
 /** Stage 2: (re)build the derived SQLite store from the local archive. Idempotent. */
@@ -115,42 +194,28 @@ export function runIngest(argv: string[] = process.argv.slice(2)): void {
       stats.files++;
       const st = statSync(file.path);
       const mtimeMs = Math.trunc(st.mtimeMs);
-      const prev = args.full
-        ? undefined
-        : (stmts.getState.get(file.path) as
-            | { size: number; mtime_ms: number; sha256: string; events_ingested: number }
-            | undefined);
+      const prev = args.full ? undefined : (stmts.getState.get(file.path) as FileState);
 
-      // (a) Stat short-circuit: an unchanged size+mtime means unchanged content — skip without ever
-      // reading or hashing the file. Restores true incrementality across the mirror + every
-      // .versions snapshot (ADR-010, impact 1).
-      if (prev && prev.size === st.size && prev.mtime_ms === mtimeMs) {
+      const decision = shouldReingest(file.path, st.size, mtimeMs, prev);
+      if (decision.action === "skip-stat") {
         stats.skipped++;
         continue;
       }
-
-      // Size/mtime moved: read + hash to decide. Whole-file for the common case; stream large files.
-      const small = st.size <= STREAM_THRESHOLD;
-      const buf = small ? readFileSync(file.path) : null;
-      const hash = small ? sha256(buf!) : sha256File(file.path);
-
-      // Content unchanged though mtime moved (e.g. rsync --append-verify re-stat). Skip ingest, but
-      // refresh size/mtime so the next run short-circuits on stat alone.
-      if (prev && prev.sha256 === hash) {
+      if (decision.action === "skip-hash") {
         stmts.setState.run({
           file_path: file.path,
           size: st.size,
           mtime_ms: mtimeMs,
-          sha256: hash,
-          events_ingested: prev.events_ingested,
+          sha256: decision.hash,
+          events_ingested: prev!.events_ingested,
           ingested_at: now,
         });
         stats.skipped++;
         continue;
       }
 
-      const lines = small ? buf!.toString("utf8").split("\n") : streamLines(file.path);
-      ingestFile(db, stmts, adapter, file, lines, { size: st.size, mtimeMs, hash }, now, stats);
+      const lines = decision.buf ? decision.buf.toString("utf8").split("\n") : streamLines(file.path);
+      ingestFile(db, stmts, adapter, file, lines, { size: st.size, mtimeMs, hash: decision.hash }, now, stats);
       dirty.add(file.sessionId);
     }
 
@@ -193,42 +258,7 @@ export function runIngest(argv: string[] = process.argv.slice(2)): void {
   // re-runnable; reuses the same expanded dirty set and delete-then-inserts per touched session.
   const fileChanges = deriveFileChanges(db, args.full ? null : expanded);
 
-  // Report.
-  const count = (sql: string) => (db.prepare(sql).get() as any).n as number;
-  const sessions = count("SELECT COUNT(*) n FROM sessions");
-  const turns = count("SELECT COUNT(*) n FROM turns");
-  const events = count("SELECT COUNT(*) n FROM events");
-  const tools = count("SELECT COUNT(*) n FROM tool_calls");
-  const usageRows = db
-    .prepare("SELECT model, input_tokens, output_tokens, cache_creation_input_tokens, cache_read_input_tokens FROM token_usage")
-    .all() as any[];
-  let cost = 0;
-  let totalTokens = 0;
-  for (const u of usageRows) {
-    cost += costForUsage(u.model, u);
-    totalTokens += u.input_tokens + u.output_tokens + u.cache_creation_input_tokens + u.cache_read_input_tokens;
-  }
-
-  const wfRuns = count("SELECT COUNT(*) n FROM workflow_results");
-  const metaRows = count("SELECT COUNT(*) n FROM session_meta");
-  const trRows = count("SELECT COUNT(*) n FROM tool_results");
-  const sevCounts = db
-    .prepare("SELECT severity, COUNT(*) n FROM findings GROUP BY severity")
-    .all() as Array<{ severity: string; n: number }>;
-  const sevMap = Object.fromEntries(sevCounts.map((r) => [r.severity, r.n]));
-  const sevLine = ["critical", "high", "medium", "low", "info"].map((s) => `${s}=${sevMap[s] ?? 0}`).join(" ");
-
-  db.close();
-  console.log(
-    `agent-lens-ingest: files=${stats.files} skipped=${stats.skipped} new_events=${stats.newEvents} malformed=${stats.malformed}${pruned ? ` excluded_pruned=${pruned}` : ""}\n` +
-      `  sessions=${sessions} turns=${turns} events=${events} tool_calls=${tools} classified=${classified.count}\n` +
-      `  workflow_results=${wfRuns} (sidecar upserted=${wfStats.upserted} skipped=${wfStats.skipped} malformed=${wfStats.malformed})\n` +
-      `  session_meta=${metaRows} (upserted=${metaStats.upserted} skipped=${metaStats.skipped} malformed=${metaStats.malformed})\n` +
-      `  tool_results=${trRows} (upserted=${trStats.upserted} skipped=${trStats.skipped} malformed=${trStats.malformed})\n` +
-      `  findings=${detected.count} (${sevLine})\n` +
-      `  file_changes=${fileChanges.count}\n` +
-      `  tokens=${totalTokens.toLocaleString()} est_cost=$${cost.toFixed(2)} db=${dbPath}`,
-  );
+  printIngestReport(db, dbPath, { stats, pruned, classified, detected, fileChanges, wfStats, metaStats, trStats });
 }
 
 /** Standalone reclassification over an already-ingested DB (no archive re-read). */

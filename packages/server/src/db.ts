@@ -260,22 +260,12 @@ function attachSessionCost(db: DB, rows: any[]) {
   }
 }
 
-export function getSession(db: DB, id: string) {
-  const session = db
-    .prepare(
-      `SELECT s.*, p.path AS project_path FROM sessions s
-       LEFT JOIN projects p ON p.id = s.project_id WHERE s.id = ?`,
-    )
-    .get(id) as any;
-  if (!session) return null;
-
-  const turns = db.prepare("SELECT * FROM turns WHERE session_id = ? ORDER BY seq").all(id);
-  const eventRows = db
-    .prepare(
-      `SELECT uuid, type, role, timestamp, model, is_sidechain, turn_id, raw_json
-       FROM events WHERE session_id = ? ORDER BY timestamp, seq`,
-    )
-    .all(id) as any[];
+/** The session's tool calls, with any spilled full output attached.
+ *
+ * When a result_summary is the "Full output saved to: …/tool-results/<name>.txt" marker (the
+ * transcript's 280-char stand-in), the un-truncated text is pulled from tool_results so the UI can
+ * expand it. Keyed by (session_id, name); guarded for a pre-ingest DB. */
+function loadToolCalls(db: DB, id: string): any[] {
   const toolRows = db
     .prepare(
       `SELECT id, event_uuid, tool_name, skill_name, skill_id, agent_type, spawned_session_id,
@@ -286,9 +276,6 @@ export function getSession(db: DB, id: string) {
     )
     .all(id) as any[];
 
-  // Spilled full tool outputs: when a result_summary is the "Full output saved to: …/tool-results/
-  // <name>.txt" marker (the transcript's 280-char stand-in), attach the un-truncated text from
-  // tool_results so the UI can expand it. Keyed by (session_id, name); guarded for a pre-ingest DB.
   if (tableExists(db, "tool_results")) {
     const getFull = db.prepare("SELECT text, bytes FROM tool_results WHERE session_id = ? AND name = ?");
     for (const t of toolRows) {
@@ -298,40 +285,53 @@ export function getSession(db: DB, id: string) {
       if (full) t.full_result = { text: full.text, bytes: full.bytes };
     }
   }
+  return toolRows;
+}
 
-  // Security findings (ADR-017): attach each tool call's findings inline (for the transcript severity
-  // badge + "why" panel) and collect a session-level list for the header summary. Guarded for a
-  // read-only pre-ingest DB whose schema predates the findings table.
+/** Security findings (ADR-017): attaches each tool call's findings inline (for the transcript severity
+ * badge + "why" panel) and returns the session-level list for the header summary, most-severe first.
+ * Guarded for a read-only pre-ingest DB whose schema predates the findings table. */
+function loadFindings(db: DB, id: string, toolRows: any[]): any[] {
+  if (!tableExists(db, "findings")) return [];
   const sessionFindings: any[] = [];
-  if (tableExists(db, "findings")) {
-    const findingRows = db
-      .prepare(
-        `SELECT id, tool_call_id, event_uuid, turn_id, rule_id, category, framework_ref, severity, title, evidence, signals_json
-         FROM findings WHERE session_id = ?`,
-      )
-      .all(id) as any[];
-    const byToolCall = new Map<string, any[]>();
-    for (const fr of findingRows) {
-      const f = {
-        id: fr.id,
-        tool_call_id: fr.tool_call_id,
-        event_uuid: fr.event_uuid,
-        turn_id: fr.turn_id,
-        rule_id: fr.rule_id,
-        category: fr.category,
-        framework_ref: fr.framework_ref,
-        severity: fr.severity,
-        title: fr.title,
-        evidence: fr.evidence,
-        signals: safeJson(fr.signals_json),
-      };
-      sessionFindings.push(f);
-      if (fr.tool_call_id) (byToolCall.get(fr.tool_call_id) ?? byToolCall.set(fr.tool_call_id, []).get(fr.tool_call_id))!.push(f);
-    }
-    for (const t of toolRows) t.findings = byToolCall.get(t.id) ?? [];
-    // Most-severe first so a session banner can lead with the worst.
-    sessionFindings.sort((a, b) => severityRank(b.severity) - severityRank(a.severity));
+  const findingRows = db
+    .prepare(
+      `SELECT id, tool_call_id, event_uuid, turn_id, rule_id, category, framework_ref, severity, title, evidence, signals_json
+       FROM findings WHERE session_id = ?`,
+    )
+    .all(id) as any[];
+  const byToolCall = new Map<string, any[]>();
+  for (const fr of findingRows) {
+    const f = {
+      id: fr.id,
+      tool_call_id: fr.tool_call_id,
+      event_uuid: fr.event_uuid,
+      turn_id: fr.turn_id,
+      rule_id: fr.rule_id,
+      category: fr.category,
+      framework_ref: fr.framework_ref,
+      severity: fr.severity,
+      title: fr.title,
+      evidence: fr.evidence,
+      signals: safeJson(fr.signals_json),
+    };
+    sessionFindings.push(f);
+    if (fr.tool_call_id) (byToolCall.get(fr.tool_call_id) ?? byToolCall.set(fr.tool_call_id, []).get(fr.tool_call_id))!.push(f);
   }
+  for (const t of toolRows) t.findings = byToolCall.get(t.id) ?? [];
+  // Most-severe first so a session banner can lead with the worst.
+  sessionFindings.sort((a, b) => severityRank(b.severity) - severityRank(a.severity));
+  return sessionFindings;
+}
+
+/** The session's transcript events in order, each with its flattened text/thinking and its tool calls. */
+function loadEvents(db: DB, id: string, toolRows: any[]) {
+  const eventRows = db
+    .prepare(
+      `SELECT uuid, type, role, timestamp, model, is_sidechain, turn_id, raw_json
+       FROM events WHERE session_id = ? ORDER BY timestamp, seq`,
+    )
+    .all(id) as any[];
 
   const toolsByEvent = new Map<string, any[]>();
   for (const t of toolRows) {
@@ -339,7 +339,7 @@ export function getSession(db: DB, id: string) {
     (toolsByEvent.get(t.event_uuid) ?? toolsByEvent.set(t.event_uuid, []).get(t.event_uuid))!.push(t);
   }
 
-  const events = eventRows.map((e) => {
+  return eventRows.map((e) => {
     const { text, thinking } = extractParts(e.raw_json);
     return {
       uuid: e.uuid,
@@ -354,62 +354,54 @@ export function getSession(db: DB, id: string) {
       toolCalls: toolsByEvent.get(e.uuid) ?? [],
     };
   });
+}
 
-  // Keep the token categories split so the UI can show input/output/cache-write/cache-read
-  // separately. Cache stays IN the total and IS cost-attributed (at its discounted rate) — it is
-  // differentiated, never dropped.
-  const usage = sessionUsage(db, id);
-  const split = splitOf(usage);
-  session.tokens = tokensOf(split);
-  session.token_split = split;
-  session.cost = costOf(usage);
-  session.title = session.ai_title || session.slug || null;
-
-  // Heuristic classification (Phase 4): category + complexity + the signals that produced them
-  // (tool/skill mix, LoC, files, subagent count) — already captured in signals_json by the classifier.
+/** Heuristic classification (Phase 4): category + complexity + the signals that produced them
+ * (tool/skill mix, LoC, files, subagent count) — already captured in signals_json by the classifier. */
+function loadClassification(db: DB, id: string): any {
   const cls = db
     .prepare(
       `SELECT category, complexity_score, complexity_band, signals_json, classifier_version
        FROM classifications WHERE scope = 'session' AND target_id = ?`,
     )
     .get(id) as any;
-  let classification: any = null;
-  if (cls) {
-    let signals: any = null;
-    try {
-      signals = cls.signals_json ? JSON.parse(cls.signals_json) : null;
-    } catch {
-      /* ignore malformed */
-    }
-    classification = {
-      category: cls.category,
-      complexity_score: cls.complexity_score,
-      complexity_band: cls.complexity_band,
-      classifier_version: cls.classifier_version,
-      signals,
-    };
+  if (!cls) return null;
+  let signals: any = null;
+  try {
+    signals = cls.signals_json ? JSON.parse(cls.signals_json) : null;
+  } catch {
+    /* ignore malformed */
   }
+  return {
+    category: cls.category,
+    complexity_score: cls.complexity_score,
+    complexity_band: cls.complexity_band,
+    classifier_version: cls.classifier_version,
+    signals,
+  };
+}
 
-  // Subagent linkage (schema v3): if this is a sidechain session, resolve the parent turn/session
-  // that spawned it so the UI can offer a "spawned by" crumb back to the originating turn.
-  let parent: { id: string; title: string | null; turn_seq: number | null } | null = null;
-  if (session.parent_session_id) {
-    const p = db
-      .prepare(
-        `SELECT ps.id, ps.ai_title, ps.slug, t.seq AS turn_seq
-         FROM sessions ps LEFT JOIN turns t ON t.id = ?
-         WHERE ps.id = ?`,
-      )
-      .get(session.parent_turn_id, session.parent_session_id) as any;
-    if (p) parent = { id: p.id, title: p.ai_title || p.slug || null, turn_seq: p.turn_seq ?? null };
-  }
+/** Subagent linkage (schema v3): if this is a sidechain session, resolve the parent turn/session that
+ * spawned it so the UI can offer a "spawned by" crumb back to the originating turn. */
+function loadParent(db: DB, session: any): { id: string; title: string | null; turn_seq: number | null } | null {
+  if (!session.parent_session_id) return null;
+  const p = db
+    .prepare(
+      `SELECT ps.id, ps.ai_title, ps.slug, t.seq AS turn_seq
+       FROM sessions ps LEFT JOIN turns t ON t.id = ?
+       WHERE ps.id = ?`,
+    )
+    .get(session.parent_turn_id, session.parent_session_id) as any;
+  return p ? { id: p.id, title: p.ai_title || p.slug || null, turn_seq: p.turn_seq ?? null } : null;
+}
 
-  // Spawned subagents (schema v3): sessions whose parent_session_id points back here. Nesting them
-  // under the parent is why the flat session list defaults to main-only — a task with N subagents is
-  // one row with N children, not N+1 sibling rows sharing the same slug.
-  // Subagent metadata sidecars (session_meta) supply the authoritative agentType/description/spawnDepth
-  // — LEFT JOIN so a subagent still lists when its meta hasn't been ingested (or the table is absent on
-  // a pre-ingest read-only DB).
+/** Spawned subagents (schema v3): sessions whose parent_session_id points back here. Nesting them
+ * under the parent is why the flat session list defaults to main-only — a task with N subagents is
+ * one row with N children, not N+1 sibling rows sharing the same slug.
+ * Subagent metadata sidecars (session_meta) supply the authoritative agentType/description/spawnDepth
+ * — LEFT JOIN so a subagent still lists when its meta hasn't been ingested (or the table is absent on
+ * a pre-ingest read-only DB). */
+function loadChildren(db: DB, id: string): any[] {
   const hasMeta = tableExists(db, "session_meta");
   const children = db
     .prepare(
@@ -426,15 +418,18 @@ export function getSession(db: DB, id: string) {
     ch.tokens = tokensOf(splitOf(u));
     ch.cost = costOf(u);
   }
+  return children;
+}
 
-  // Workflow runs launched from THIS session: each Workflow tool_call carries a run id + name and sits
-  // on a turn. This lets the UI group the spawned subagents by run and link each group back to the
-  // exact launching turn (turn_seq) — instead of one flat, unattributed fan-out list.
-  // Run status rides along from the result sidecar (workflow_results) when ingested, so the session's
-  // workflow-run groups can flag a failed/completed run at a glance. NULL when no sidecar (async, still
-  // pending) or the table isn't present yet (read-only pre-ingest DB).
+/** Workflow runs launched from THIS session: each Workflow tool_call carries a run id + name and sits
+ * on a turn. This lets the UI group the spawned subagents by run and link each group back to the
+ * exact launching turn (turn_seq) — instead of one flat, unattributed fan-out list.
+ * Run status rides along from the result sidecar (workflow_results) when ingested, so the session's
+ * workflow-run groups can flag a failed/completed run at a glance. NULL when no sidecar (async, still
+ * pending) or the table isn't present yet (read-only pre-ingest DB). */
+function loadWorkflowRuns(db: DB, id: string): any[] {
   const hasWR = tableExists(db, "workflow_results");
-  const workflow_runs = db
+  return db
     .prepare(
       `SELECT tc.workflow_run_id AS run_id, tc.workflow_name AS name, t.seq AS turn_seq,
               (SELECT COUNT(*) FROM sessions s WHERE s.workflow_run_id = tc.workflow_run_id) AS agent_count
@@ -444,29 +439,69 @@ export function getSession(db: DB, id: string) {
        ORDER BY t.seq`,
     )
     .all(id) as any[];
+}
 
-  // Tool-call error roll-up for the detail header. Computed from the already-fetched toolRows so no extra
-  // query is needed. The raw error count is authoritative; the failure-vs-rejection split uses the stored
-  // heuristic error_type (rejection = the user/guardrail declined the call, not an agent failure).
+/** File-modification provenance (ADR-022): the session's derived Edit/Write/NotebookEdit file
+ * changes, for the "Files changed" header roll-up. Guarded for a pre-v14 read-only DB. */
+function loadFileChanges(db: DB, id: string): any[] {
+  if (!tableExists(db, "file_changes")) return [];
+  return db
+    .prepare(
+      `SELECT fc.id, fc.tool_call_id, fc.turn_id, fc.event_uuid, fc.file_path, fc.tool_name,
+              fc.lines_added, fc.lines_removed, fc.timestamp
+       FROM file_changes fc WHERE fc.session_id = ? ORDER BY fc.timestamp`,
+    )
+    .all(id) as any[];
+}
+
+/** Roll-ups written onto the session row for the detail header: token split + cost, display title, and
+ * the tool-call error counts (computed from the already-fetched toolRows, so no extra query).
+ *
+ * Tokens keep their categories split so the UI can show input/output/cache-write/cache-read separately.
+ * Cache stays IN the total and IS cost-attributed (at its discounted rate) — differentiated, never
+ * dropped. The raw error count is authoritative; the failure-vs-rejection split uses the stored
+ * heuristic error_type (rejection = the user/guardrail declined the call, not an agent failure). */
+function attachSessionTotals(db: DB, session: any, id: string, toolRows: any[]): void {
+  const usage = sessionUsage(db, id);
+  const split = splitOf(usage);
+  session.tokens = tokensOf(split);
+  session.token_split = split;
+  session.cost = costOf(usage);
+  session.title = session.ai_title || session.slug || null;
+
   session.tool_call_count = toolRows.length;
   session.tool_error_count = toolRows.filter((t) => t.status === "error").length;
   session.tool_rejection_count = toolRows.filter((t) => t.status === "error" && t.error_type && errorKind(t.error_type) === "rejection").length;
   session.tool_failure_count = session.tool_error_count - session.tool_rejection_count;
+}
 
-  // File-modification provenance (ADR-022): the session's derived Edit/Write/NotebookEdit file
-  // changes, for the "Files changed" header roll-up. Guarded for a pre-v14 read-only DB.
-  let fileChanges: any[] = [];
-  if (tableExists(db, "file_changes")) {
-    fileChanges = db
-      .prepare(
-        `SELECT fc.id, fc.tool_call_id, fc.turn_id, fc.event_uuid, fc.file_path, fc.tool_name,
-                fc.lines_added, fc.lines_removed, fc.timestamp
-         FROM file_changes fc WHERE fc.session_id = ? ORDER BY fc.timestamp`,
-      )
-      .all(id) as any[];
-  }
+export function getSession(db: DB, id: string) {
+  const session = db
+    .prepare(
+      `SELECT s.*, p.path AS project_path FROM sessions s
+       LEFT JOIN projects p ON p.id = s.project_id WHERE s.id = ?`,
+    )
+    .get(id) as any;
+  if (!session) return null;
 
-  return { session, turns, events, classification, parent, children, workflow_runs, findings: sessionFindings, file_changes: fileChanges };
+  const turns = db.prepare("SELECT * FROM turns WHERE session_id = ? ORDER BY seq").all(id);
+  const toolRows = loadToolCalls(db, id);
+  const findings = loadFindings(db, id, toolRows);
+  const events = loadEvents(db, id, toolRows);
+
+  attachSessionTotals(db, session, id, toolRows);
+
+  return {
+    session,
+    turns,
+    events,
+    classification: loadClassification(db, id),
+    parent: loadParent(db, session),
+    children: loadChildren(db, id),
+    workflow_runs: loadWorkflowRuns(db, id),
+    findings,
+    file_changes: loadFileChanges(db, id),
+  };
 }
 
 /**
@@ -491,26 +526,33 @@ export function safeJson(s: string | null): unknown {
   }
 }
 
-export function getWorkflow(db: DB, runId: string) {
-  const wf = db
-    .prepare(
-      `SELECT tc.id AS tool_use_id, tc.workflow_run_id AS run_id, tc.workflow_name AS name, tc.status, tc.result_summary,
-              tc.input_json AS input_json,
-              tc.session_id AS parent_session_id, t.seq AS turn_seq,
-              ps.ai_title AS parent_ai_title, ps.slug AS parent_slug
-       FROM tool_calls tc
-       LEFT JOIN turns t ON t.id = tc.turn_id
-       LEFT JOIN sessions ps ON ps.id = tc.session_id
-       WHERE tc.workflow_run_id = ? AND tc.tool_name = 'Workflow'
-       ORDER BY t.seq
-       LIMIT 1`,
-    )
-    .get(runId) as any;
-  if (!wf) return null;
+interface WorkflowCompletion {
+  status: string | null;
+  summary: string | null;
+  result: string | null;
+  failures: string | null;
+}
 
-  // Subagent sessions in this run (same projection as getSession's children, plus the wall-clock
-  // fields so the page can show each agent's span and a run-level min/max). LEFT JOIN session_meta for
-  // the authoritative type/description/depth — these workflow agents carry none in-transcript.
+interface WorkflowRunRollup {
+  status: string | null;
+  summary: string | null;
+  default_model: string | null;
+  agent_count: number | null;
+  total_tokens: number | null;
+  total_tool_calls: number | null;
+  duration_ms: number | null;
+  started_at: string | null;
+  ended_at: string | null;
+  phases: unknown;
+  logs: unknown;
+  progress: unknown;
+}
+
+/** Subagent sessions in this run (same projection as getSession's children, plus the wall-clock fields
+ * so the page can show each agent's span and a run-level min/max), with the run's token/cost/span
+ * roll-up computed over them. LEFT JOIN session_meta for the authoritative type/description/depth —
+ * these workflow agents carry none in-transcript. */
+function loadAgents(db: DB, runId: string) {
   const hasMeta = tableExists(db, "session_meta");
   const agents = db
     .prepare(
@@ -538,32 +580,42 @@ export function getWorkflow(db: DB, runId: string) {
   }
   const duration_ms = started_at && ended_at ? new Date(ended_at).getTime() - new Date(started_at).getTime() : null;
 
-  // The workflow's ACTUAL result arrives later as a `<task-notification>` user message in the
-  // launching session — tc.result_summary is only the "launched in background" ack. Find that
-  // message by the Workflow tool-use id and surface its completion status, summary, result, and
-  // failures. (The same task can notify more than once; take the most recent.)
-  let completion: { status: string | null; summary: string | null; result: string | null; failures: string | null } | null = null;
-  if (wf.tool_use_id && wf.parent_session_id) {
-    const ev = db
-      .prepare(
-        `SELECT raw_json FROM events
-         WHERE session_id = ? AND text LIKE '%<task-notification>%' AND text LIKE ?
-         ORDER BY timestamp DESC LIMIT 1`,
-      )
-      .get(wf.parent_session_id, `%${wf.tool_use_id}%`) as any;
-    if (ev) {
-      const { text } = extractParts(ev.raw_json);
-      const t = text ?? "";
-      completion = { status: xmlTag(t, "status"), summary: xmlTag(t, "summary"), result: xmlTag(t, "result"), failures: xmlTag(t, "failures") };
-    }
-  }
+  return {
+    agents,
+    stats: { agent_count: agents.length, total_tokens, total_cost: Number(total_cost.toFixed(4)), started_at, ended_at, duration_ms },
+  };
+}
 
-  // The runner's own result sidecar (workflow_results), ingested from wf_<id>.json. It's the
-  // authoritative record of how the run finished — especially for async runs that never posted a
-  // task-notification (completion above stays null) or that failed before fanning out any agents.
-  // Sidecar-preferred: it supplies status + the returned result and fills the completion when the
-  // transcript has none. Its self-reported roll-up (model, tokens, tool calls, phases, per-item logs,
-  // duration, agent count) rides along as `run` so the page can show it even with zero ingested agents.
+/** The workflow's ACTUAL result, which arrives later as a `<task-notification>` user message in the
+ * launching session — tc.result_summary is only the "launched in background" ack. Finds that message by
+ * the Workflow tool-use id and surfaces its completion status, summary, result, and failures. (The same
+ * task can notify more than once; takes the most recent.) */
+function parseCompletion(db: DB, wf: any): WorkflowCompletion | null {
+  if (!wf.tool_use_id || !wf.parent_session_id) return null;
+  const ev = db
+    .prepare(
+      `SELECT raw_json FROM events
+       WHERE session_id = ? AND text LIKE '%<task-notification>%' AND text LIKE ?
+       ORDER BY timestamp DESC LIMIT 1`,
+    )
+    .get(wf.parent_session_id, `%${wf.tool_use_id}%`) as any;
+  if (!ev) return null;
+  const { text } = extractParts(ev.raw_json);
+  const t = text ?? "";
+  return { status: xmlTag(t, "status"), summary: xmlTag(t, "summary"), result: xmlTag(t, "result"), failures: xmlTag(t, "failures") };
+}
+
+/** The runner's own result sidecar (workflow_results), ingested from wf_<id>.json. It's the
+ * authoritative record of how the run finished — especially for async runs that never posted a
+ * task-notification (`completion` stays null) or that failed before fanning out any agents.
+ * Sidecar-preferred: it supplies status + the returned result and fills the completion when the
+ * transcript has none. Its self-reported roll-up (model, tokens, tool calls, phases, per-item logs,
+ * duration, agent count) rides along as `run` so the page can show it even with zero ingested agents. */
+function loadRunSidecar(
+  db: DB,
+  runId: string,
+  completion: WorkflowCompletion | null,
+): { wr: any; run: WorkflowRunRollup | null; completion: WorkflowCompletion | null } {
   const wr = tableExists(db, "workflow_results")
     ? (db
         .prepare(
@@ -571,49 +623,57 @@ export function getWorkflow(db: DB, runId: string) {
                   agent_count, total_tokens, total_tool_calls, duration_ms, started_at, ended_at
            FROM workflow_results WHERE run_id = ?`,
         )
-        .get(wf.run_id) as any)
+        .get(runId) as any)
     : null;
+  if (!wr) return { wr: null, run: null, completion };
 
-  let run: {
-    status: string | null;
-    summary: string | null;
-    default_model: string | null;
-    agent_count: number | null;
-    total_tokens: number | null;
-    total_tool_calls: number | null;
-    duration_ms: number | null;
-    started_at: string | null;
-    ended_at: string | null;
-    phases: unknown;
-    logs: unknown;
-    progress: unknown;
-  } | null = null;
-  if (wr) {
-    run = {
-      status: wr.status ?? null,
-      summary: wr.summary ?? null,
-      default_model: wr.default_model ?? null,
-      agent_count: wr.agent_count ?? null,
-      total_tokens: wr.total_tokens ?? null,
-      total_tool_calls: wr.total_tool_calls ?? null,
-      duration_ms: wr.duration_ms ?? null,
-      started_at: wr.started_at ?? null,
-      ended_at: wr.ended_at ?? null,
-      phases: safeJson(wr.phases_json),
-      logs: safeJson(wr.logs_json),
-      // The per-phase/per-agent event timeline (workflowProgress) — lets the page render a phase graph
-      // with a per-phase descriptor (agent count, models). Absent on older/failed runs → UI falls back.
-      progress: safeJson(wr.progress_json),
+  const run: WorkflowRunRollup = {
+    status: wr.status ?? null,
+    summary: wr.summary ?? null,
+    default_model: wr.default_model ?? null,
+    agent_count: wr.agent_count ?? null,
+    total_tokens: wr.total_tokens ?? null,
+    total_tool_calls: wr.total_tool_calls ?? null,
+    duration_ms: wr.duration_ms ?? null,
+    started_at: wr.started_at ?? null,
+    ended_at: wr.ended_at ?? null,
+    phases: safeJson(wr.phases_json),
+    logs: safeJson(wr.logs_json),
+    // The per-phase/per-agent event timeline (workflowProgress) — lets the page render a phase graph
+    // with a per-phase descriptor (agent count, models). Absent on older/failed runs → UI falls back.
+    progress: safeJson(wr.progress_json),
+  };
+
+  if (wr.result_json != null || wr.status) {
+    completion = {
+      status: wr.status ?? completion?.status ?? null,
+      summary: wr.summary ?? completion?.summary ?? null,
+      result: wr.result_json ?? completion?.result ?? null,
+      failures: completion?.failures ?? null,
     };
-    if (wr.result_json != null || wr.status) {
-      completion = {
-        status: wr.status ?? completion?.status ?? null,
-        summary: wr.summary ?? completion?.summary ?? null,
-        result: wr.result_json ?? completion?.result ?? null,
-        failures: completion?.failures ?? null,
-      };
-    }
   }
+  return { wr, run, completion };
+}
+
+export function getWorkflow(db: DB, runId: string) {
+  const wf = db
+    .prepare(
+      `SELECT tc.id AS tool_use_id, tc.workflow_run_id AS run_id, tc.workflow_name AS name, tc.status, tc.result_summary,
+              tc.input_json AS input_json,
+              tc.session_id AS parent_session_id, t.seq AS turn_seq,
+              ps.ai_title AS parent_ai_title, ps.slug AS parent_slug
+       FROM tool_calls tc
+       LEFT JOIN turns t ON t.id = tc.turn_id
+       LEFT JOIN sessions ps ON ps.id = tc.session_id
+       WHERE tc.workflow_run_id = ? AND tc.tool_name = 'Workflow'
+       ORDER BY t.seq
+       LIMIT 1`,
+    )
+    .get(runId) as any;
+  if (!wf) return null;
+
+  const { agents, stats } = loadAgents(db, runId);
+  const { wr, run, completion } = loadRunSidecar(db, wf.run_id, parseCompletion(db, wf));
 
   return {
     run_id: wf.run_id,
@@ -625,7 +685,7 @@ export function getWorkflow(db: DB, runId: string) {
     run,
     parent: { id: wf.parent_session_id, title: wf.parent_ai_title || wf.parent_slug || null, turn_seq: wf.turn_seq ?? null },
     agents,
-    stats: { agent_count: agents.length, total_tokens, total_cost: Number(total_cost.toFixed(4)), started_at, ended_at, duration_ms },
+    stats,
   };
 }
 

@@ -184,57 +184,52 @@ export function buildTurns(
  * session is rebuilt — the migration/reset path. Returns the expanded id set (or null for the full
  * path) so `classify()` can reuse it without re-expanding.
  */
-export function rebuildDerived(db: DB, dirty?: Set<string> | null): Set<string> | null {
-  const incremental = dirty != null;
-  // Scope fragments: empty for the full rebuild, else restrict to the materialized _dirty temp table.
-  const bySession = incremental ? " WHERE session_id IN (SELECT id FROM _dirty)" : "";
-  const byId = incremental ? " WHERE id IN (SELECT id FROM _dirty)" : "";
-  const andId = incremental ? " AND id IN (SELECT id FROM _dirty)" : "";
-  const andSelfId = incremental ? " AND sessions.id IN (SELECT id FROM _dirty)" : "";
+/** SQL fragments that scope every derived-data statement to the rebuild's session set: empty strings
+ * for a full rebuild, else a restriction to the materialized `_dirty` temp table. */
+interface Scope {
+  bySession: string;
+  byId: string;
+  andId: string;
+  andSelfId: string;
+}
 
-  if (dirty != null) {
-    createDirtySet(db, "_dirty", dirty);
-    // Fixpoint expansion to the linkage neighborhood: a dirty parent pulls in the children it spawned,
-    // and a dirty child pulls in its spawner parent. Loop until the set stops growing (covers nested
-    // subagents). Bounded by the session count.
-    const expand = db.prepare(`
-      INSERT OR IGNORE INTO _dirty (id)
-        SELECT spawned_session_id FROM tool_calls
-          WHERE session_id IN (SELECT id FROM _dirty) AND spawned_session_id IS NOT NULL
-        UNION
-        SELECT session_id FROM tool_calls
-          WHERE spawned_session_id IN (SELECT id FROM _dirty)
-        UNION
-        -- structural (path-based) workflow linkage: a dirty parent pulls in its subagent children,
-        -- and a dirty child pulls in its structural parent, so the fallback link stays correct when
-        -- parent and child transcripts arrive in different runs (ADR-010).
-        SELECT id FROM sessions
-          WHERE spawn_parent_id IN (SELECT id FROM _dirty)
-        UNION
-        SELECT spawn_parent_id FROM sessions
-          WHERE id IN (SELECT id FROM _dirty) AND spawn_parent_id IS NOT NULL
-    `);
-    const count = db.prepare("SELECT COUNT(*) n FROM _dirty");
-    let prev = -1;
-    for (;;) {
-      const n = (count.get() as { n: number }).n;
-      if (n === prev) break;
-      prev = n;
-      expand.run();
-    }
+/** Materialize the dirty set, then grow it to the whole linkage neighborhood: a dirty parent pulls in
+ * the children it spawned, and a dirty child pulls in its spawner parent. Loops to a fixpoint (covers
+ * nested subagents), bounded by the session count. */
+function expandDirtyScope(db: DB, dirty: Set<string>): void {
+  createDirtySet(db, "_dirty", dirty);
+  const expand = db.prepare(`
+    INSERT OR IGNORE INTO _dirty (id)
+      SELECT spawned_session_id FROM tool_calls
+        WHERE session_id IN (SELECT id FROM _dirty) AND spawned_session_id IS NOT NULL
+      UNION
+      SELECT session_id FROM tool_calls
+        WHERE spawned_session_id IN (SELECT id FROM _dirty)
+      UNION
+      -- structural (path-based) workflow linkage: a dirty parent pulls in its subagent children,
+      -- and a dirty child pulls in its structural parent, so the fallback link stays correct when
+      -- parent and child transcripts arrive in different runs (ADR-010).
+      SELECT id FROM sessions
+        WHERE spawn_parent_id IN (SELECT id FROM _dirty)
+      UNION
+      SELECT spawn_parent_id FROM sessions
+        WHERE id IN (SELECT id FROM _dirty) AND spawn_parent_id IS NOT NULL
+  `);
+  const count = db.prepare("SELECT COUNT(*) n FROM _dirty");
+  let prev = -1;
+  for (;;) {
+    const n = (count.get() as { n: number }).n;
+    if (n === prev) break;
+    prev = n;
+    expand.run();
   }
+}
 
-  // Recompute turns from the (idempotent) events table.
-  // Null referencing turn_ids BEFORE deleting turns (FK: events/token_usage/tool_calls/sessions -> turns).
-  db.exec(`UPDATE events SET turn_id = NULL${bySession}`);
-  db.exec(`UPDATE token_usage SET turn_id = NULL${bySession}`);
-  db.exec(`UPDATE tool_calls SET turn_id = NULL${bySession}`);
-  // Clear skill-version links for the scope so changed/removed bodies don't leave a stale link.
-  db.exec(`UPDATE tool_calls SET skill_id = NULL${bySession}`);
-  db.exec(`UPDATE sessions SET parent_turn_id = NULL${byId}`);
-  db.exec(`DELETE FROM turns${bySession}`);
-
-  const sessionIds = db.prepare(`SELECT id FROM sessions${byId}`).all() as Array<{ id: string }>;
+/** Rebuild turns from the (idempotent) events table for the scoped sessions, then propagate the new
+ * turn_ids to the dependent tables. Referencing turn_ids are nulled BEFORE the turns are deleted
+ * (FK: events/token_usage/tool_calls/sessions -> turns), and skill-version links are cleared for the
+ * scope so a changed/removed body can't leave a stale link. */
+function rebuildTurns(db: DB, scope: Scope, sessionIds: Array<{ id: string }>): void {
   const selEvents = db.prepare(
     "SELECT uuid, type, is_sidechain, is_meta, timestamp, model, text FROM events WHERE session_id = ?",
   );
@@ -254,105 +249,107 @@ export function rebuildDerived(db: DB, dirty?: Set<string> | null): Set<string> 
   });
   tx();
 
-  // Propagate turn_id to dependent tables.
-  db.exec(`UPDATE token_usage SET turn_id = (SELECT turn_id FROM events WHERE events.uuid = token_usage.event_uuid)${bySession}`);
-  db.exec(`UPDATE tool_calls SET turn_id = (SELECT turn_id FROM events WHERE events.uuid = tool_calls.event_uuid)${bySession}`);
+  db.exec(`UPDATE token_usage SET turn_id = (SELECT turn_id FROM events WHERE events.uuid = token_usage.event_uuid)${scope.bySession}`);
+  db.exec(`UPDATE tool_calls SET turn_id = (SELECT turn_id FROM events WHERE events.uuid = tool_calls.event_uuid)${scope.bySession}`);
+}
 
-  // Link each Skill tool_call to a content-addressed skill *version*. A firing injects the full
-  // SKILL.md body as an isMeta user event right after the launch; we pair each Skill tool_call with
-  // the following injection (by skill-name token, ARGUMENTS as tiebreak), normalize + hash the body,
-  // UPSERT the version, and stamp tool_calls.skill_id. Firings without a captured body keep skill_id
-  // NULL (skill_name stays set). Runs over the same scoped session set as the turn rebuild.
-  {
-    const selEventsOrdered = db.prepare(
-      "SELECT uuid, type, is_meta, timestamp, text FROM events WHERE session_id = ?",
-    );
-    const selSkillCalls = db.prepare(
-      "SELECT id, event_uuid, skill_name, input_json FROM tool_calls WHERE session_id = ? AND tool_name = 'Skill'",
-    );
-    const upsertSkill = db.prepare(
-      `INSERT INTO skills (id, name, base_dir, body, summary, body_bytes, first_seen, last_seen)
-       VALUES (@id, @name, @base_dir, @body, @summary, @body_bytes, @ts, @ts)
-       ON CONFLICT(id) DO UPDATE SET
-         last_seen  = MAX(last_seen,  excluded.last_seen),
-         first_seen = MIN(first_seen, excluded.first_seen),
-         base_dir   = excluded.base_dir`,
-    );
-    const linkCall = db.prepare("UPDATE tool_calls SET skill_id = ? WHERE id = ?");
+/** Link each Skill tool_call to a content-addressed skill *version*. A firing injects the full
+ * SKILL.md body as an isMeta user event right after the launch; we pair each Skill tool_call with
+ * the following injection (by skill-name token, ARGUMENTS as tiebreak), normalize + hash the body,
+ * UPSERT the version, and stamp tool_calls.skill_id. Firings without a captured body keep skill_id
+ * NULL (skill_name stays set). Runs over the same scoped session set as the turn rebuild. */
+function linkSkillVersions(db: DB, sessionIds: Array<{ id: string }>): void {
+  const selEventsOrdered = db.prepare(
+    "SELECT uuid, type, is_meta, timestamp, text FROM events WHERE session_id = ?",
+  );
+  const selSkillCalls = db.prepare(
+    "SELECT id, event_uuid, skill_name, input_json FROM tool_calls WHERE session_id = ? AND tool_name = 'Skill'",
+  );
+  const upsertSkill = db.prepare(
+    `INSERT INTO skills (id, name, base_dir, body, summary, body_bytes, first_seen, last_seen)
+     VALUES (@id, @name, @base_dir, @body, @summary, @body_bytes, @ts, @ts)
+     ON CONFLICT(id) DO UPDATE SET
+       last_seen  = MAX(last_seen,  excluded.last_seen),
+       first_seen = MIN(first_seen, excluded.first_seen),
+       base_dir   = excluded.base_dir`,
+  );
+  const linkCall = db.prepare("UPDATE tool_calls SET skill_id = ? WHERE id = ?");
 
-    const linkTx = db.transaction(() => {
-      for (const { id: sid } of sessionIds) {
-        const calls = selSkillCalls.all(sid) as Array<{ id: string; event_uuid: string | null; skill_name: string | null; input_json: string | null }>;
-        if (!calls.length) continue;
-        const events = (selEventsOrdered.all(sid) as Array<{ uuid: string; type: string; is_meta: number; timestamp: string | null; text: string | null }>).sort(
-          (x, y) => (x.timestamp ?? "").localeCompare(y.timestamp ?? "") || x.uuid.localeCompare(y.uuid),
-        );
-        const callByEvent = new Map<string, typeof calls>();
-        for (const c of calls) {
-          if (!c.event_uuid) continue;
-          const arr = callByEvent.get(c.event_uuid) ?? [];
-          arr.push(c);
-          callByEvent.set(c.event_uuid, arr);
-        }
-        // Queue of pending Skill calls awaiting their body injection, keyed by skill-name token.
-        const pending = new Map<string, Array<{ id: string; args: string | null }>>();
-        for (const e of events) {
-          const here = callByEvent.get(e.uuid);
-          if (here) {
-            for (const c of here) {
-              if (!c.skill_name) continue;
-              const key = skillNameKey(c.skill_name);
-              let args: string | null = null;
-              try {
-                args = c.input_json ? (JSON.parse(c.input_json).args ?? null) : null;
-                if (typeof args === "string") args = args.trim() || null;
-                else if (args != null) args = JSON.stringify(args);
-              } catch {
-                /* keep null */
-              }
-              const arr = pending.get(key) ?? [];
-              arr.push({ id: c.id, args });
-              pending.set(key, arr);
-            }
-          }
-          if (e.is_meta !== 1 || e.type !== "user" || !e.text) continue;
-          const inj = parseSkillInjection(e.text);
-          if (!inj) continue;
-          const queue = pending.get(inj.nameKey);
-          if (!queue || !queue.length) continue;
-          // Prefer a call whose args match the injection's ARGUMENTS; else take the earliest pending.
-          let idx = inj.args != null ? queue.findIndex((q) => q.args === inj.args) : -1;
-          if (idx < 0) idx = 0;
-          const [match] = queue.splice(idx, 1);
-          const c = calls.find((x) => x.id === match.id)!;
-          const name = c.skill_name!;
-          const vid = skillVersionId(name, inj.body);
-          upsertSkill.run({
-            id: vid,
-            name,
-            base_dir: inj.baseDir,
-            body: inj.body,
-            summary: skillSummary(inj.body),
-            body_bytes: Buffer.byteLength(inj.body, "utf8"),
-            ts: e.timestamp,
-          });
-          linkCall.run(vid, match.id);
-        }
+  const linkTx = db.transaction(() => {
+    for (const { id: sid } of sessionIds) {
+      const calls = selSkillCalls.all(sid) as Array<{ id: string; event_uuid: string | null; skill_name: string | null; input_json: string | null }>;
+      if (!calls.length) continue;
+      const events = (selEventsOrdered.all(sid) as Array<{ uuid: string; type: string; is_meta: number; timestamp: string | null; text: string | null }>).sort(
+        (x, y) => (x.timestamp ?? "").localeCompare(y.timestamp ?? "") || x.uuid.localeCompare(y.uuid),
+      );
+      const callByEvent = new Map<string, typeof calls>();
+      for (const c of calls) {
+        if (!c.event_uuid) continue;
+        const arr = callByEvent.get(c.event_uuid) ?? [];
+        arr.push(c);
+        callByEvent.set(c.event_uuid, arr);
       }
-    });
-    linkTx();
-  }
+      // Queue of pending Skill calls awaiting their body injection, keyed by skill-name token.
+      const pending = new Map<string, Array<{ id: string; args: string | null }>>();
+      for (const e of events) {
+        const here = callByEvent.get(e.uuid);
+        if (here) {
+          for (const c of here) {
+            if (!c.skill_name) continue;
+            const key = skillNameKey(c.skill_name);
+            let args: string | null = null;
+            try {
+              args = c.input_json ? (JSON.parse(c.input_json).args ?? null) : null;
+              if (typeof args === "string") args = args.trim() || null;
+              else if (args != null) args = JSON.stringify(args);
+            } catch {
+              /* keep null */
+            }
+            const arr = pending.get(key) ?? [];
+            arr.push({ id: c.id, args });
+            pending.set(key, arr);
+          }
+        }
+        if (e.is_meta !== 1 || e.type !== "user" || !e.text) continue;
+        const inj = parseSkillInjection(e.text);
+        if (!inj) continue;
+        const queue = pending.get(inj.nameKey);
+        if (!queue || !queue.length) continue;
+        // Prefer a call whose args match the injection's ARGUMENTS; else take the earliest pending.
+        let idx = inj.args != null ? queue.findIndex((q) => q.args === inj.args) : -1;
+        if (idx < 0) idx = 0;
+        const [match] = queue.splice(idx, 1);
+        const c = calls.find((x) => x.id === match.id)!;
+        const name = c.skill_name!;
+        const vid = skillVersionId(name, inj.body);
+        upsertSkill.run({
+          id: vid,
+          name,
+          base_dir: inj.baseDir,
+          body: inj.body,
+          summary: skillSummary(inj.body),
+          body_bytes: Buffer.byteLength(inj.body, "utf8"),
+          ts: e.timestamp,
+        });
+        linkCall.run(vid, match.id);
+      }
+    }
+  });
+  linkTx();
+}
 
-  // Link subagent (sidechain) sessions back to the parent turn/session that spawned them. The
-  // deterministic key is the spawning Task/Agent tool_call's spawned_session_id (== this session id).
+/** Attribute every subagent (sidechain) session to the parent turn/session that spawned it, in
+ * three passes of decreasing precision — each later pass only fills what the earlier one left NULL. */
+function linkParents(db: DB, scope: Scope): void {
+  // 1. The deterministic key: the spawning Task/Agent tool_call's spawned_session_id (== this session id).
   db.exec(`
     UPDATE sessions SET
       parent_session_id = (SELECT tc.session_id FROM tool_calls tc WHERE tc.spawned_session_id = sessions.id),
       parent_turn_id    = (SELECT tc.turn_id    FROM tool_calls tc WHERE tc.spawned_session_id = sessions.id)
-    WHERE EXISTS (SELECT 1 FROM tool_calls tc WHERE tc.spawned_session_id = sessions.id)${andSelfId}
+    WHERE EXISTS (SELECT 1 FROM tool_calls tc WHERE tc.spawned_session_id = sessions.id)${scope.andSelfId}
   `);
 
-  // Workflow fan-out carries no toolUseResult.agentId, so the link above never fires for it
+  // 2. Workflow fan-out carries no toolUseResult.agentId, so the link above never fires for it
   // (finding #1). But the launching Workflow tool_call's result DOES carry a run id (wf_<id>), and the
   // run's subagents nest under …/subagents/workflows/<runId>/ — so sessions.workflow_run_id matches
   // tool_calls.workflow_run_id. That gives workflow agents BOTH their parent session and the exact
@@ -362,10 +359,10 @@ export function rebuildDerived(db: DB, dirty?: Set<string> | null): Set<string> 
       parent_session_id = COALESCE(parent_session_id, (SELECT tc.session_id FROM tool_calls tc WHERE tc.workflow_run_id = sessions.workflow_run_id LIMIT 1)),
       parent_turn_id    = COALESCE(parent_turn_id,    (SELECT tc.turn_id    FROM tool_calls tc WHERE tc.workflow_run_id = sessions.workflow_run_id LIMIT 1))
     WHERE sessions.workflow_run_id IS NOT NULL
-      AND EXISTS (SELECT 1 FROM tool_calls tc WHERE tc.workflow_run_id = sessions.workflow_run_id)${andSelfId}
+      AND EXISTS (SELECT 1 FROM tool_calls tc WHERE tc.workflow_run_id = sessions.workflow_run_id)${scope.andSelfId}
   `);
 
-  // Final fallback for any sidechain still unlinked (e.g. its Workflow tool_call/runId wasn't
+  // 3. Final fallback for any sidechain still unlinked (e.g. its Workflow tool_call/runId wasn't
   // captured, or a non-workflow nested agent): attribute to the structural parent captured at ingest
   // from the transcript's directory location (<parent>/subagents/…) — the deterministic,
   // redaction-surviving signal. parent_turn_id stays NULL here. Tokens stay siloed → no double-count.
@@ -373,44 +370,75 @@ export function rebuildDerived(db: DB, dirty?: Set<string> | null): Set<string> 
     UPDATE sessions SET parent_session_id = spawn_parent_id
     WHERE parent_session_id IS NULL
       AND spawn_parent_id IS NOT NULL
-      AND spawn_parent_id IN (SELECT id FROM sessions)${andSelfId}
+      AND spawn_parent_id IN (SELECT id FROM sessions)${scope.andSelfId}
   `);
+}
 
-  // Recompute session aggregates from events/turns.
+/** Recompute the per-session aggregates (counts, wall-clock span, sidechain flag) from events/turns. */
+function recomputeSessionAggregates(db: DB, scope: Scope): void {
   db.exec(`
     UPDATE sessions SET
       event_count = (SELECT COUNT(*) FROM events e WHERE e.session_id = sessions.id),
       started_at  = (SELECT MIN(timestamp) FROM events e WHERE e.session_id = sessions.id),
       ended_at    = (SELECT MAX(timestamp) FROM events e WHERE e.session_id = sessions.id),
       turn_count  = (SELECT COUNT(*) FROM turns t WHERE t.session_id = sessions.id),
-      is_sidechain = (SELECT CASE WHEN MIN(is_sidechain) = 1 THEN 1 ELSE 0 END FROM events e WHERE e.session_id = sessions.id)${byId}
+      is_sidechain = (SELECT CASE WHEN MIN(is_sidechain) = 1 THEN 1 ELSE 0 END FROM events e WHERE e.session_id = sessions.id)${scope.byId}
   `);
   db.exec(`
     UPDATE sessions SET duration_ms =
       CAST((julianday(ended_at) - julianday(started_at)) * 86400000 AS INTEGER)
-    WHERE started_at IS NOT NULL AND ended_at IS NOT NULL${andId}
+    WHERE started_at IS NOT NULL AND ended_at IS NOT NULL${scope.andId}
   `);
+}
 
-  // Prune phantom sessions: any with zero events is not a real transcript. discover() walks every
-  // *.jsonl under projects/, which sweeps up non-transcript files that happen to live there — e.g.
-  // a Workflow tool's `journal.jsonl` (lines carry no `uuid`, so they yield no events). insSessionStub
-  // still created a row (and they all share the basename → one phantom "journal" session). A zero-event
-  // session has no events/turns/token_usage/tool_calls referencing it, so the delete is FK-safe; the
-  // orphaned-classification sweep keeps the (no-FK) classifications table from accumulating dead rows
-  // (kept global — it is one row per session and must catch any now-missing target).
-  db.exec(`DELETE FROM sessions WHERE event_count = 0${andId}`);
+/** Prune phantom sessions: any with zero events is not a real transcript. discover() walks every
+ * *.jsonl under projects/, which sweeps up non-transcript files that happen to live there — e.g.
+ * a Workflow tool's `journal.jsonl` (lines carry no `uuid`, so they yield no events). insSessionStub
+ * still created a row (and they all share the basename → one phantom "journal" session). A zero-event
+ * session has no events/turns/token_usage/tool_calls referencing it, so the delete is FK-safe.
+ *
+ * The dependent sweeps stay GLOBAL rather than scoped: classifications has no FK and is one row per
+ * session, while detect() and deriveFileChanges run after this rebuild over the dirty scope only — so
+ * a vanished non-dirty session's rows must be cleared here or they leak. */
+function pruneOrphans(db: DB, scope: Scope, incremental: boolean): void {
+  db.exec(`DELETE FROM sessions WHERE event_count = 0${scope.andId}`);
   db.exec("DELETE FROM classifications WHERE scope = 'session' AND target_id NOT IN (SELECT id FROM sessions)");
-  // Security findings for a now-missing session (kept global — detect() runs after this rebuild and
-  // only rescans the dirty scope, so a vanished non-dirty session's rows must be swept here).
   db.exec("DELETE FROM findings WHERE session_id NOT IN (SELECT id FROM sessions)");
-  // Same sweep for file_changes (ADR-022): deriveFileChanges also runs post-rebuild on the dirty
-  // scope only, so a vanished non-dirty session's rows must be cleared here.
   db.exec("DELETE FROM file_changes WHERE session_id NOT IN (SELECT id FROM sessions)");
   // Sweep skill versions no longer referenced by any tool_call. Full path only: an incremental run
   // only re-derives dirty sessions, so a version could still be referenced by a non-dirty session.
   if (!incremental) {
     db.exec("DELETE FROM skills WHERE id NOT IN (SELECT skill_id FROM tool_calls WHERE skill_id IS NOT NULL)");
   }
+}
+
+export function rebuildDerived(db: DB, dirty?: Set<string> | null): Set<string> | null {
+  const incremental = dirty != null;
+  const scope: Scope = {
+    bySession: incremental ? " WHERE session_id IN (SELECT id FROM _dirty)" : "",
+    byId: incremental ? " WHERE id IN (SELECT id FROM _dirty)" : "",
+    andId: incremental ? " AND id IN (SELECT id FROM _dirty)" : "",
+    andSelfId: incremental ? " AND sessions.id IN (SELECT id FROM _dirty)" : "",
+  };
+
+  if (dirty != null) expandDirtyScope(db, dirty);
+
+  // Null referencing turn_ids BEFORE deleting turns (FK: events/token_usage/tool_calls/sessions -> turns).
+  db.exec(`UPDATE events SET turn_id = NULL${scope.bySession}`);
+  db.exec(`UPDATE token_usage SET turn_id = NULL${scope.bySession}`);
+  db.exec(`UPDATE tool_calls SET turn_id = NULL${scope.bySession}`);
+  // Clear skill-version links for the scope so changed/removed bodies don't leave a stale link.
+  db.exec(`UPDATE tool_calls SET skill_id = NULL${scope.bySession}`);
+  db.exec(`UPDATE sessions SET parent_turn_id = NULL${scope.byId}`);
+  db.exec(`DELETE FROM turns${scope.bySession}`);
+
+  const sessionIds = db.prepare(`SELECT id FROM sessions${scope.byId}`).all() as Array<{ id: string }>;
+
+  rebuildTurns(db, scope, sessionIds);
+  linkSkillVersions(db, sessionIds);
+  linkParents(db, scope);
+  recomputeSessionAggregates(db, scope);
+  pruneOrphans(db, scope, incremental);
 
   if (incremental) {
     const expanded = new Set(
