@@ -1,6 +1,9 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Link, useSearchParams } from "react-router-dom";
-import { api, apiPost, SNAPSHOT, type Finding, type FindingsPage, type MuteRow, type Project, type SecuritySummary, type Source } from "./api";
+import { Link } from "react-router-dom";
+import { apiPost, SNAPSHOT, type Finding, type FindingsPage, type MuteRow, type Project, type SecuritySummary, type Source } from "./api";
+import { useFetch, useLookup } from "./useFetch";
+import { useQueryState } from "./useQueryState";
+import { ErrorAlert, Loading } from "./AsyncBoundary";
 import { SortHeader, useSort } from "./sort";
 import { Pager } from "./Pager";
 import { FilterSelect } from "./FilterSelect";
@@ -8,6 +11,8 @@ import { fmtDate } from "./format";
 import { SeverityTag, SEVERITIES } from "./severity";
 
 const PAGE = 50;
+/** Identity-stable placeholder so the table renders empty before the first load. */
+const EMPTY_PAGE: FindingsPage = { total: 0, findings: [] };
 type SortKey = "severity" | "session" | "rule" | "category" | "time";
 
 /**
@@ -18,29 +23,25 @@ type SortKey = "severity" | "session" | "rule" | "category" | "time";
  * those controls are hidden in the static snapshot build (no backend). Reads: GET /api/security/*.
  */
 export default function SecurityView() {
-  const [params, setParams] = useSearchParams();
-  const [summary, setSummary] = useState<SecuritySummary | null>(null);
-  const [page, setPage] = useState<FindingsPage>({ total: 0, findings: [] });
-  const [mutes, setMutes] = useState<MuteRow[]>([]);
-  const [sources, setSources] = useState<Source[]>([]);
-  const [projects, setProjects] = useState<Project[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const { get, set: setParam, clear: clearFilters } = useQueryState();
+  const sources = useLookup<Source[]>("/sources", []);
+  const projects = useLookup<Project[]>("/projects", []);
+  const [actionError, setActionError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [pageNum, setPageNum] = useState(1);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [reloadKey, setReloadKey] = useState(0);
   const { sort, toggle } = useSort<SortKey>("severity", "desc");
 
-  const severity = params.get("severity") ?? "";
-  const category = params.get("category") ?? "";
-  const rule = params.get("rule") ?? "";
-  const session = params.get("session") ?? "";
-  const source = params.get("source") ?? "";
-  const project = params.get("project") ?? "";
-  const from = params.get("from") ?? "";
-  const to = params.get("to") ?? "";
-  const status = params.get("status") ?? "open";
+  const severity = get("severity");
+  const category = get("category");
+  const rule = get("rule");
+  const session = get("session");
+  const source = get("source");
+  const project = get("project");
+  const from = get("from");
+  const to = get("to");
+  const status = get("status", "open");
 
   // The active filter as a query string (shared by the list fetch and dismiss-all-matching).
   const filterQs = useMemo(() => {
@@ -49,51 +50,36 @@ export default function SecurityView() {
     return qs;
   }, [severity, category, rule, session, source, project, from, to, status]);
 
-  useEffect(() => {
-    api<Source[]>("/sources").then(setSources).catch(() => {});
-    api<Project[]>("/projects").then(setProjects).catch(() => {});
-  }, []);
-
-  useEffect(() => {
-    api<SecuritySummary>("/security/summary").then(setSummary).catch(() => {});
-    if (!SNAPSHOT) api<MuteRow[]>("/security/mutes").then(setMutes).catch(() => {});
-  }, [reloadKey]);
+  const summary = useLookup<SecuritySummary | null>("/security/summary", null, [reloadKey]);
+  // No backend in the snapshot build, so there are no mutes to fetch.
+  const mutes = useLookup<MuteRow[]>(SNAPSHOT ? null : "/security/mutes", [], [reloadKey]);
 
   useEffect(() => setPageNum(1), [filterQs.toString(), sort.key, sort.dir]);
   useEffect(() => setSelected(new Set()), [filterQs.toString(), sort.key, sort.dir, pageNum, reloadKey]);
 
-  useEffect(() => {
-    setLoading(true);
-    setError(null);
-    const qs = new URLSearchParams(filterQs);
-    qs.set("sort", sort.key);
-    qs.set("dir", sort.dir);
-    qs.set("limit", String(PAGE));
-    qs.set("offset", String((pageNum - 1) * PAGE));
-    api<FindingsPage>("/security/findings?" + qs.toString())
-      .then(setPage)
-      .catch((e) => setError(String(e)))
-      .finally(() => setLoading(false));
-  }, [filterQs, sort.key, sort.dir, pageNum, reloadKey]);
-
-  const setParam = useCallback(
-    (patch: Record<string, string>) => {
-      const next = new URLSearchParams(params);
-      for (const [k, v] of Object.entries(patch)) v ? next.set(k, v) : next.delete(k);
-      setParams(next);
-    },
-    [params, setParams],
-  );
+  const listQs = new URLSearchParams(filterQs);
+  listQs.set("sort", sort.key);
+  listQs.set("dir", sort.dir);
+  listQs.set("limit", String(PAGE));
+  listQs.set("offset", String((pageNum - 1) * PAGE));
+  const { data: page, loading, error: listError } = useFetch<FindingsPage>("/security/findings?" + listQs.toString(), {
+    deps: [reloadKey],
+  });
+  // One alert slot: a failed triage write is as relevant as a failed list load. A write error clears
+  // when the list reloads, which is what the shared error state used to do implicitly.
+  const error = actionError ?? listError;
+  useEffect(() => setActionError(null), [filterQs, sort.key, sort.dir, pageNum, reloadKey]);
+  const { total, findings } = page ?? EMPTY_PAGE;
 
   // Writes: run the action, then clear selection + reload summary/list/mutes.
   const act = useCallback(async (fn: () => Promise<unknown>) => {
     setBusy(true);
-    setError(null);
+    setActionError(null);
     try {
       await fn();
       setReloadKey((k) => k + 1);
     } catch (e) {
-      setError(String(e));
+      setActionError(String(e));
     } finally {
       setBusy(false);
     }
@@ -103,9 +89,9 @@ export default function SecurityView() {
   // Rules dropdown shows only rules of the selected category (all rules when none selected).
   const ruleOptions = useMemo(() => (summary?.by_rule ?? []).filter((r) => !category || r.category === category), [summary, category]);
 
-  const pages = Math.max(1, Math.ceil(page.total / PAGE));
+  const pages = Math.max(1, Math.ceil(total / PAGE));
   const anyFilter = [...filterQs.keys()].some((k) => k !== "status") || status !== "open";
-  const pageIds = page.findings.map((f) => f.id);
+  const pageIds = findings.map((f) => f.id);
   const allSelected = pageIds.length > 0 && pageIds.every((id) => selected.has(id));
 
   const toggleSel = (id: string) =>
@@ -219,12 +205,12 @@ export default function SecurityView() {
           </span>
         )}
         {anyFilter && (
-          <button type="button" className="ghost" onClick={() => setParams(new URLSearchParams())}>clear filters</button>
+          <button type="button" className="ghost" onClick={clearFilters}>clear filters</button>
         )}
       </div>
 
       {/* Action bar: batch triage of the current selection + bulk dismiss of the whole filter. */}
-      {!SNAPSHOT && (selected.size > 0 || (status === "open" && page.total > 0)) && (
+      {!SNAPSHOT && (selected.size > 0 || (status === "open" && total > 0)) && (
         <div className="triage-bar" role="group" aria-label="Triage actions">
           {selected.size > 0 && status !== "dismissed" && (
             <button type="button" disabled={busy} onClick={() => act(() => apiPost("/security/dismiss", { ids: [...selected] }))}>
@@ -237,27 +223,27 @@ export default function SecurityView() {
             </button>
           )}
           {selected.size > 0 && <button type="button" className="ghost" onClick={() => setSelected(new Set())}>clear selection</button>}
-          {status === "open" && page.total > 0 && (
+          {status === "open" && total > 0 && (
             <button
               type="button"
               className="ghost"
               disabled={busy}
               onClick={() => {
-                if (confirm(`Dismiss all ${page.total} open findings matching the current filter as safe?`))
+                if (confirm(`Dismiss all ${total} open findings matching the current filter as safe?`))
                   act(() => apiPost("/security/dismiss-matching", { filter: Object.fromEntries(filterQs) }));
               }}
               title="Mark every open finding matching the current filter as safe"
             >
-              Dismiss all {page.total} matching
+              Dismiss all {total} matching
             </button>
           )}
         </div>
       )}
 
-      {error && <div className="error" role="alert">{error}</div>}
+      <ErrorAlert error={error} />
       {loading ? (
-        <div className="muted pad" role="status" aria-live="polite">Loading…</div>
-      ) : page.findings.length === 0 ? (
+        <Loading />
+      ) : findings.length === 0 ? (
         <div className="muted pad" role="status">
           {summary && summary.total === 0 && status === "open"
             ? "No open security findings — nothing risky is awaiting review."
@@ -287,7 +273,7 @@ export default function SecurityView() {
             </tr>
           </thead>
           <tbody>
-            {page.findings.map((f) => (
+            {findings.map((f) => (
               <FindingRow
                 key={f.id}
                 f={f}
@@ -303,7 +289,7 @@ export default function SecurityView() {
         </table>
       )}
 
-      {!loading && page.total > PAGE && <Pager page={pageNum} pages={pages} total={page.total} unit="findings" onPage={setPageNum} />}
+      {!loading && total > PAGE && <Pager page={pageNum} pages={pages} total={total} unit="findings" onPage={setPageNum} />}
 
       {!SNAPSHOT && mutes.length > 0 && <MutedRulesPanel mutes={mutes} busy={busy} onUnmute={(m) => act(() => apiPost("/security/unmute", { rule_id: m.rule_id, scope: m.scope, scope_id: m.scope_id }))} />}
 

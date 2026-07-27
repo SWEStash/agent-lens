@@ -1,12 +1,17 @@
-import { useEffect, useState } from "react";
-import { Link, useSearchParams } from "react-router-dom";
-import { api, type FileSummary, type Project, type Source } from "./api";
+import { useState } from "react";
+import { Link } from "react-router-dom";
+import { type FileSummary, type Project, type Source } from "./api";
+import { useFetch, useLookup } from "./useFetch";
+import { useQueryState } from "./useQueryState";
+import { ErrorAlert, Loading } from "./AsyncBoundary";
 import { fmtDate } from "./format";
 import { FilterSelect } from "./FilterSelect";
 import { Pager } from "./Pager";
 import { SortHeader, type SortDir } from "./sort";
 
 const PAGE = 50;
+/** Identity-stable placeholder so the table renders empty (not crashing) before the first load. */
+const EMPTY_PAGE = { total: 0, files: [] as FileSummary[] };
 
 type FileSortKey = "path" | "sessions" | "changes" | "last_ts";
 
@@ -37,65 +42,33 @@ export function LinesDelta({ added, removed }: { added: number | null; removed: 
  * the sessions list. Each row links to the file's provenance timeline.
  */
 export default function FilesView() {
-  const [params, setParams] = useSearchParams();
-  const [sources, setSources] = useState<Source[]>([]);
-  const [projects, setProjects] = useState<Project[]>([]);
-  const [data, setData] = useState<{ total: number; files: FileSummary[] }>({ total: 0, files: [] });
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const [qInput, setQInput] = useState(params.get("q") ?? "");
-  const offset = Number(params.get("offset") ?? 0);
+  const { get, set: setParam, pick } = useQueryState(["offset"]);
+  const sources = useLookup<Source[]>("/sources", []);
+  const projects = useLookup<Project[]>("/projects", []);
+  const [qInput, setQInput] = useState(get("q"));
+  const offset = Number(get("offset", "0"));
 
-  useEffect(() => {
-    api<Source[]>("/sources").then(setSources).catch(() => {});
-    api<Project[]>("/projects").then(setProjects).catch(() => {});
-  }, []);
-
-  useEffect(() => {
-    setLoading(true);
-    setError(null);
-    const qs = new URLSearchParams();
-    for (const k of ["source", "project", "q", "sort", "dir"]) {
-      const v = params.get(k);
-      if (v) qs.set(k, v);
-    }
-    qs.set("limit", String(PAGE));
-    qs.set("offset", String(offset));
-    api<{ total: number; files: FileSummary[] }>("/files?" + qs.toString())
-      .then(setData)
-      .catch((e) => setError(String(e)))
-      .finally(() => setLoading(false));
-  }, [params, offset]);
-
-  function setParam(key: string, value: string) {
-    const next = new URLSearchParams(params);
-    if (value) next.set(key, value);
-    else next.delete(key);
-    // Changing a filter resets to page 1, but paging through offset must keep the value just set.
-    if (key !== "offset") next.delete("offset");
-    setParams(next);
-  }
+  const qs = pick(["source", "project", "q", "sort", "dir"]);
+  qs.set("limit", String(PAGE));
+  qs.set("offset", String(offset));
+  const { data, loading, error } = useFetch<{ total: number; files: FileSummary[] }>("/files?" + qs.toString());
+  const { total, files } = data ?? EMPTY_PAGE;
 
   function submitSearch(e: React.FormEvent) {
     e.preventDefault();
-    setParam("q", qInput.trim());
+    setParam({ q: qInput.trim() });
   }
 
   // Sort is server-side (whole list, not just the page) and lives in the URL, like the sessions list.
-  const sortKey = (params.get("sort") ?? "last_ts") as FileSortKey;
-  const sortDir = (params.get("dir") === "asc" ? "asc" : "desc") as SortDir;
+  const sortKey = get("sort", "last_ts") as FileSortKey;
+  const sortDir = (get("dir") === "asc" ? "asc" : "desc") as SortDir;
   function onSort(key: FileSortKey, defaultDir: SortDir) {
-    const nextDir = sortKey === key ? (sortDir === "asc" ? "desc" : "asc") : defaultDir;
-    const next = new URLSearchParams(params);
-    next.set("sort", key);
-    next.set("dir", nextDir);
-    next.delete("offset");
-    setParams(next);
+    setParam({ sort: key, dir: sortKey === key ? (sortDir === "asc" ? "desc" : "asc") : defaultDir });
   }
 
   const page = Math.floor(offset / PAGE) + 1;
-  const pages = Math.max(1, Math.ceil(data.total / PAGE));
-  const filtered = !!(params.get("q") || params.get("source") || params.get("project"));
+  const pages = Math.max(1, Math.ceil(total / PAGE));
+  const filtered = !!(get("q") || get("source") || get("project"));
 
   return (
     <div>
@@ -110,13 +83,13 @@ export default function FilesView() {
             onChange={(e) => setQInput(e.target.value)}
           />
           <button type="submit">Search</button>
-          {params.get("q") && (
-            <button type="button" className="ghost" onClick={() => (setQInput(""), setParam("q", ""))}>
+          {get("q") && (
+            <button type="button" className="ghost" onClick={() => (setQInput(""), setParam({ q: "" }))}>
               clear
             </button>
           )}
         </form>
-        <select aria-label="Filter by source" value={params.get("source") ?? ""} onChange={(e) => setParam("source", e.target.value)}>
+        <select aria-label="Filter by source" value={get("source")} onChange={(e) => setParam({ source: e.target.value })}>
           <option value="">all sources</option>
           {sources.map((s) => (
             <option key={s.id} value={s.id}>
@@ -127,8 +100,8 @@ export default function FilesView() {
         <FilterSelect
           ariaLabel="Filter by project"
           searchPlaceholder="Find project…"
-          value={params.get("project") ?? ""}
-          onChange={(v) => setParam("project", v)}
+          value={get("project")}
+          onChange={(v) => setParam({ project: v })}
           options={[
             { value: "", label: "all projects" },
             ...projects.map((p) => ({ value: p.id, label: p.path.replace(/^.*\//, "") })),
@@ -136,10 +109,10 @@ export default function FilesView() {
         />
       </div>
 
-      {error && <div className="error" role="alert">{error}</div>}
+      <ErrorAlert error={error} />
       {loading ? (
-        <div className="muted pad" role="status" aria-live="polite">Loading…</div>
-      ) : data.files.length === 0 ? (
+        <Loading />
+      ) : files.length === 0 ? (
         <div className="muted pad" role="status">
           {filtered ? "No files match the filter." : "No file changes ingested yet — run agent-lens refresh (or ingest) first."}
         </div>
@@ -156,7 +129,7 @@ export default function FilesView() {
             </tr>
           </thead>
           <tbody>
-            {data.files.map((f) => (
+            {files.map((f) => (
               <tr key={(f.project_id ?? "") + "\0" + f.file_path}>
                 <td>
                   <Link
@@ -178,8 +151,8 @@ export default function FilesView() {
         </table>
       )}
 
-      {!loading && data.total > 0 && (
-        <Pager page={page} pages={pages} total={data.total} unit="files" onPage={(p) => setParam("offset", String((p - 1) * PAGE))} />
+      {!loading && total > 0 && (
+        <Pager page={page} pages={pages} total={total} unit="files" onPage={(p) => setParam({ offset: String((p - 1) * PAGE) })} />
       )}
 
       <p className="muted pad">

@@ -20,6 +20,8 @@ const PROJ = "-demo-acme-api";
 const CWD = "/demo/acme-api";
 const OPUS = "claude-opus-4-8";
 const HAIKU = "claude-haiku-4-5-20251001";
+const SONNET = "claude-sonnet-4-5";
+const FABLE = "claude-fable-5";
 const ts = (s) => `2026-03-10T12:${String(s).padStart(2, "0")}:00.000Z`;
 const u = (id, extra) => ({ uuid: id, ...extra });
 const asst = (id, t, model, content, usage) => u(id, { type: "assistant", timestamp: ts(t), message: { role: "assistant", id: `msg_${id}`, model, content, usage } });
@@ -27,8 +29,6 @@ const usage = (i, o, cw, cr) => ({ input_tokens: i, output_tokens: o, cache_crea
 const userMsg = (id, t, text, extra = {}) => u(id, { type: "user", timestamp: ts(t), cwd: CWD, gitBranch: "main", version: "2.1.0", message: { role: "user", content: text }, ...extra });
 const toolResult = (id, t, tuid, extra = {}) => u(id, { type: "user", timestamp: ts(t), message: { role: "user", content: [{ type: "tool_result", tool_use_id: tuid, content: "(result)" }] }, ...extra });
 const toolResText = (id, t, tuid, text, extra = {}) => u(id, { type: "user", timestamp: ts(t), message: { role: "user", content: [{ type: "tool_result", tool_use_id: tuid, content: text }] }, ...extra });
-const SONNET = "claude-sonnet-4-5";
-const FABLE = "claude-fable-5";
 // Wide demo time span: new sessions are dated across Jan–Mar 2026 (the validation scenarios above sit
 // at 2026-03-10), so the dashboard time-series has real range. Date is available in this plain node
 // script (unlike the workflow sandbox).
@@ -383,49 +383,48 @@ write(`projects/${PROJ}/sc-security-0011.jsonl`, [
 // Used by the corpus-only demo (Pages + local server); no real data, no "[redacted]".
 const API = "-demo-acme-api", WEB = "-demo-acme-web", INFRA = "-demo-acme-infra", MOBILE = "-demo-acme-mobile", DATA = "-demo-acme-data";
 const P = { [API]: "/demo/acme-api", [WEB]: "/demo/acme-web", [INFRA]: "/demo/acme-infra", [MOBILE]: "/demo/acme-mobile", [DATA]: "/demo/acme-data" };
-const big = (i, o, cw, cr) => usage(i, o, cw, cr); // alias for readability at call sites
 
 richSession("rs-1001-ratelimit", API, P[API], OPUS, iso("2026-01-06", 9, 12), [
   { ask: "Add a token-bucket rate limiter to the public API", say: "I'll look at the middleware stack first.", tools: [
     { name: "Grep", input: { pattern: "app.use\\(", path: "src/server.ts" }, result: "src/server.ts:22: app.use(cors());\nsrc/server.ts:23: app.use(json());" },
     { name: "Read", input: { file_path: "src/server.ts" }, result: "import express from 'express';\nconst app = express();\napp.use(cors());\napp.use(json());" },
-  ], usage: big(2400, 620, 4200, 38000) },
+  ], usage: usage(2400, 620, 4200, 38000) },
   { ask: "Use Redis for the bucket store", say: "Adding a Redis-backed limiter and wiring it in.", tools: [
     { name: "Write", input: { file_path: "src/mw/rateLimit.ts", content: "import { redis } from '../redis';\nexport function rateLimit(rpm: number) {\n  return async (req, res, next) => {\n    const key = `rl:${req.ip}`;\n    const n = await redis.incr(key);\n    if (n === 1) await redis.expire(key, 60);\n    if (n > rpm) return res.status(429).json({ error: 'rate limited' });\n    next();\n  };\n}" }, result: "File created successfully at: src/mw/rateLimit.ts" },
     { name: "Edit", input: { file_path: "src/server.ts", old_string: "app.use(json());", new_string: "app.use(json());\napp.use(rateLimit(600));" }, result: "The file src/server.ts has been updated." },
-  ], usage: big(3100, 900, 0, 61000) },
+  ], usage: usage(3100, 900, 0, 61000) },
   { ask: "Run the tests", tools: [
     { name: "Bash", input: { command: "pnpm test src/mw", description: "Run the middleware tests" }, result: " RUN  v4.1.9\n src/mw/rateLimit.test.ts\n   ✓ allows under the limit\n   ✓ 429s over the limit\n\n Test Files  1 passed (1)\n      Tests  2 passed (2)" },
-  ], usage: big(1800, 300, 0, 72000) },
-  { ask: "Ship it", say: "Rate limiter added, wired in, and tested. 600 rpm per IP with a 60s window.", usage: big(600, 180, 0, 74000) },
+  ], usage: usage(1800, 300, 0, 72000) },
+  { ask: "Ship it", say: "Rate limiter added, wired in, and tested. 600 rpm per IP with a 60s window.", usage: usage(600, 180, 0, 74000) },
 ]);
 
 richSession("rs-1002-nplusone", API, P[API], OPUS, iso("2026-01-08", 14, 3), [
   { ask: "The /orders list endpoint is slow — looks like an N+1", say: "Let me trace the query path.", tools: [
     { name: "Grep", input: { pattern: "customer", path: "src/orders.ts" }, result: "src/orders.ts:41:   const customer = await db.customer.find(o.customerId);" },
     { name: "Read", input: { file_path: "src/orders.ts" }, result: "for (const o of orders) {\n  const customer = await db.customer.find(o.customerId); // per-row query\n  o.customer = customer;\n}" },
-  ], usage: big(2900, 540, 5000, 44000) },
+  ], usage: usage(2900, 540, 5000, 44000) },
   { ask: "Batch the customer lookups", tools: [
     { name: "Edit", input: { file_path: "src/orders.ts", old_string: "for (const o of orders) {\n  const customer = await db.customer.find(o.customerId); // per-row query\n  o.customer = customer;\n}", new_string: "const ids = [...new Set(orders.map((o) => o.customerId))];\nconst customers = await db.customer.findMany({ id: { in: ids } });\nconst byId = new Map(customers.map((c) => [c.id, c]));\nfor (const o of orders) o.customer = byId.get(o.customerId);" }, result: "The file src/orders.ts has been updated." },
     { name: "Bash", input: { command: "pnpm bench src/orders", description: "Re-run the orders benchmark" }, result: "before: 812ms (201 queries)\nafter:   34ms (2 queries)" },
-  ], usage: big(2200, 700, 0, 66000) },
-  { ask: "Great, 24x faster", say: "Collapsed 201 queries to 2 — p95 on /orders drops from 812ms to 34ms.", usage: big(500, 160, 0, 68000) },
+  ], usage: usage(2200, 700, 0, 66000) },
+  { ask: "Great, 24x faster", say: "Collapsed 201 queries to 2 — p95 on /orders drops from 812ms to 34ms.", usage: usage(500, 160, 0, 68000) },
 ]);
 
 richSession("rs-1003-checkout", WEB, P[WEB], SONNET, iso("2026-01-09", 11, 30), [
   { ask: "Build the multi-step checkout flow (cart → address → payment → review)", say: "Scaffolding the wizard and its steps.", tools: [
     { name: "Write", input: { file_path: "src/checkout/Wizard.tsx", content: "export function Wizard() {\n  const [step, setStep] = useState(0);\n  const steps = [Cart, Address, Payment, Review];\n  const Step = steps[step];\n  return <Step onNext={() => setStep((s) => s + 1)} onBack={() => setStep((s) => s - 1)} />;\n}" }, result: "File created successfully at: src/checkout/Wizard.tsx" },
     { name: "Write", input: { file_path: "src/checkout/Address.tsx", content: "export function Address({ onNext, onBack }) {\n  const form = useForm(addressSchema);\n  return <form onSubmit={form.handleSubmit(onNext)}>...</form>;\n}" }, result: "File created successfully at: src/checkout/Address.tsx" },
-  ], usage: big(3400, 1200, 6000, 29000) },
+  ], usage: usage(3400, 1200, 6000, 29000) },
   { ask: "Persist progress to localStorage so a refresh doesn't lose it", tools: [
     { name: "MultiEdit", input: { file_path: "src/checkout/Wizard.tsx", edits: [
       { old_string: "const [step, setStep] = useState(0);", new_string: "const [step, setStep] = usePersistedState('checkout.step', 0);" },
       { old_string: "const steps = [Cart, Address, Payment, Review];", new_string: "const steps = [Cart, Address, Payment, Review];\n  useBeforeUnload(() => save('checkout.draft', form.values));" },
     ] }, result: "Applied 2 edits to src/checkout/Wizard.tsx" },
-  ], usage: big(2100, 640, 0, 41000) },
+  ], usage: usage(2100, 640, 0, 41000) },
   { ask: "Add the happy-path test", tools: [
     { name: "Bash", input: { command: "pnpm test checkout", description: "Run the checkout tests" }, result: " ✓ walks cart → address → payment → review\n ✓ restores a saved draft after reload\n\n Tests  2 passed (2)" },
-  ], usage: big(1500, 380, 0, 52000) },
+  ], usage: usage(1500, 380, 0, 52000) },
 ]);
 
 richSession("rs-1004-darkmode", WEB, P[WEB], SONNET, iso("2026-01-13", 16, 20), [
@@ -435,57 +434,57 @@ richSession("rs-1004-darkmode", WEB, P[WEB], SONNET, iso("2026-01-13", 16, 20), 
       { old_string: "body { background: #fff; color: #000; }", new_string: "body { background: var(--bg); color: var(--fg); }" },
     ] }, result: "Applied 2 edits to src/styles/tokens.css" },
     { name: "Write", input: { file_path: "src/ThemeToggle.tsx", content: "export function ThemeToggle() {\n  const [t, setT] = usePersistedState('theme', 'light');\n  useEffect(() => document.documentElement.setAttribute('data-theme', t), [t]);\n  return <button onClick={() => setT(t === 'light' ? 'dark' : 'light')}>{t === 'light' ? '🌙' : '☀️'}</button>;\n}" }, result: "File created successfully at: src/ThemeToggle.tsx" },
-  ], usage: big(2600, 820, 3000, 33000) },
+  ], usage: usage(2600, 820, 3000, 33000) },
   { ask: "Make sure contrast passes AA", tools: [
     { name: "Bash", input: { command: "pnpm a11y:contrast", description: "Check color contrast ratios" }, result: "fg/bg (light): 15.9:1  PASS\nfg/bg (dark):  13.1:1  PASS\nmuted/bg (dark): 4.8:1  PASS" },
-  ], usage: big(1200, 300, 0, 44000) },
+  ], usage: usage(1200, 300, 0, 44000) },
 ]);
 
 richSession("rs-1005-terraform", INFRA, P[INFRA], OPUS, iso("2026-01-15", 10, 5), [
   { ask: "Stand up a staging EKS cluster with Terraform", say: "Writing the module and a staging tfvars.", tools: [
     { name: "Write", input: { file_path: "infra/eks/main.tf", content: "module \"eks\" {\n  source          = \"terraform-aws-modules/eks/aws\"\n  cluster_name    = var.name\n  cluster_version = \"1.29\"\n  vpc_id          = var.vpc_id\n  subnet_ids      = var.subnet_ids\n  eks_managed_node_groups = {\n    default = { min_size = 2, max_size = 5, instance_types = [\"t3.large\"] }\n  }\n}" }, result: "File created successfully at: infra/eks/main.tf" },
     { name: "Bash", input: { command: "terraform -chdir=infra/eks plan -var-file=staging.tfvars", description: "Plan the staging cluster" }, result: "Plan: 37 to add, 0 to change, 0 to destroy.\n\nChanges to Outputs:\n  + cluster_endpoint = (known after apply)\n  + kubeconfig       = (sensitive value)" },
-  ], usage: big(3800, 1100, 8000, 51000) },
+  ], usage: usage(3800, 1100, 8000, 51000) },
   { ask: "Apply it", tools: [
     { name: "Bash", input: { command: "terraform -chdir=infra/eks apply -auto-approve -var-file=staging.tfvars", description: "Apply the staging cluster" }, result: "Apply complete! Resources: 37 added, 0 changed, 0 destroyed.\n\nOutputs:\ncluster_endpoint = \"https://ABCD.gr7.us-east-1.eks.amazonaws.com\"" },
-  ], usage: big(1900, 520, 0, 88000) },
+  ], usage: usage(1900, 520, 0, 88000) },
 ]);
 
 richSession("rs-1006-flakyci", INFRA, P[INFRA], OPUS, iso("2026-01-19", 13, 40), [
   { ask: "The integration CI job is flaky — fails ~1 in 5 runs", say: "Let me pull the recent failures and look for a pattern.", tools: [
     { name: "Bash", input: { command: "gh run list --workflow ci.yml --limit 20 --json conclusion,databaseId --jq '.[]|select(.conclusion==\"failure\").databaseId'", description: "List recent failed CI runs" }, result: "8412093\n8409981\n8401220" },
     { name: "Bash", input: { command: "gh run view 8412093 --log-failed | grep -A3 'FAIL'", description: "Pull the failing log" }, result: "FAIL  test/integration/queue.test.ts > drains within 2s\n  expected 0 pending, got 3\n  (timeout after 2000ms)" },
-  ], usage: big(2700, 700, 4000, 39000) },
+  ], usage: usage(2700, 700, 4000, 39000) },
   { ask: "Looks like a race on the queue drain", tools: [
     { name: "Edit", input: { file_path: "test/integration/queue.test.ts", old_string: "await sleep(2000);\nexpect(await queue.pending()).toBe(0);", new_string: "await waitFor(async () => (await queue.pending()) === 0, { timeout: 10000 });" }, result: "The file test/integration/queue.test.ts has been updated." },
     { name: "Bash", input: { command: "for i in $(seq 1 20); do pnpm test test/integration/queue.test.ts >/dev/null 2>&1 && echo pass || echo FAIL; done | sort | uniq -c", description: "Stress the test 20× to confirm the fix" }, result: "     20 pass" },
-  ], usage: big(2300, 640, 0, 63000) },
-  { ask: "20/20 green now", say: "Replaced the fixed sleep with a polling waitFor — the drain race is gone.", usage: big(500, 150, 0, 65000) },
+  ], usage: usage(2300, 640, 0, 63000) },
+  { ask: "20/20 green now", say: "Replaced the fixed sleep with a polling waitFor — the drain race is gone.", usage: usage(500, 150, 0, 65000) },
 ]);
 
 richSession("rs-1007-pgupgrade", DATA, P[DATA], OPUS, iso("2026-01-22", 9, 0), [
   { ask: "Plan and run the Postgres 14 → 16 upgrade on the warehouse replica", say: "This is involved — I'll delegate the compatibility audit to a subagent while I stage the dump.", tools: [
     { name: "Task", input: { subagent_type: "general-purpose", description: "Audit PG16 incompatibilities", prompt: "Scan our SQL + extensions for Postgres 16 breaking changes" }, result: "Audit complete: 2 issues found (see child).", extra: { status: "completed", agentId: "d1ab5e01", agentType: "general-purpose", totalTokens: 5200, totalDurationMs: 46000, totalToolUseCount: 7 } },
-  ], usage: big(2100, 480, 6000, 22000) },
+  ], usage: usage(2100, 480, 6000, 22000) },
   { ask: "What did it find?", say: "Two things: `array_to_string(NULL)` behavior changed, and the `pg_stat_statements` column set moved. Both easy fixes.", tools: [
     { name: "Bash", input: { command: "pg_dump -Fc warehouse_replica > /backups/wh_pre16.dump && echo done", description: "Take a pre-upgrade dump" }, result: "done" },
     { name: "Bash", input: { command: "pg_upgrade --old-bindir=/usr/pg14/bin --new-bindir=/usr/pg16/bin --old-datadir=/data/14 --new-datadir=/data/16 --check", description: "Run pg_upgrade compatibility check" }, result: "Performing Consistency Checks\n-----------------------------\nChecking cluster versions                    ok\nChecking database user is the install user   ok\n*Clusters are compatible*" },
-  ], usage: big(2600, 720, 0, 71000) },
+  ], usage: usage(2600, 720, 0, 71000) },
   { ask: "Do the upgrade", tools: [
     { name: "Bash", input: { command: "pg_upgrade --old-bindir=/usr/pg14/bin --new-bindir=/usr/pg16/bin --old-datadir=/data/14 --new-datadir=/data/16 --link", description: "Run the in-place upgrade" }, result: "Upgrade Complete\n----------------\nOptimizer statistics are not transferred by pg_upgrade.\nRun: vacuumdb --all --analyze-in-stages" },
     { name: "Bash", input: { command: "vacuumdb --all --analyze-in-stages", description: "Rebuild optimizer stats" }, result: "vacuuming database \"warehouse_replica\"\nanalyzing (stage 3) ... done" },
-  ], usage: big(1800, 560, 0, 96000) },
+  ], usage: usage(1800, 560, 0, 96000) },
 ]);
 
 richSession("rs-1008-push", MOBILE, P[MOBILE], SONNET, iso("2026-01-26", 15, 10), [
   { ask: "Wire up push notifications on iOS + Android via FCM", say: "Adding the client registration + a token sync hook.", tools: [
     { name: "Read", input: { file_path: "src/notifications/index.ts" }, result: "// TODO: register for push" },
     { name: "Write", input: { file_path: "src/notifications/index.ts", content: "import messaging from '@react-native-firebase/messaging';\nexport async function registerPush() {\n  const status = await messaging().requestPermission();\n  if (status !== messaging.AuthorizationStatus.AUTHORIZED) return null;\n  const token = await messaging().getToken();\n  await api.post('/devices', { token, platform: Platform.OS });\n  return token;\n}" }, result: "File created successfully at: src/notifications/index.ts" },
-  ], usage: big(3000, 900, 5000, 31000) },
+  ], usage: usage(3000, 900, 5000, 31000) },
   { ask: "Handle foreground messages too", tools: [
     { name: "Edit", input: { file_path: "src/notifications/index.ts", old_string: "  return token;\n}", new_string: "  messaging().onMessage(async (m) => toast(m.notification?.title, m.notification?.body));\n  return token;\n}" }, result: "The file src/notifications/index.ts has been updated." },
     { name: "Bash", input: { command: "pnpm ios:build --scheme staging", description: "Build the iOS staging app" }, result: "** BUILD SUCCEEDED **\nInstalling on simulator iPhone 15 ... done" },
-  ], usage: big(2000, 610, 0, 48000) },
+  ], usage: usage(2000, 610, 0, 48000) },
 ]);
 
 richSession("rs-1009-apidocs", API, P[API], HAIKU, iso("2026-01-28", 10, 45), [
@@ -493,7 +492,7 @@ richSession("rs-1009-apidocs", API, P[API], HAIKU, iso("2026-01-28", 10, 45), [
     { name: "Read", input: { file_path: "openapi.yaml" }, result: "openapi: 3.1.0\npaths:\n  /orders: { get: {...}, post: {...} }\n  /orders/{id}: { get: {...} }" },
     { name: "Bash", input: { command: "npx @redocly/cli build-docs openapi.yaml -o docs/api.html", description: "Render the OpenAPI docs" }, result: "Prerendering docs\n🎉 bundled successfully in: docs/api.html (312 KiB)" },
     { name: "Write", input: { file_path: "docs/README.md", content: "# API Reference\n\nRendered from `openapi.yaml`. See [api.html](./api.html). Auth: bearer token. Base URL: `https://api.acme.dev/v1`." }, result: "File created successfully at: docs/README.md" },
-  ], usage: big(1600, 900, 2000, 12000) },
+  ], usage: usage(1600, 900, 2000, 12000) },
 ]);
 
 richSession("rs-1010-authrefactor", API, P[API], OPUS, iso("2026-02-02", 11, 15), [
@@ -501,32 +500,32 @@ richSession("rs-1010-authrefactor", API, P[API], OPUS, iso("2026-02-02", 11, 15)
     { name: "Read", input: { file_path: "src/auth.ts" }, result: "// 600 lines: signToken, verifyToken, requireRole, requireAuth, refresh, ..." },
     { name: "Write", input: { file_path: "src/auth/tokens.ts", content: "export function signToken(u: User) { /* ... */ }\nexport function verifyToken(t: string) { /* ... */ }" }, result: "File created successfully at: src/auth/tokens.ts" },
     { name: "Write", input: { file_path: "src/auth/guards.ts", content: "export const requireAuth = (req, res, next) => { /* ... */ };\nexport const requireRole = (role) => (req, res, next) => { /* ... */ };" }, result: "File created successfully at: src/auth/guards.ts" },
-  ], usage: big(4200, 1400, 9000, 58000) },
+  ], usage: usage(4200, 1400, 9000, 58000) },
   { ask: "Update the imports across the codebase", tools: [
     { name: "Grep", input: { pattern: "from ['\\\"].*/auth['\\\"]", output_mode: "files_with_matches" }, result: "src/server.ts\nsrc/routes/orders.ts\nsrc/routes/users.ts\nsrc/routes/admin.ts" },
     { name: "Bash", input: { command: "pnpm tsc --noEmit", description: "Type-check after the refactor" }, result: "No errors found." },
-  ], usage: big(2400, 700, 0, 84000) },
+  ], usage: usage(2400, 700, 0, 84000) },
   { ask: "Nice, run the full suite", tools: [
     { name: "Bash", input: { command: "pnpm test", description: "Run the full test suite" }, result: " Test Files  38 passed (38)\n      Tests  412 passed (412)\n   Duration  9.1s" },
-  ], usage: big(1400, 340, 0, 92000) },
+  ], usage: usage(1400, 340, 0, 92000) },
 ]);
 
 richSession("rs-1011-memleak", WEB, P[WEB], OPUS, iso("2026-02-05", 14, 25), [
   { ask: "The dashboard tab grows to 1.5GB after an hour — find the leak", say: "I'll take a heap diff, and spin up a subagent to grep for un-cleaned listeners in parallel.", tools: [
     { name: "Task", input: { subagent_type: "general-purpose", description: "Find un-removed event listeners", prompt: "grep for addEventListener / setInterval without matching cleanup" }, result: "Found 3 suspects (see child).", extra: { status: "completed", agentId: "f00dcafe", agentType: "general-purpose", totalTokens: 4100, totalDurationMs: 38000, totalToolUseCount: 6 } },
     { name: "Bash", input: { command: "node --expose-gc scripts/heapdiff.js /dashboard", description: "Capture a heap diff on the dashboard route" }, result: "retained growth: +214MB\ntop retainer: WebSocket listeners (3,180 instances)" },
-  ], usage: big(3300, 780, 7000, 41000) },
+  ], usage: usage(3300, 780, 7000, 41000) },
   { ask: "The subagent found the WS listener — fix it", tools: [
     { name: "Edit", input: { file_path: "src/hooks/useLiveData.ts", old_string: "useEffect(() => {\n  ws.on('tick', onTick);\n}, []);", new_string: "useEffect(() => {\n  ws.on('tick', onTick);\n  return () => ws.off('tick', onTick);\n}, []);" }, result: "The file src/hooks/useLiveData.ts has been updated." },
     { name: "Bash", input: { command: "node --expose-gc scripts/heapdiff.js /dashboard", description: "Re-run the heap diff after the fix" }, result: "retained growth: +3MB\ntop retainer: (stable)" },
-  ], usage: big(2100, 560, 0, 76000) },
+  ], usage: usage(2100, 560, 0, 76000) },
 ]);
 
 richSession("rs-1012-e2e-signup", WEB, P[WEB], SONNET, iso("2026-02-09", 10, 30), [
   { ask: "Add a Playwright e2e test for the signup → verify-email → onboarding flow", tools: [
     { name: "Write", input: { file_path: "e2e/signup.spec.ts", content: "test('new user signs up and lands on onboarding', async ({ page }) => {\n  await page.goto('/signup');\n  await page.fill('#email', 'demo+e2e@acme.dev');\n  await page.fill('#password', 'S3cure!pw');\n  await page.click('text=Create account');\n  await page.click(await mailbox.lastVerifyLink());\n  await expect(page).toHaveURL(/\\/onboarding/);\n});" }, result: "File created successfully at: e2e/signup.spec.ts" },
     { name: "Bash", input: { command: "npx playwright test e2e/signup.spec.ts", description: "Run the new e2e test" }, result: "Running 1 test using 1 worker\n  ✓  signup.spec.ts:1 › new user signs up (4.2s)\n\n  1 passed (5s)" },
-  ], usage: big(2200, 780, 3000, 36000) },
+  ], usage: usage(2200, 780, 3000, 36000) },
 ]);
 
 richSession("rs-1013-otel", INFRA, P[INFRA], OPUS, iso("2026-02-12", 16, 0), [
@@ -534,7 +533,7 @@ richSession("rs-1013-otel", INFRA, P[INFRA], OPUS, iso("2026-02-12", 16, 0), [
     { name: "Write", input: { file_path: "src/otel.ts", content: "import { NodeSDK } from '@opentelemetry/sdk-node';\nimport { getNodeAutoInstrumentations } from '@opentelemetry/auto-instrumentations-node';\nnew NodeSDK({\n  serviceName: 'acme-api',\n  traceExporter: new OTLPTraceExporter({ url: process.env.OTEL_EXPORTER_OTLP_ENDPOINT }),\n  instrumentations: [getNodeAutoInstrumentations()],\n}).start();" }, result: "File created successfully at: src/otel.ts" },
     { name: "Edit", input: { file_path: "src/server.ts", old_string: "import express from 'express';", new_string: "import './otel'; // must be first\nimport express from 'express';" }, result: "The file src/server.ts has been updated." },
     { name: "Bash", input: { command: "curl -s localhost:3000/health && curl -s tempo:3200/api/search?limit=1 | jq '.traces|length'", description: "Confirm a trace reached Tempo" }, result: "{\"ok\":true}\n1" },
-  ], usage: big(3600, 980, 6000, 54000) },
+  ], usage: usage(3600, 980, 6000, 54000) },
 ]);
 
 richSession("rs-1014-bundle", WEB, P[WEB], SONNET, iso("2026-02-16", 13, 20), [
@@ -544,18 +543,18 @@ richSession("rs-1014-bundle", WEB, P[WEB], SONNET, iso("2026-02-16", 13, 20), [
       { old_string: "import moment from 'moment';", new_string: "import { format, formatDistanceToNow } from 'date-fns';" },
       { old_string: "export const ago = (d) => moment(d).fromNow();", new_string: "export const ago = (d) => formatDistanceToNow(d, { addSuffix: true });" },
     ] }, result: "Applied 2 edits to src/utils/time.ts" },
-  ], usage: big(2500, 720, 4000, 47000) },
+  ], usage: usage(2500, 720, 4000, 47000) },
   { ask: "Drop lodash too, then rebuild", tools: [
     { name: "Bash", input: { command: "pnpm build && du -sh dist/assets/*.js | sort -h | tail -1", description: "Rebuild and measure the largest chunk" }, result: "vite v6 building for production...\n✓ built in 6.2s\n472K dist/assets/index-a1b2c3.js" },
-  ], usage: big(1600, 420, 0, 61000) },
-  { ask: "472K — under budget 🎉", say: "Swapped moment→date-fns and dropped lodash: 1.2MB → 472KB (-61%).", usage: big(500, 160, 0, 63000) },
+  ], usage: usage(1600, 420, 0, 61000) },
+  { ask: "472K — under budget 🎉", say: "Swapped moment→date-fns and dropped lodash: 1.2MB → 472KB (-61%).", usage: usage(500, 160, 0, 63000) },
 ]);
 
 richSession("rs-1015-schema", DATA, P[DATA], OPUS, iso("2026-02-19", 9, 40), [
   { ask: "Design the schema for a notifications system (per-user, multi-channel, read receipts)", say: "Proposing tables + indexes; here's the migration.", tools: [
     { name: "Write", input: { file_path: "migrations/0042_notifications.sql", content: "CREATE TABLE notifications (\n  id           bigserial PRIMARY KEY,\n  user_id      bigint NOT NULL REFERENCES users(id),\n  channel      text NOT NULL CHECK (channel IN ('email','push','in_app')),\n  payload      jsonb NOT NULL,\n  read_at      timestamptz,\n  created_at   timestamptz NOT NULL DEFAULT now()\n);\nCREATE INDEX idx_notif_user_unread ON notifications (user_id) WHERE read_at IS NULL;" }, result: "File created successfully at: migrations/0042_notifications.sql" },
     { name: "Bash", input: { command: "psql -f migrations/0042_notifications.sql && psql -c '\\d+ notifications'", description: "Apply and describe the new table" }, result: "CREATE TABLE\nCREATE INDEX\n              Table \"public.notifications\"\n Column | Type | ...\n Indexes:\n  \"idx_notif_user_unread\" btree (user_id) WHERE read_at IS NULL" },
-  ], usage: big(3100, 1050, 5000, 49000) },
+  ], usage: usage(3100, 1050, 5000, 49000) },
 ]);
 
 richSession("rs-1016-search", API, P[API], OPUS, iso("2026-02-24", 15, 5), [
@@ -563,14 +562,14 @@ richSession("rs-1016-search", API, P[API], OPUS, iso("2026-02-24", 15, 5), [
     { name: "Write", input: { file_path: "migrations/0043_product_fts.sql", content: "ALTER TABLE products ADD COLUMN search tsvector\n  GENERATED ALWAYS AS (to_tsvector('english', name || ' ' || coalesce(description,''))) STORED;\nCREATE INDEX idx_products_search ON products USING gin(search);" }, result: "File created successfully at: migrations/0043_product_fts.sql" },
     { name: "Edit", input: { file_path: "src/products.ts", old_string: "export async function search(q) {\n  return db.query('SELECT * FROM products WHERE name ILIKE $1', [`%${q}%`]);\n}", new_string: "export async function search(q) {\n  return db.query(\n    `SELECT *, ts_rank(search, plainto_tsquery('english', $1)) AS rank\n     FROM products WHERE search @@ plainto_tsquery('english', $1)\n     ORDER BY rank DESC LIMIT 50`, [q]);\n}" }, result: "The file src/products.ts has been updated." },
     { name: "Bash", input: { command: "curl -s 'localhost:3000/products/search?q=wireless+headphones' | jq '.[0].name'", description: "Smoke-test the ranked search" }, result: "\"Wireless Noise-Cancelling Headphones\"" },
-  ], usage: big(3400, 920, 7000, 57000) },
+  ], usage: usage(3400, 920, 7000, 57000) },
 ]);
 
 richSession("rs-1017-webhooks", API, P[API], FABLE, iso("2026-03-02", 10, 50), [
   { ask: "Add signed outbound webhooks with retries and a dead-letter queue", say: "Adding HMAC signing, exponential backoff, and a DLQ table.", tools: [
     { name: "Write", input: { file_path: "src/webhooks/deliver.ts", content: "export async function deliver(hook, event) {\n  const body = JSON.stringify(event);\n  const sig = hmac(hook.secret, body);\n  for (let attempt = 0; attempt < 5; attempt++) {\n    const res = await fetch(hook.url, { method: 'POST', headers: { 'X-Signature': sig }, body });\n    if (res.ok) return;\n    await sleep(2 ** attempt * 1000);\n  }\n  await dlq.add({ hook: hook.id, event });\n}" }, result: "File created successfully at: src/webhooks/deliver.ts" },
     { name: "Bash", input: { command: "pnpm test webhooks", description: "Run the webhook delivery tests" }, result: " ✓ signs the payload with HMAC-SHA256\n ✓ retries with backoff then dead-letters\n\n Tests  2 passed (2)" },
-  ], usage: big(2800, 860, 5000, 45000) },
+  ], usage: usage(2800, 860, 5000, 45000) },
 ]);
 
 richSession("rs-1018-cache", API, P[API], OPUS, iso("2026-03-06", 14, 15), [
@@ -578,7 +577,7 @@ richSession("rs-1018-cache", API, P[API], OPUS, iso("2026-03-06", 14, 15), [
     { name: "Read", input: { file_path: "src/catalog.ts" }, result: "export const getProduct = (id) => db.product.find(id);" },
     { name: "Edit", input: { file_path: "src/catalog.ts", old_string: "export const getProduct = (id) => db.product.find(id);", new_string: "export const getProduct = swr({\n  key: (id) => `product:${id}`,\n  ttl: 60, staleTtl: 600,\n  fetch: (id) => db.product.find(id),\n});" }, result: "The file src/catalog.ts has been updated." },
     { name: "Bash", input: { command: "pnpm bench catalog", description: "Benchmark the cached catalog reads" }, result: "cold:  41ms\nwarm:  0.8ms (cache hit)\nstale: 0.9ms (served stale, revalidated in bg)" },
-  ], usage: big(2600, 700, 4000, 68000) },
+  ], usage: usage(2600, 700, 4000, 68000) },
 ]);
 
 // ── SECURITY-FLAVORED SESSIONS ───────────────────────────────────────────────────────────────────
@@ -593,14 +592,14 @@ richSession("rs-1019-incident", INFRA, P[INFRA], OPUS, iso("2026-02-27", 3, 20),
   { ask: "Disk-full alert on the api box — free space and restart the service", say: "Clearing rotated logs and bouncing the API.", tools: [
     { name: "Bash", input: { command: "sudo rm -rf /var/log/acme/*.log.gz", description: "Delete rotated logs to free disk" }, result: "(freed 8.2G)" },
     { name: "Bash", input: { command: "sudo systemctl restart acme-api", description: "Restart the API service" }, result: "acme-api.service restarted" },
-  ], usage: big(1400, 320, 2000, 18000) },
+  ], usage: usage(1400, 320, 2000, 18000) },
   { ask: "The deploy script also has the wrong perms", tools: [
     { name: "Bash", input: { command: "sudo chmod 777 /srv/acme/deploy.sh", description: "Make the deploy script runnable by CI" }, result: "(no output)" },
-  ], usage: big(500, 120, 0, 20000) },
+  ], usage: usage(500, 120, 0, 20000) },
   { ask: "Install the vendor's incident agent", tools: [
     { name: "Bash", input: { command: "curl -sSL https://get.acme-agent.dev/install.sh | sudo bash", description: "Install the incident-response agent" }, result: "installed acme-agent 2.4.0" },
-  ], usage: big(600, 140, 0, 22000) },
-  { ask: "Confirm recovery", say: "Disk back to 38% used, API healthy, agent installed.", usage: big(400, 110, 0, 23000) },
+  ], usage: usage(600, 140, 0, 22000) },
+  { ask: "Confirm recovery", say: "Disk back to 38% used, API healthy, agent installed.", usage: usage(400, 110, 0, 23000) },
 ], 6);
 
 // A data pipeline touching prod config + cloud credentials, then uploading a dump to a third-party
@@ -609,11 +608,11 @@ richSession("rs-1020-vendor-export", DATA, P[DATA], OPUS, iso("2026-02-06", 22, 
   { ask: "Set up the nightly analytics export to the vendor", say: "Reading the prod config and cloud creds to configure the job.", tools: [
     { name: "Read", input: { file_path: "/demo/acme-data/.env.production" }, result: "DATABASE_URL=postgres://analytics:***@db/warehouse\nVENDOR_BUCKET=s3://thirdparty/acme" },
     { name: "Bash", input: { command: "cat ~/.aws/credentials", description: "Read the AWS credentials for the upload role" }, result: "[default]\naws_access_key_id = AKIAIOSFODNN7EXAMPLE\naws_secret_access_key = wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY" },
-  ], usage: big(1800, 420, 3000, 26000) },
+  ], usage: usage(1800, 420, 3000, 26000) },
   { ask: "Push tonight's dump to the vendor endpoint", tools: [
     { name: "Bash", input: { command: "curl -X POST https://ingest.thirdparty-vendor.io/upload -F file=@/tmp/analytics-2026-02-06.csv.gz", description: "Upload the daily analytics dump to the vendor" }, result: "{\"received\": 48211, \"status\": \"ok\"}" },
-  ], usage: big(900, 220, 0, 30000) },
-  { ask: "Done for tonight", say: "Nightly export wired up and the first dump delivered.", usage: big(300, 90, 0, 31000) },
+  ], usage: usage(900, 220, 0, 30000) },
+  { ask: "Done for tonight", say: "Nightly export wired up and the first dump delivered.", usage: usage(300, 90, 0, 31000) },
 ], 5);
 
 // A rushed prod hotfix with destructive git ops (revert + force-push + clean rebuild). The plan note is
@@ -622,12 +621,12 @@ richSession("rs-1021-hotfix-revert", WEB, P[WEB], SONNET, iso("2026-02-20", 17, 
   { ask: "Prod is broken — revert to the last good build and force it out", say: "Hard-resetting to the previous release and force-pushing.", tools: [
     { name: "Bash", input: { command: "git reset --hard HEAD~2", description: "Discard the two bad commits" }, result: "HEAD is now at 7c1d9ab release: v3.4.1" },
     { name: "Bash", input: { command: "git push --force origin main", description: "Force the revert to the remote" }, result: "+ 9f3a1c2...7c1d9ab main -> main (forced update)" },
-  ], usage: big(900, 240, 2000, 21000) },
+  ], usage: usage(900, 240, 2000, 21000) },
   { ask: "Clean the workspace and rebuild from scratch", tools: [
     { name: "Bash", input: { command: "rm -rf node_modules dist .next && pnpm install", description: "Nuke build artifacts and reinstall" }, result: "removed 41822 files\n+ 1204 packages installed" },
     { name: "Write", input: { file_path: "/home/demo/.claude/plans/hotfix-notes.md", content: "# Hotfix v3.4.1\n- reverted 2 commits\n- force-pushed main\n- clean rebuild\n" }, result: "File created successfully at: /home/demo/.claude/plans/hotfix-notes.md" },
-  ], usage: big(700, 200, 0, 24000) },
-  { ask: "Prod is green again", say: "Reverted to v3.4.1, force-pushed, rebuilt clean. Incident closed.", usage: big(300, 100, 0, 25000) },
+  ], usage: usage(700, 200, 0, 24000) },
+  { ask: "Prod is green again", say: "Reverted to v3.4.1, force-pushed, rebuilt clean. Incident closed.", usage: usage(300, 100, 0, 25000) },
 ], 4);
 
 // Four large, long-running sessions to spread the Complexity-bands chart (small → xl).

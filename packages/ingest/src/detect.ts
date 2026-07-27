@@ -16,6 +16,7 @@ import { posix as path } from "node:path";
 import { bumpSeverity, type Severity, type SecurityCategoryKey } from "@agent-lens/core";
 import type { DB } from "./db.js";
 import { createDirtySet } from "./dirtyset.js";
+import { parseStored } from "./storedjson.js";
 
 // Bump on any rule/severity change so a re-run is attributable to an engine version (mirrors
 // CLASSIFIER_VERSION). Recorded on every row + in signals_json. Finding ids are independent of this
@@ -110,32 +111,51 @@ const SQL_DESTRUCTIVE = /\b(DROP\s+(TABLE|DATABASE|SCHEMA)|TRUNCATE(\s+TABLE)?)\
 const SQL_CLIENT = /\b(psql|pgcli|mysql|mysqladmin|mariadb|sqlite3?|sqlcmd|usql|mongo|mongosh|clickhouse-client|cockroach|snowsql|bq)\b/i;
 
 // ---- Command sanitization ------------------------------------------------
-// Command-pattern rules ("did the agent run a dangerous command?") must match the *executed* code,
-// not text that is merely printed or commented. `codeOf()` produces that executed view:
-//   • strips shell comments (`# …` never runs), and
-//   • neutralizes the arguments of the print builtins echo/printf — their quoted/plain text is data
-//     sent to stdout, so `sudo`/`rm -rf`/… inside it is inert. Quoted strings are consumed as whole
-//     units, so separators (`;` `|`) inside a printed string never leak out as fake command breaks.
-// NOTE: this intentionally does NOT blank all quoted strings — `psql -c "DROP …"`, `sh -c "…"` carry
-// executed code inside quotes, which must still be detected. Value-scanning rules (secret_in_data)
-// keep using the raw command, since a secret value is exposed whether or not it was "executed".
-const stripComments = (c: string): string => c.replace(/(^|\s)#[^\n]*/g, "$1");
-const neutralizeEcho = (c: string): string =>
+// A Bash command is matched in three views, because "the agent ran X" and "the text X appears" are
+// different questions. Rules pick the view their question needs (RuleContext documents which):
+//
+//   raw  — verbatim. Value scanning (secret_in_data) and host classification (netTargetScope) use it:
+//          a secret is exposed, and a URL is a destination, whether or not the text was "executed".
+//   code — the EXECUTED view, quotes INTACT. Comments, heredoc bodies and echo/printf output are
+//          neutralized, but quoted strings survive because `psql -c "DROP …"` and `sh -c "…"` carry
+//          real executed code inside quotes.
+//   bare — code, plus the CONTENTS of quoted strings blanked. Command-VERB rules (sudo, rm -rf, …)
+//          use it: a dangerous token inside a quoted *argument* (`grep "sudo"`, `git commit -m "…
+//          rm -rf …"`) is data passed to a program, not a command the shell runs.
+//
+// Each stage below is one regex pass; `commandViews` is the only place their ORDER is decided, and
+// the order matters (see the stage comments). packages/ingest/test/sanitize.test.ts pins every stage
+// individually, including the holes we knowingly accept — this is regex-as-tokenizer and a real
+// parser is out of scope (SLOP-018), so the tests are the contract.
+
+/** `# …` never runs. (Hole: a `#` inside a quoted string reads as a comment.) */
+export const stripComments = (c: string): string => c.replace(/(^|\s)#[^\n]*/g, "$1");
+
+/** The print builtins' arguments are data sent to stdout, so `sudo`/`rm -rf`/… inside them is inert.
+ * Quoted arguments are consumed as whole units, so a separator (`;` `|`) inside printed text never
+ * leaks out as a fake command break. */
+export const neutralizeEcho = (c: string): string =>
   c.replace(/((?:^|[;&|\n(])\s*)(?:echo|printf)\b(?:"(?:[^"\\]|\\.)*"|'[^']*'|[^;&|\n])*/gi, "$1echo");
-// A heredoc body (`cmd <<EOF … EOF`) is data written to a file/stdin, not commands the shell runs, so a
-// `sudo`/`rm -rf` line inside it is inert (unless the resulting file is then executed — see
-// execGeneratedScript). Replace the whole heredoc, body included, with a placeholder.
-const blankHeredoc = (c: string): string => c.replace(/<<-?\s*(['"]?)(\w+)\1[\s\S]*?\n\s*\2\b/g, "<<HEREDOC");
-// `codeOf`: quotes INTACT (so `psql -c "DROP …"` — executed code inside quotes — still matches), with
-// comments, heredoc bodies, and echo/printf output neutralized.
-const codeOf = (c: string): string => neutralizeEcho(stripComments(blankHeredoc(c)));
-// Blank the CONTENTS of quoted string literals. A dangerous token inside a quoted *argument*
-// (`node -e '… sudo …'`, `grep "sudo"`, `git commit -m "… rm -rf …"`) is data passed to a program,
-// not a shell command word — so the command-verb rules must not match it. (Tradeoff: a command truly
-// executed via `sh -c "sudo …"` is missed; that inline form is rare and worth the far fewer false
-// positives.) codeOf runs first so in-string separators are already gone from the parts we keep.
-const blankQuoted = (c: string): string => c.replace(/"(?:[^"\\]|\\.)*"/g, '""').replace(/'[^']*'/g, "''");
-const bareOf = (c: string): string => blankQuoted(codeOf(c));
+
+/** A heredoc body (`cmd <<EOF … EOF`) is data written to a file/stdin, not commands the shell runs —
+ * unless the resulting file is then executed, which execGeneratedScript catches separately. Runs
+ * FIRST, so a `#` inside a body can't turn the terminator line into a comment. */
+export const blankHeredoc = (c: string): string => c.replace(/<<-?\s*(['"]?)(\w+)\1[\s\S]*?\n\s*\2\b/g, "<<HEREDOC");
+
+/** Empty every quoted string literal, keeping the quotes. Runs LAST, on `code`, so the in-string
+ * separators are already gone from the parts being kept. (Hole: a command truly executed via
+ * `sh -c "sudo …"` disappears from this view; that inline form is rare and worth the far fewer
+ * false positives.) */
+export const blankQuoted = (c: string): string => c.replace(/"(?:[^"\\]|\\.)*"/g, '""').replace(/'[^']*'/g, "''");
+
+export const codeOf = (c: string): string => neutralizeEcho(stripComments(blankHeredoc(c)));
+export const bareOf = (c: string): string => blankQuoted(codeOf(c));
+
+/** The two derived views of one command, built together — the single place the pipeline is assembled. */
+export function commandViews(raw: string): { code: string; bare: string } {
+  const code = codeOf(raw);
+  return { code, bare: blankQuoted(code) };
+}
 
 // A file is "executed" when passed to an interpreter (sh/bash/…), sourced (`source`/`.`), or invoked
 // as a path (`./f`, `/abs/f`). Detects the write-a-script-then-run-it pattern (`echo … > f.sh; sh f.sh`)
@@ -241,6 +261,37 @@ function netTargetScope(rawCommand: string): NetScope {
   return scope;
 }
 
+/**
+ * The commonest rule shape, as a factory (SLOP-035): match ONE regex against the command-word view
+ * (`bare` — quoted arguments blanked, comments/heredocs/echo output neutralized) and, on a hit, report
+ * the VERBATIM command as evidence at the rule's base severity. Nothing context-dependent: a rule that
+ * escalates on its target, inspects `input`, or splits the command into segments stays a full `test`.
+ *
+ * `tools` defaults to Bash, the only tool that carries a command; the few rules that declare "*" keep
+ * doing so (they self-limit by requiring `commandBare`).
+ */
+function simpleCommandRule(spec: {
+  id: string;
+  category: Category;
+  framework_ref: string;
+  title: string;
+  baseSeverity: Severity;
+  /** Matched against ctx.commandBare. */
+  match: RegExp;
+  tools?: string[] | "*";
+}): Rule {
+  const { match, tools = ["Bash"], ...meta } = spec;
+  return {
+    ...meta,
+    tools,
+    test(ctx) {
+      const c = ctx.commandBare;
+      if (!c || !match.test(c)) return null;
+      return { evidence: evidence(ctx.command!) };
+    },
+  };
+}
+
 // ---- The rule set (v1) ----------------------------------------------------
 // Representative, not exhaustive; grouped by framework-anchored category. New rules just append here.
 
@@ -278,19 +329,14 @@ const RULES: Rule[] = [
       return { evidence: evidence(ctx.command!), severity, mods: { dangerous_target: dangerousTarget, temp_target: tempOnly } };
     },
   },
-  {
+  simpleCommandRule({
     id: "destructive.git_reset_hard",
     category: "destructive",
     framework_ref: "OWASP ASI02",
     title: "Discards local changes (git reset --hard)",
-    tools: ["Bash"],
     baseSeverity: "low", // routine dev op — only uncommitted working-tree changes are lost; commits survive in reflog
-    test(ctx) {
-      const c = ctx.commandBare;
-      if (!c || !/\bgit\s+reset\s+--hard\b/i.test(c)) return null;
-      return { evidence: evidence(ctx.command!) };
-    },
-  },
+    match: /\bgit\s+reset\s+--hard\b/i,
+  }),
   {
     id: "destructive.git_force_push",
     category: "destructive",
@@ -323,19 +369,14 @@ const RULES: Rule[] = [
       return null;
     },
   },
-  {
+  simpleCommandRule({
     id: "destructive.disk_wipe",
     category: "destructive",
     framework_ref: "OWASP ASI02",
     title: "Low-level disk write / wipe (dd, mkfs, shred)",
-    tools: ["Bash"],
     baseSeverity: "high",
-    test(ctx) {
-      const c = ctx.commandBare;
-      if (!c || !/(\bdd\s+if=|\bmkfs(\.\w+)?\b|\bshred\b)/i.test(c)) return null;
-      return { evidence: evidence(ctx.command!) };
-    },
-  },
+    match: /(\bdd\s+if=|\bmkfs(\.\w+)?\b|\bshred\b)/i,
+  }),
   {
     id: "destructive.overwrite_critical",
     category: "destructive",
@@ -456,35 +497,25 @@ const RULES: Rule[] = [
       };
     },
   },
-  {
+  simpleCommandRule({
     id: "exfil.reverse_shell",
     category: "exfiltration",
     framework_ref: "MITRE ATLAS AML.T0086",
     title: "Netcat / reverse-shell style connection",
-    tools: ["Bash"],
     baseSeverity: "critical",
-    test(ctx) {
-      const c = ctx.commandBare;
-      if (!c) return null;
-      if (!/\b(nc|ncat|netcat)\b[^|;&\n]*(-e\b|-c\b|\d{2,5})|\/dev\/tcp\/|bash\s+-i\b/i.test(c)) return null;
-      return { evidence: evidence(ctx.command!) };
-    },
-  },
+    match: /\b(nc|ncat|netcat)\b[^|;&\n]*(-e\b|-c\b|\d{2,5})|\/dev\/tcp\/|bash\s+-i\b/i,
+  }),
 
   // --- Privilege escalation / guardrail bypass (OWASP LLM06 Excessive Agency)
-  {
+  simpleCommandRule({
     id: "privilege.skip_permissions",
     category: "privilege-bypass",
     framework_ref: "OWASP LLM06",
     title: "Bypasses the permission guardrail",
     tools: "*",
     baseSeverity: "high",
-    test(ctx) {
-      const c = ctx.commandBare;
-      if (!c || !/--dangerously-skip-permissions\b|--yolo\b|--dangerously-skip\b/i.test(c)) return null;
-      return { evidence: evidence(ctx.command!) };
-    },
-  },
+    match: /--dangerously-skip-permissions\b|--yolo\b|--dangerously-skip\b/i,
+  }),
   {
     id: "privilege.curl_pipe_shell",
     category: "privilege-bypass",
@@ -541,21 +572,16 @@ const RULES: Rule[] = [
       return { evidence: evidence(ctx.command!), severity: sudo ? "critical" : "high", mods: { decoder: decoderName, interpreter: interp } };
     },
   },
-  {
+  simpleCommandRule({
     id: "privilege.sudo",
     category: "privilege-bypass",
     framework_ref: "OWASP LLM06",
     title: "Runs a command as root (sudo)",
-    tools: ["Bash"],
     baseSeverity: "high", // root escalation removes a real safety barrier — higher than an in-project op
-    test(ctx) {
-      const c = ctx.commandBare;
-      // sudo must be in *command position* — start of the command or right after a separator (; | && ( ).
-      // This ignores `sudo` as an argument (e.g. `apt install sudo`) and, via codeOf, inside echo/comments.
-      if (!c || !/(?:^|[\n;|&(])\s*sudo\b/i.test(c)) return null;
-      return { evidence: evidence(ctx.command!) };
-    },
-  },
+    // sudo must be in *command position* — start of the command or right after a separator (; | && ( ).
+    // This ignores `sudo` as an argument (e.g. `apt install sudo`) and, via codeOf, inside echo/comments.
+    match: /(?:^|[\n;|&(])\s*sudo\b/i,
+  }),
   {
     id: "privilege.exec_generated_script",
     category: "privilege-bypass",
@@ -576,33 +602,22 @@ const RULES: Rule[] = [
       return { evidence: evidence(raw), severity: critical ? "critical" : "high", mods: { script_file: file } };
     },
   },
-  {
+  simpleCommandRule({
     id: "privilege.chmod_777",
     category: "privilege-bypass",
     framework_ref: "OWASP LLM06",
     title: "Overly permissive permissions (chmod 777)",
-    tools: ["Bash"],
     baseSeverity: "medium",
-    test(ctx) {
-      const c = ctx.commandBare;
-      if (!c || !/\bchmod\s+(-[a-zA-Z]+\s+)*0?777\b/i.test(c)) return null;
-      return { evidence: evidence(ctx.command!) };
-    },
-  },
-  {
+    match: /\bchmod\s+(-[a-zA-Z]+\s+)*0?777\b/i,
+  }),
+  simpleCommandRule({
     id: "privilege.persistence",
     category: "privilege-bypass",
     framework_ref: "OWASP LLM06",
     title: "Installs a persistence mechanism",
-    tools: ["Bash"],
     baseSeverity: "high",
-    test(ctx) {
-      const c = ctx.commandBare;
-      if (!c) return null;
-      if (!/\bcrontab\s+-|\bsystemctl\s+enable\b|\blaunchctl\s+load\b|>>\s*~\/\.(bashrc|zshrc|profile|bash_profile)\b|\/etc\/(cron|systemd|rc\.local)/i.test(c)) return null;
-      return { evidence: evidence(ctx.command!) };
-    },
-  },
+    match: /\bcrontab\s+-|\bsystemctl\s+enable\b|\blaunchctl\s+load\b|>>\s*~\/\.(bashrc|zshrc|profile|bash_profile)\b|\/etc\/(cron|systemd|rc\.local)/i,
+  }),
   {
     id: "privilege.write_outside_project",
     category: "privilege-bypass",
@@ -636,15 +651,11 @@ function buildContext(
   projectPath: string | null,
   ownedConfigDirs: string[],
 ): RuleContext {
-  let input: any = null;
-  try {
-    input = row.input_json ? JSON.parse(row.input_json) : null;
-  } catch {
-    input = null;
-  }
+  const input: any = parseStored(row.input_json, "detect: tool_calls.input_json");
   const command = typeof input?.command === "string" ? input.command : null;
-  const commandCode = command != null ? codeOf(command) : null;
-  const commandBare = command != null ? bareOf(command) : null;
+  const views = command != null ? commandViews(command) : null;
+  const commandCode = views?.code ?? null;
+  const commandBare = views?.bare ?? null;
   const filePath = typeof input?.file_path === "string" ? input.file_path : null;
   return { toolName: row.tool_name, command, commandCode, commandBare, filePath, input, resultSummary: row.result_summary, status: row.status, projectPath, ownedConfigDirs };
 }

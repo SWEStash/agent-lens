@@ -31,7 +31,7 @@ covered by Layer 1 fixtures instead, never by the oracle.
 ## How to run
 
 ```bash
-pnpm test                                   # Layers 1, 3, 4-unit + corpus scenarios (150 tests)
+pnpm test                                   # Layers 1, 3, 4-unit + corpus scenarios + web unit tests
 cp data/agent-lens.db /tmp/al-validate.db   # snapshot (never read the live WAL DB)
 pnpm validate --db /tmp/al-validate.db      # Layer 2 invariants on the real corpus
 pnpm build-corpus                           # regenerate the redacted corpus + run the oracle
@@ -54,6 +54,15 @@ pnpm sandbox                                # Layer 5 end-to-end over the corpus
   - `ingest/test/ingest.test.ts` — existing dedup/linkage/pruning/streaming plus
     new: malformed lines, meta/compaction lines (no turn), cross-file uuid dedup,
     and the **orphan subagent** case.
+  - `ingest/test/detect.test.ts` + `sanitize.test.ts` — the security rules and
+    severity model, and the command sanitizer stage by stage (including the
+    regex-as-tokenizer holes we knowingly accept).
+  - `web/test/*.test.ts(x)` — the SPA's pure transcript logic (shell/diff/parse/
+    tree) and its hooks and components (`useFetch`, `useQueryState`,
+    `useOutsideClick`, `FilterSelect`, `AgentRow`). `packages/web/vitest.config.ts`
+    defines the web project (jsdom, source resolved by vite); the root config
+    references it, so a package-local run and the repo-wide run execute the same
+    tests.
 - **Layer 2 — invariants** (`scripts/validate.mjs`): dedup, conservation
   (`dashboardOverview` == direct SUM), cost additivity (row-sum == grouped),
   linkage integrity, aggregate recompute, plus report-only orphan/unpriced/
@@ -76,7 +85,7 @@ pnpm sandbox                                # Layer 5 end-to-end over the corpus
 > ~630-session DB — Layer 2 runs against your own `data/agent-lens.db`, so the numbers scale with
 > your data. Layers 1/3/4/5 run on the committed corpus and are deterministic.
 
-**Layer 1/3/4-unit + corpus scenarios — `pnpm test`:** 150 tests pass (16 files).
+**Layer 1/3/4-unit + corpus scenarios + web — `pnpm test`:** 474 tests pass (39 files).
 
 **Layer 2 — invariants on the live corpus (~632-session snapshot):** all hard invariants PASS.
 

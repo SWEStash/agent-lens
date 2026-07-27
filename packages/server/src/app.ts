@@ -40,7 +40,9 @@ export async function createApp(db: DB, opts: CreateAppOpts = {}): Promise<Fasti
   // any non-loopback Host up front. This also removes the residual write ambiguity (Origin-absent).
   if (opts.enforceLoopbackHost !== false) {
     app.addHook("onRequest", async (req, reply) => {
-      const host = (req.headers.host ?? "").replace(/:\d+$/, "");
+      // Host is case-insensitive (RFC 3986) and LOOPBACK_HOSTS is lowercase, so `Host: LOCALHOST`
+      // would otherwise be rejected — over-strict, but a needless 403 all the same (SLOP-073).
+      const host = (req.headers.host ?? "").replace(/:\d+$/, "").toLowerCase();
       if (!LOOPBACK_HOSTS.has(host)) {
         return reply.code(403).send({ error: { code: "FORBIDDEN_HOST", message: "non-loopback Host rejected" } });
       }
@@ -66,6 +68,10 @@ export async function createApp(db: DB, opts: CreateAppOpts = {}): Promise<Fasti
   if (opts.triageDbPath) {
     triageDb = openTriage(opts.triageDbPath); // creates the file + schema before we ATTACH it
     triageDb.exec(PREFS_SCHEMA_SQL); // UI-prefs table rides the same writable sidecar (see prefs.ts)
+    // ATTACH takes a literal, not a bound parameter, so the path must be interpolated. It is an
+    // OPERATOR-supplied path (config/CLI), never request data, and single quotes are doubled per SQL
+    // string-literal escaping — the standard workaround, called out here so it doesn't read as an
+    // oversight (SLOP-072).
     db.exec(`ATTACH DATABASE '${opts.triageDbPath.replace(/'/g, "''")}' AS triage`);
     app.addHook("onClose", async () => triageDb?.close());
   }

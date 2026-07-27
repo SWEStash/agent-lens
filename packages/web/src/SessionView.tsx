@@ -7,8 +7,9 @@ import { TurnSection } from "./transcript/TurnSection";
 import { EventBlock } from "./transcript/EventBlock";
 import { groupByTurn } from "./transcript/group";
 import { useSessionDetail } from "./transcript/useSessionDetail";
+import { ErrorAlert, Loading } from "./AsyncBoundary";
 import { FlashContext, FormatContext, HideToolsContext, WorkflowMapContext, type MsgFormat } from "./transcript/contexts";
-import { loadFormat, loadHideTools, saveFormat, saveHideTools } from "./transcript/viewPrefs";
+import { fetchViewPrefs, loadFormat, loadHideTools, saveFormat, saveHideTools } from "./transcript/viewPrefs";
 
 export default function SessionView() {
   const { id } = useParams();
@@ -22,6 +23,15 @@ export default function SessionView() {
   const [hideTools, setHideTools] = useState<boolean>(loadHideTools);
 
   useEffect(() => setCollapsed(new Set()), [id]);
+
+  // Painted from the localStorage cache above; reconcile with the server's stored value (source of
+  // truth when a writable store is configured), like the dashboard/sessions prefs do.
+  useEffect(() => {
+    void fetchViewPrefs().then((p) => {
+      if (p.format !== undefined) setFormat(p.format);
+      if (p.hideTools !== undefined) setHideTools(p.hideTools);
+    });
+  }, []);
 
   const chooseFormat = (f: MsgFormat) => {
     setFormat(f);
@@ -68,8 +78,8 @@ export default function SessionView() {
     return () => window.clearTimeout(t);
   }, [d, hash, collapsed]);
 
-  if (error) return <div className="error" role="alert">{error}</div>;
-  if (!d) return <div className="muted pad" role="status" aria-live="polite">Loading…</div>;
+  if (error) return <ErrorAlert error={error} />;
+  if (!d) return <Loading />;
 
   // Events that actually render something (mirrors EventBlock's body check). A session with none
   // (e.g. a zero-turn session whose only line was a meta/command with no text) gets an empty-state

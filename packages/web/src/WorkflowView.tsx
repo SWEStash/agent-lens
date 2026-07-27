@@ -1,8 +1,11 @@
-import { Fragment, useEffect, useState } from "react";
+import { Fragment } from "react";
 import { Link, useParams } from "react-router-dom";
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { api, type WorkflowAgent, type WorkflowDetail, type WorkflowProgressEntry } from "./api";
+import { type WorkflowAgent, type WorkflowDetail, type WorkflowProgressEntry } from "./api";
+import { AgentRow } from "./AgentRow";
+import { AsyncBoundary } from "./AsyncBoundary";
+import { useFetch } from "./useFetch";
 import { fmtCost, fmtDate, fmtDuration, fmtTokens, shortModel } from "./format";
 import { decodeEntities, looseParse, prettyJson, splitTruncation } from "./jsonish";
 import ResultView from "./ResultView";
@@ -70,44 +73,16 @@ function buildPhaseGraph(progress: WorkflowProgressEntry[] | null | undefined, f
   return fallbackTitles.map((title) => ({ title, agentCount: 0, models: [] }));
 }
 
-/** One spawned-agent row in a workflow run, linking to its full transcript. Mirrors SessionView's
- * SubagentItem look so the two fan-out views read the same. */
-function AgentRow({ a }: { a: WorkflowAgent }) {
-  const title = a.agent_description || a.title || a.id.slice(0, 12);
-  return (
-    <li>
-      <Link to={`/session/${a.id}`}>{title}</Link>
-      {a.agent_type && <span className="tag subagent meta-type">{a.agent_type}</span>}
-      {a.spawn_depth != null && a.spawn_depth > 1 && (
-        <span className="tag meta-depth" title={`nested ${a.spawn_depth} levels deep`}>↳{a.spawn_depth}</span>
-      )}
-      <span className="muted">
-        {" "}· {(a.models ?? "").split(",").filter(Boolean).map(shortModel).join(", ") || "—"} ·{" "}
-        {fmtTokens(a.tokens)} tok · {fmtCost(a.cost)}
-        {a.duration_ms != null ? ` · ${fmtDuration(a.duration_ms)}` : ""}
-      </span>
-    </li>
-  );
-}
-
 /** Detail page for a single Workflow-tool run (route /workflow/:run_id). Shows what launched it, the
  * roll-up stats for the fan-out, the workflow's returned result, and every spawned agent linked back
  * to its transcript. The companion to the session/subagent detail page for orchestration runs. */
 export default function WorkflowView() {
   const { run_id } = useParams();
-  const [d, setD] = useState<WorkflowDetail | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const state = useFetch<WorkflowDetail>("/workflows/" + run_id, { reset: true });
+  return <AsyncBoundary state={state}>{(d) => <WorkflowRunDetail d={d} />}</AsyncBoundary>;
+}
 
-  useEffect(() => {
-    setD(null);
-    setError(null);
-    api<WorkflowDetail>("/workflows/" + run_id)
-      .then(setD)
-      .catch((e) => setError(String(e)));
-  }, [run_id]);
-
-  if (error) return <div className="error" role="alert">{error}</div>;
-  if (!d) return <div className="muted pad" role="status" aria-live="polite">Loading…</div>;
+function WorkflowRunDetail({ d }: { d: WorkflowDetail }) {
   const status = (d.status ?? "").toLowerCase();
 
   // Prefer the runner's self-reported roll-up (d.run) over stats derived from ingested agent

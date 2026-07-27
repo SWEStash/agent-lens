@@ -1,7 +1,10 @@
 import { Fragment, useEffect, useState } from "react";
-import { Link, useSearchParams } from "react-router-dom";
-import { api, type Project, type SessionSummary, type Source } from "./api";
-import { useDetailsAutoClose } from "./useDetailsAutoClose";
+import { Link } from "react-router-dom";
+import { type Project, type SessionSummary, type Source } from "./api";
+import { useFetch, useLookup } from "./useFetch";
+import { useQueryState } from "./useQueryState";
+import { ErrorAlert, Loading } from "./AsyncBoundary";
+import { useDetailsAutoClose } from "./useOutsideClick";
 import { fmtCost, fmtDate, fmtDuration, fmtTokens, shortModel, tokenSplitTitle } from "./format";
 import { FilterSelect } from "./FilterSelect";
 import { Pager } from "./Pager";
@@ -146,6 +149,8 @@ function loadVisibleCols(): Set<string> {
 }
 
 const PAGE = 50;
+/** Identity-stable placeholder so the table renders empty (not crashing) before the first load. */
+const EMPTY_PAGE = { total: 0, sessions: [] as SessionSummary[] };
 
 // Filter option lists. Severity most-severe-first; error types grouped failures then rejections.
 const SEVERITY_OPTIONS: Array<{ value: string; label: string }> = [
@@ -230,59 +235,34 @@ function ColumnCustomizer({ visible, onToggle }: { visible: Set<string>; onToggl
 }
 
 export default function SessionsView() {
-  const [params, setParams] = useSearchParams();
-  const [sources, setSources] = useState<Source[]>([]);
-  const [projects, setProjects] = useState<Project[]>([]);
-  const [models, setModels] = useState<string[]>([]);
-  const [data, setData] = useState<{ total: number; sessions: SessionSummary[] }>({ total: 0, sessions: [] });
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const [qInput, setQInput] = useState(params.get("q") ?? "");
+  const { get, set: setParam, pick } = useQueryState(["offset"]);
+  const sources = useLookup<Source[]>("/sources", []);
+  const projects = useLookup<Project[]>("/projects", []);
+  const models = useLookup<string[]>("/models", []);
+  const [qInput, setQInput] = useState(get("q"));
   const [visibleCols, setVisibleCols] = useState<Set<string>>(loadVisibleCols);
 
-  const offset = Number(params.get("offset") ?? 0);
+  const offset = Number(get("offset", "0"));
 
   useEffect(() => {
-    api<Source[]>("/sources").then(setSources).catch(() => {});
-    api<Project[]>("/projects").then(setProjects).catch(() => {});
-    api<string[]>("/models").then(setModels).catch(() => {});
     // Reconcile the localStorage-cached column choice with the server's stored value (source of truth
     // when a writable store is configured); no-op when it returns null.
     fetchPref<unknown>(COLS_PREF_KEY).then((ids) => ids != null && setVisibleCols(normalizeCols(ids)));
   }, []);
 
-  useEffect(() => {
-    setLoading(true);
-    setError(null);
-    const qs = new URLSearchParams();
-    for (const k of ["source", "project", "model", "q", "sort", "dir", "severity", "error_type"]) {
-      const v = params.get(k);
-      if (v) qs.set(k, v);
-    }
-    // Default to main sessions only: subagents share their parent's slug, so listing them flat made
-    // one task look like several "replicated" rows. They stay reachable via the filter and are nested
-    // under their parent in the session detail view.
-    qs.set("kind", params.get("kind") || "main");
-    qs.set("limit", String(PAGE));
-    qs.set("offset", String(offset));
-    api<{ total: number; sessions: SessionSummary[] }>("/sessions?" + qs.toString())
-      .then(setData)
-      .catch((e) => setError(String(e)))
-      .finally(() => setLoading(false));
-  }, [params]);
-
-  function setParam(key: string, value: string) {
-    const next = new URLSearchParams(params);
-    if (value) next.set(key, value);
-    else next.delete(key);
-    // Changing a filter resets to page 1, but paging through offset must keep the value just set.
-    if (key !== "offset") next.delete("offset");
-    setParams(next);
-  }
+  const qs = pick(["source", "project", "model", "q", "sort", "dir", "severity", "error_type"]);
+  // Default to main sessions only: subagents share their parent's slug, so listing them flat made
+  // one task look like several "replicated" rows. They stay reachable via the filter and are nested
+  // under their parent in the session detail view.
+  qs.set("kind", get("kind") || "main");
+  qs.set("limit", String(PAGE));
+  qs.set("offset", String(offset));
+  const { data, loading, error } = useFetch<{ total: number; sessions: SessionSummary[] }>("/sessions?" + qs.toString());
+  const { total, sessions } = data ?? EMPTY_PAGE;
 
   function submitSearch(e: React.FormEvent) {
     e.preventDefault();
-    setParam("q", qInput.trim());
+    setParam({ q: qInput.trim() });
   }
 
   function toggleColumn(id: string, on: boolean) {
@@ -297,19 +277,14 @@ export default function SessionsView() {
 
   // Sort is server-side (whole list, not just the page) and lives in the URL. Clicking the active
   // column flips direction; a new column adopts its default direction. Changing sort resets to page 1.
-  const sortKey = (params.get("sort") ?? "started") as SessionSortKey;
-  const sortDir = (params.get("dir") === "asc" ? "asc" : "desc") as SortDir;
+  const sortKey = get("sort", "started") as SessionSortKey;
+  const sortDir = (get("dir") === "asc" ? "asc" : "desc") as SortDir;
   function onSort(key: SessionSortKey, defaultDir: SortDir) {
-    const nextDir = sortKey === key ? (sortDir === "asc" ? "desc" : "asc") : defaultDir;
-    const next = new URLSearchParams(params);
-    next.set("sort", key);
-    next.set("dir", nextDir);
-    next.delete("offset");
-    setParams(next);
+    setParam({ sort: key, dir: sortKey === key ? (sortDir === "asc" ? "desc" : "asc") : defaultDir });
   }
 
   const page = Math.floor(offset / PAGE) + 1;
-  const pages = Math.max(1, Math.ceil(data.total / PAGE));
+  const pages = Math.max(1, Math.ceil(total / PAGE));
 
   // Columns to render, in registry order: non-toggleable always, toggleable when enabled.
   const shownCols = COLUMNS.filter((c) => !c.toggleable || visibleCols.has(c.id));
@@ -327,13 +302,13 @@ export default function SessionsView() {
             onChange={(e) => setQInput(e.target.value)}
           />
           <button type="submit">Search</button>
-          {params.get("q") && (
-            <button type="button" className="ghost" onClick={() => (setQInput(""), setParam("q", ""))}>
+          {get("q") && (
+            <button type="button" className="ghost" onClick={() => (setQInput(""), setParam({ q: "" }))}>
               clear
             </button>
           )}
         </form>
-        <select aria-label="Filter by source" value={params.get("source") ?? ""} onChange={(e) => setParam("source", e.target.value)}>
+        <select aria-label="Filter by source" value={get("source")} onChange={(e) => setParam({ source: e.target.value })}>
           <option value="">all sources</option>
           {sources.map((s) => (
             <option key={s.id} value={s.id}>
@@ -344,14 +319,14 @@ export default function SessionsView() {
         <FilterSelect
           ariaLabel="Filter by project"
           searchPlaceholder="Find project…"
-          value={params.get("project") ?? ""}
-          onChange={(v) => setParam("project", v)}
+          value={get("project")}
+          onChange={(v) => setParam({ project: v })}
           options={[
             { value: "", label: "all projects" },
             ...projects.map((p) => ({ value: p.id, label: `${p.path.replace(/^.*\//, "")} (${p.session_count})` })),
           ]}
         />
-        <select aria-label="Filter by model" value={params.get("model") ?? ""} onChange={(e) => setParam("model", e.target.value)}>
+        <select aria-label="Filter by model" value={get("model")} onChange={(e) => setParam({ model: e.target.value })}>
           <option value="">all models</option>
           {models.map((m) => (
             <option key={m} value={m}>
@@ -359,7 +334,7 @@ export default function SessionsView() {
             </option>
           ))}
         </select>
-        <select aria-label="Filter by kind" value={params.get("kind") || "main"} onChange={(e) => setParam("kind", e.target.value)}>
+        <select aria-label="Filter by kind" value={get("kind") || "main"} onChange={(e) => setParam({ kind: e.target.value })}>
           <option value="main">main only</option>
           <option value="all">main + subagents</option>
           <option value="subagent">subagents only</option>
@@ -367,21 +342,21 @@ export default function SessionsView() {
         <MultiSelect
           label="Security"
           options={SEVERITY_OPTIONS}
-          selected={(params.get("severity") ?? "").split(",").filter(Boolean)}
-          onChange={(next) => setParam("severity", next.join(","))}
+          selected={get("severity").split(",").filter(Boolean)}
+          onChange={(next) => setParam({ severity: next.join(",") })}
         />
         <MultiSelect
           label="Errors"
           options={ERROR_TYPE_OPTIONS}
-          selected={(params.get("error_type") ?? "").split(",").filter(Boolean)}
-          onChange={(next) => setParam("error_type", next.join(","))}
+          selected={get("error_type").split(",").filter(Boolean)}
+          onChange={(next) => setParam({ error_type: next.join(",") })}
         />
       </div>
 
-      {error && <div className="error" role="alert">{error}</div>}
+      <ErrorAlert error={error} />
       {loading ? (
-        <div className="muted pad" role="status" aria-live="polite">Loading…</div>
-      ) : data.sessions.length === 0 ? (
+        <Loading />
+      ) : sessions.length === 0 ? (
         <div className="muted pad" role="status">No sessions match.</div>
       ) : (
         <table className="sessions">
@@ -411,7 +386,7 @@ export default function SessionsView() {
             </tr>
           </thead>
           <tbody>
-            {data.sessions.map((s) => (
+            {sessions.map((s) => (
               <tr key={s.id}>
                 {shownCols.map((c) => (
                   <Fragment key={c.id}>{c.cell(s)}</Fragment>
@@ -423,7 +398,7 @@ export default function SessionsView() {
         </table>
       )}
 
-      <Pager page={page} pages={pages} total={data.total} unit="sessions" onPage={(p) => setParam("offset", String((p - 1) * PAGE))} />
+      <Pager page={page} pages={pages} total={total} unit="sessions" onPage={(p) => setParam({ offset: String((p - 1) * PAGE) })} />
     </div>
   );
 }

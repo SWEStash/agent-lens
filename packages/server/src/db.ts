@@ -1,6 +1,6 @@
 import Database from "better-sqlite3";
 import { SCHEMA_VERSION, unpackRaw, severityRank, SECURITY_CATEGORIES, errorKind } from "@agent-lens/core";
-import { tableExists, queryAll, pushDateRange, metaJoin, metaProjection } from "./sql-util.js";
+import { tableExists, queryAll, orderBy, pushGrouped, pushDateRange, metaJoin, metaProjection } from "./sql-util.js";
 import { sessionUsage, splitOf, tokensOf, costOf, USAGE_SUMS, type UsageRow } from "./usage.js";
 
 export type DB = Database.Database;
@@ -180,14 +180,13 @@ export function listSessions(db: DB, f: SessionFilters) {
   // Columns sortable directly in SQL (stable-paginated with an id tiebreak). tokens/cost aren't stored
   // — they're derived from token_usage with per-model pricing — so those sort over the whole matching
   // set in JS below.
-  const NATIVE_ORDER: Record<string, string> = {
+  const NATIVE_ORDER = {
     started: "s.started_at",
     title: "COALESCE(s.ai_title, s.slug)",
     turns: "s.turn_count",
     duration: "s.duration_ms",
   };
   const sortKey = f.sort ?? "started";
-  const sqlDir = f.dir === "asc" ? "ASC" : "DESC";
 
   // Columns sorted in JS over the whole matching set (derived/subquery metrics that the paged SQL
   // ORDER BY can't reach consistently): tokens/cost (costed below) plus the error/finding roll-ups.
@@ -216,9 +215,8 @@ export function listSessions(db: DB, f: SessionFilters) {
     });
     rows = all.slice(f.offset, f.offset + f.limit);
   } else {
-    const orderCol = NATIVE_ORDER[sortKey] ?? NATIVE_ORDER.started;
     rows = db
-      .prepare(`${baseSelect} ORDER BY ${orderCol} ${sqlDir}, s.id ASC LIMIT ? OFFSET ?`)
+      .prepare(`${baseSelect} ORDER BY ${orderBy(NATIVE_ORDER, sortKey, "started", f.dir)}, s.id ASC LIMIT ? OFFSET ?`)
       .all(...params, f.limit, f.offset) as any[];
     attachSessionCost(db, rows);
   }
@@ -316,7 +314,7 @@ function loadFindings(db: DB, id: string, toolRows: any[]): any[] {
       signals: safeJson(fr.signals_json),
     };
     sessionFindings.push(f);
-    if (fr.tool_call_id) (byToolCall.get(fr.tool_call_id) ?? byToolCall.set(fr.tool_call_id, []).get(fr.tool_call_id))!.push(f);
+    if (fr.tool_call_id) pushGrouped(byToolCall, fr.tool_call_id, f);
   }
   for (const t of toolRows) t.findings = byToolCall.get(t.id) ?? [];
   // Most-severe first so a session banner can lead with the worst.
@@ -336,7 +334,7 @@ function loadEvents(db: DB, id: string, toolRows: any[]) {
   const toolsByEvent = new Map<string, any[]>();
   for (const t of toolRows) {
     if (!t.event_uuid) continue;
-    (toolsByEvent.get(t.event_uuid) ?? toolsByEvent.set(t.event_uuid, []).get(t.event_uuid))!.push(t);
+    pushGrouped(toolsByEvent, t.event_uuid, t);
   }
 
   return eventRows.map((e) => {
@@ -770,15 +768,13 @@ export function listFiles(db: DB, f: FileFilters = {}) {
 
   const total = (db.prepare(`SELECT COUNT(*) n FROM (${grouped})`).get(...params) as { n: number }).n;
 
-  const ORDER: Record<string, string> = {
+  const ORDER = {
     last_ts: "last_ts",
     first_ts: "first_ts",
     changes: "changes",
     sessions: "sessions",
     path: "file_path",
   };
-  const col = ORDER[f.sort ?? "last_ts"] ?? "last_ts";
-  const dir = f.dir === "asc" ? "ASC" : "DESC";
   const limit = Math.min(f.limit ?? 50, 200);
   const offset = f.offset ?? 0;
 
@@ -786,7 +782,7 @@ export function listFiles(db: DB, f: FileFilters = {}) {
     .prepare(
       `SELECT g.*, p.path AS project_path FROM (${grouped}) g
        LEFT JOIN projects p ON p.id = g.project_id
-       ORDER BY ${col} ${dir}, g.file_path ASC LIMIT ? OFFSET ?`,
+       ORDER BY ${orderBy(ORDER, f.sort, "last_ts", f.dir)}, g.file_path ASC LIMIT ? OFFSET ?`,
     )
     .all(...params, limit, offset) as any[];
   return { total, files };
@@ -995,15 +991,13 @@ export function listFindings(db: DB, f: FindingFilters) {
       .get(...w.params) as any
   ).n;
 
-  const ORDER: Record<string, string> = {
+  const ORDER = {
     severity: SEVERITY_RANK_SQL,
     session: "f.session_id",
     rule: "f.rule_id",
     category: "f.category",
     time: "s.started_at",
   };
-  const orderCol = ORDER[f.sort ?? "severity"] ?? SEVERITY_RANK_SQL;
-  const dir = f.dir === "asc" ? "ASC" : "DESC";
 
   const findings = db
     .prepare(
@@ -1017,7 +1011,7 @@ export function listFindings(db: DB, f: FindingFilters) {
        LEFT JOIN tool_calls tc ON tc.id = f.tool_call_id
        ${dismissJoin}
        ${whereSql}
-       ORDER BY ${orderCol} ${dir}, ${SEVERITY_RANK_SQL} DESC, f.id ASC
+       ORDER BY ${orderBy(ORDER, f.sort, "severity", f.dir)}, ${SEVERITY_RANK_SQL} DESC, f.id ASC
        LIMIT ? OFFSET ?`,
     )
     .all(...w.params, f.limit, f.offset);

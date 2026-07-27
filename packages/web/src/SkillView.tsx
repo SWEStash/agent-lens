@@ -1,8 +1,11 @@
-import { useEffect, useMemo, useState } from "react";
-import { Link, useParams, useSearchParams } from "react-router-dom";
+import { useMemo } from "react";
+import { Link, useParams } from "react-router-dom";
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { api, type SkillDetail } from "./api";
+import { type SkillDetail } from "./api";
+import { AsyncBoundary } from "./AsyncBoundary";
+import { useFetch } from "./useFetch";
+import { useQueryState } from "./useQueryState";
 import { fmtDate } from "./format";
 
 function fmtBytes(n: number | null): string {
@@ -24,46 +27,33 @@ function versionLabel(id: string, lastSeen: string | null): string {
  */
 export default function SkillView() {
   const { name = "" } = useParams();
-  const [params, setParams] = useSearchParams();
-  const [data, setData] = useState<SkillDetail | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const state = useFetch<SkillDetail>("/skills/" + encodeURIComponent(name), { reset: true });
+  return (
+    <AsyncBoundary state={state} empty={<div className="muted pad">Not found.</div>}>
+      {(data) => <SkillDetailView data={data} />}
+    </AsyncBoundary>
+  );
+}
 
-  useEffect(() => {
-    setLoading(true);
-    setError(null);
-    setData(null);
-    api<SkillDetail>("/skills/" + encodeURIComponent(name))
-      .then(setData)
-      .catch((e) => setError(String(e)))
-      .finally(() => setLoading(false));
-  }, [name]);
+function SkillDetailView({ data }: { data: SkillDetail }) {
+  const { get, set: setParam } = useQueryState();
+  const version = get("v");
 
   // Selected version: the ?v= one if it exists, else the most recent (versions[0]).
   const selected = useMemo(() => {
-    if (!data?.versions.length) return null;
-    const v = params.get("v");
-    return data.versions.find((x) => x.id === v) ?? data.versions[0];
-  }, [data, params]);
+    if (!data.versions.length) return null;
+    return data.versions.find((x) => x.id === version) ?? data.versions[0];
+  }, [data, version]);
 
   const sessionsForVersion = useMemo(
-    () => (data && selected ? data.sessions.filter((s) => s.version_id === selected.id) : []),
+    () => (selected ? data.sessions.filter((s) => s.version_id === selected.id) : []),
     [data, selected],
   );
-  const unversionedFires = useMemo(
-    () => (data ? data.sessions.filter((s) => !s.version_id).length : 0),
-    [data],
-  );
+  const unversionedFires = useMemo(() => data.sessions.filter((s) => !s.version_id).length, [data]);
 
   function pickVersion(id: string) {
-    const next = new URLSearchParams(params);
-    next.set("v", id);
-    setParams(next);
+    setParam({ v: id });
   }
-
-  if (loading) return <div className="muted pad" role="status" aria-live="polite">Loading…</div>;
-  if (error) return <div className="error" role="alert">{error}</div>;
-  if (!data) return <div className="muted pad">Not found.</div>;
 
   return (
     <div className="skill-view">
