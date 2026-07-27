@@ -9,7 +9,7 @@ import { groupByTurn } from "./transcript/group";
 import { useSessionDetail } from "./transcript/useSessionDetail";
 import { ErrorAlert, Loading } from "./AsyncBoundary";
 import { FlashContext, FormatContext, HideToolsContext, WorkflowMapContext, type MsgFormat } from "./transcript/contexts";
-import { loadFormat, loadHideTools, saveFormat, saveHideTools } from "./transcript/viewPrefs";
+import { fetchViewPrefs, loadFormat, loadHideTools, saveFormat, saveHideTools } from "./transcript/viewPrefs";
 
 export default function SessionView() {
   const { id } = useParams();
@@ -23,6 +23,15 @@ export default function SessionView() {
   const [hideTools, setHideTools] = useState<boolean>(loadHideTools);
 
   useEffect(() => setCollapsed(new Set()), [id]);
+
+  // Painted from the localStorage cache above; reconcile with the server's stored value (source of
+  // truth when a writable store is configured), like the dashboard/sessions prefs do.
+  useEffect(() => {
+    void fetchViewPrefs().then((p) => {
+      if (p.format !== undefined) setFormat(p.format);
+      if (p.hideTools !== undefined) setHideTools(p.hideTools);
+    });
+  }, []);
 
   const chooseFormat = (f: MsgFormat) => {
     setFormat(f);
