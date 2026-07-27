@@ -44,6 +44,13 @@ jobs:
       - name: Export the demo snapshot (guards the Pages build)
         run: node scripts/export-snapshot.mjs
 
+      # Exporting successfully only proves the URLs the EXPORTER fetched return 200. This walks the
+      # exported snapshot following the links the SPA actually renders and asserts each destination
+      # was written — the check that would have caught the "history →" 404 (link passes ?path= alone,
+      # exporter only wrote the ?path=&project= key, which is a different hash).
+      - name: Check every SPA link resolves to an exported snapshot
+        run: node scripts/check-snapshot-links.mjs
+
       - name: Build the static SPA in snapshot mode (catches snapshot-path breakage the default build misses)
         env:
           VITE_SNAPSHOT: "1"

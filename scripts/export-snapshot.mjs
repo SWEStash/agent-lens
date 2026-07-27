@@ -168,18 +168,30 @@ async function main() {
   // server's max page (the demo corpus is well under it). Each row's timeline is keyed by a hash of
   // (path, project) — the file path has slashes so it can't be a route segment — which api.ts's
   // snapshotFileKey reproduces to fetch snapshot/file/<key>.json.
+  //
+  // BOTH link shapes must be exported, because `project` is optional on /api/file and the SPA emits
+  // the query two different ways: FilesView links `?path=…&project=…`, while the session transcript's
+  // "history →" link (transcript/FilesChanged.tsx) links `?path=…` alone. Those hash to DIFFERENT
+  // keys, so exporting only the project-ful one 404s the demo's history link. They are separate
+  // fetches rather than one payload under two names: without `project`, the timeline legitimately
+  // aggregates every project that touched that path.
   const filesList = await getJson("/api/files?limit=200");
   writeSnap("files.json", filesList);
   const fileKeys = new Map(); // key → "project\0path", to catch a hash collision clobbering a row
   for (const f of filesList.files) {
-    const key = snapshotFileKey(f.file_path, f.project_id);
-    const ident = `${f.project_id ?? ""}\0${f.file_path}`;
-    const clash = fileKeys.get(key);
-    if (clash && clash !== ident) throw new Error(`snapshotFileKey collision: ${clash} vs ${ident} → ${key}`);
-    fileKeys.set(key, ident);
-    const fq = new URLSearchParams({ path: f.file_path });
-    if (f.project_id) fq.set("project", f.project_id);
-    writeSnap(`file/${key}.json`, await getJson("/api/file?" + fq.toString()));
+    // variants: [project scoping used for the key, query params]. `null` = the path-only view.
+    const variants = f.project_id ? [f.project_id, null] : [null];
+    for (const project of variants) {
+      const key = snapshotFileKey(f.file_path, project);
+      const ident = `${project ?? ""}\0${f.file_path}`;
+      const clash = fileKeys.get(key);
+      if (clash && clash !== ident) throw new Error(`snapshotFileKey collision: ${clash} vs ${ident} → ${key}`);
+      if (fileKeys.has(key)) continue; // same (project, path) reached twice — one fetch is enough
+      fileKeys.set(key, ident);
+      const fq = new URLSearchParams({ path: f.file_path });
+      if (project) fq.set("project", project);
+      writeSnap(`file/${key}.json`, await getJson("/api/file?" + fq.toString()));
+    }
   }
 
   writeSnap("manifest.json", {
