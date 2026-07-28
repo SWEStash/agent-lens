@@ -84,6 +84,9 @@ importers:
 
   packages/server:
     dependencies:
+      '@agent-lens/contracts':
+        specifier: workspace:*
+        version: link:../contracts
       '@agent-lens/core':
         specifier: workspace:*
         version: link:../core

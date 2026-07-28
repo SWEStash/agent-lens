@@ -58,7 +58,7 @@ agent-lens-ingest: files=312 skipped=298 new_events=1840 malformed=0
 **3 · Browse** — a local dashboard + transcript browser on `127.0.0.1`:
 
 ```text
- ◐ Agent Lens    Sessions · Skills · Security · Dashboard    local agent session explorer
+ ◐ Agent Lens   Sessions · Files · Skills · Security · Dashboard   local agent session explorer
  ┌ tokens ──────┐ ┌ est. cost ───┐ ┌ sessions ────┐ ┌ cache read ──┐
  │ 128.5 M      │ │ $842.17      │ │ 312          │ │ 92.6 %       │
  └──────────────┘ └──────────────┘ └──────────────┘ └──────────────┘
@@ -133,12 +133,16 @@ complexity, tool, skill, and subagent fan-out:
 
 ![Agent Lens dashboard showing KPI cards (token breakdown, estimated cost, cache-read ratio, total tokens), tokens/cost/activity-over-time charts, and breakdown charts by model, task category, complexity band, tool frequency, skill activation, and subagent fan-out](docs/img/dashboard.png)
 
-**Session transcript** — turn-segmented, with purpose-built rendering per tool: Bash as a shell
-console (a `$` prompt per command, the description as a `#` caption, flag badges, multi-line output),
-`Edit`/`MultiEdit`/`Write` as colored `+`/`−` diffs, plans and `AskUserQuestion` as cards, and workflow
-runs with a phase graph:
+**Session transcript** — turn-segmented, with purpose-built rendering per tool. Here, `Bash` as a
+shell console: a `$` prompt per logical command (a heredoc's body correctly left unprefixed), the
+description as a `#` caption, `background` / `timeout` badges, and multi-line output:
 
 ![A Bash session rendered as a shell console: each command prefixed with a $ prompt (a heredoc's body correctly left unprefixed), the description as a # caption, background/timeout badges, and multi-line command output](docs/img/session-transcript.png)
+
+**File edits as diffs** — `Edit`, `MultiEdit`, and `Write` render as colored `+`/`−` hunks with the
+surrounding context kept, per-edit sections for a `MultiEdit`, and a per-tool line delta:
+
+![An Agent Lens transcript showing three file-editing tool calls rendered as colored diffs: an Edit on greet.ts with red minus and green plus lines, a MultiEdit on app.yaml split into two labeled edit hunks, and a Write of a new logger.ts shown entirely as additions, each with a +N/-N line count](docs/img/session-diff.png)
 
 **Sessions browser** — a filterable, full-text-searchable index across every collected source:
 
@@ -150,9 +154,8 @@ filters, and a "what & why" reference; findings also appear inline in the transc
 
 ![The Agent Lens security page: severity KPI tiles (critical/high/medium), a findings table listing each risky operation with its rule, framework anchor, evidence, and session, plus a risk-category reference accordion](docs/img/security.png)
 
-> ▶ The colored `Edit` diffs, plan / `AskUserQuestion` cards, the workflow phase graph, and the
-> classifier "why" panel are all best explored in the
-> **[live demo](https://swestash.github.io/agent-lens/)**.
+> ▶ Not pictured: plan and `AskUserQuestion` cards, the workflow phase graph, and the classifier
+> "why" panel — all best explored in the **[live demo](https://swestash.github.io/agent-lens/)**.
 
 ## How it works
 
@@ -293,16 +296,22 @@ This is the whole point of the tool, so it's a hard constraint, not a feature fl
 ## Project layout
 
 ```
-packages/core     shared types + SQLite schema, path/source resolution, the Node collector, the
-                  single-instance lock, and cross-platform OS-service install (agent-agnostic)
+packages/contracts  the shapes that cross package boundaries, as pure types (zero runtime, zero
+                  `node:` imports, so the browser bundle can share them): DB rows mirroring the DDL
+                  (ADR-024) + the HTTP response contracts the server returns and the SPA consumes
+                  (ADR-026)
+packages/core     SQLite schema, path/source resolution, the Node collector, the single-instance
+                  lock, and cross-platform OS-service install (agent-agnostic)
 packages/ingest   Stage-2 parser + heuristic classifier; ClaudeCodeAdapter (extensible)
 packages/server   Stage-3 read-only localhost API over the store
 packages/web      Vite + React SPA (browse + dashboards; light/dark theme)
 packages/cli      the published `agent-lens` binary — bundles the above into one CLI (tsup)
 scripts/          dev + maintenance helpers: sources.mjs (core shim) · prune.sh (retention) ·
                   validate.mjs · oracle.mjs · build-corpus.sh · build-scenarios.mjs · sandbox.sh ·
-                  smoke-tarball.mjs · gen-logo.mjs · export-snapshot.mjs · screenshots.mjs
-docs/             ARCHITECTURE.md · USAGE.md · INGEST-RUNBOOK.md · VALIDATION.md · RELEASING.md · decisions/ (ADRs)
+                  smoke-tarball.mjs · gen-logo.mjs · export-snapshot.mjs ·
+                  check-snapshot-links.mjs · screenshots.mjs
+docs/             ARCHITECTURE.md · USAGE.md · INGEST-RUNBOOK.md · VALIDATION.md · RELEASING.md ·
+                  DETECTOR-CHANGELOG.md · decisions/ (ADRs)
 test/fixtures/    committed redacted + synthetic validation corpus (no real data)
 data/             archive/<label>/ + agent-lens.db  (contents gitignored)
 ```

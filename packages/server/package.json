@@ -19,6 +19,7 @@
     "start": "node dist/index.js"
   },
   "dependencies": {
+    "@agent-lens/contracts": "workspace:*",
     "@agent-lens/core": "workspace:*",
     "@agent-lens/ingest": "workspace:*",
     "@fastify/static": "^10.1.0",

@@ -29,6 +29,7 @@ flowchart LR
 ```mermaid
 flowchart TB
   subgraph repo["agent-lens (pnpm monorepo)"]
+    CONTRACTS["packages/contracts<br/>pure types, zero runtime<br/>DB rows · API responses"]
     CORE["packages/core<br/>schema (DDL) · types · pricing · markdown<br/>raw_json codec (packRaw/unpackRaw)"]
     INGEST["packages/ingest<br/>parser + engine · ClaudeCodeAdapter<br/>heuristic classifier"]
     SERVER["packages/server<br/>Fastify read-only API"]
@@ -39,6 +40,9 @@ flowchart TB
   DB[("data/agent-lens.db (WAL)")]
   SCHED["OS scheduler<br/>systemd / launchd / schtasks"]
 
+  CONTRACTS --> CORE
+  CONTRACTS --> SERVER
+  CONTRACTS --> WEB
   CORE --> INGEST
   CORE --> SERVER
   CORE --> CLI
@@ -51,8 +55,14 @@ flowchart TB
   SERVER --> WEB
 ```
 
-`core` is the shared, agent-agnostic contract (schema + types) every other package depends on; adding a
-new agent is a new `SourceAdapter` in `ingest` with no schema change (ADR-003/008).
+`contracts` is the shared, agent-agnostic **type** leaf — DB row shapes mirroring the DDL (ADR-024)
+and the HTTP response shapes the server returns and the SPA consumes (ADR-026). It is pure types with
+zero runtime and zero `node:` imports, which is what lets the browser bundle share the exact shapes
+the server emits: `core` re-exports the row types, so `ingest`/`server`/`cli` reach them unchanged,
+while `web` imports the leaf directly rather than a barrel full of Node code.
+
+`core` owns the schema itself plus the agent-agnostic runtime (collector, paths, pricing, service
+install); adding a new agent is a new `SourceAdapter` in `ingest` with no schema change (ADR-003/008).
 
 **Concurrency.** SQLite runs in WAL mode (`PRAGMA journal_mode = WAL`). Ingest is the single writer (a
 oneshot that opens, writes, closes); the server is a long-lived reader opened read-only
@@ -143,3 +153,10 @@ erDiagram
 | [017](decisions/ADR-017-security-findings.md) | Retrospective security findings via a deterministic rule engine |
 | [018](decisions/ADR-018-security-triage-store.md) | Security-finding triage in a separate writable store |
 | [019](decisions/ADR-019-tool-error-observability.md) | Tool-error observability: `is_error` capture + a deterministic error taxonomy |
+| [020](decisions/ADR-020-redacted-export.md) | Redacted, export-only session sharing |
+| [021](decisions/ADR-021-fixed-data-layout.md) | The archive and triage store are fixed to the data dir |
+| [022](decisions/ADR-022-file-modification-provenance.md) | File-modification provenance from tool calls (level 1) |
+| [023](decisions/ADR-023-canonical-project-roots.md) | Canonical project roots |
+| [024](decisions/ADR-024-shared-contract-types.md) | Shared contract types package (`@agent-lens/contracts`) |
+| [025](decisions/ADR-025-web-data-fetching-convention.md) | One data-fetching and URL-state convention for the SPA |
+| [026](decisions/ADR-026-api-response-contracts.md) | API response contracts live in the shared package |
