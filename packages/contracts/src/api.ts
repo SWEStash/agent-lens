@@ -593,7 +593,9 @@ export interface DashTimeseries {
 }
 
 export interface DashBreakdowns {
-  by_model: Array<{ model: string; tokens: TokenSplit; total_tokens: number; cost: number; sessions: number; priced: boolean }>;
+  /** `model` is nullable: `token_usage.model` is, and unlike the model *filter* list (which filters
+   *  `IS NOT NULL`) this group-by does not exclude it — so a null-model bucket can appear. */
+  by_model: Array<{ model: string | null; tokens: TokenSplit; total_tokens: number; cost: number; sessions: number; priced: boolean }>;
   by_source: Array<{ source: string; sessions: number; turns: number }>;
   by_category: Array<{ category: string; n: number }>;
   by_complexity: Array<{ band: string; n: number }>;
