@@ -84,7 +84,17 @@ async function main() {
   const browser = await chromium.launch({ headless: true });
   const page = await browser.newPage({ viewport: { width: 1440, height: 960 }, deviceScaleFactor: 2 });
   const go = async (path) => { await page.goto(BASE + path, { waitUntil: "networkidle" }); };
-  const shot = async (name, opts = {}) => { await page.screenshot({ path: join(IMG, name), ...opts }); console.log("  wrote docs/img/" + name); };
+  const shot = async (name, opts = {}) => {
+    // Scroll home before every capture. `.topbar` is `position: sticky`, and a fullPage screenshot
+    // renders a sticky element wherever the CURRENT scroll offset puts it — so after expandTools()
+    // has clicked its way down the page (each click scrolls the target into view), the nav bar was
+    // being baked into the MIDDLE of the image instead of at its top. It is a capture artifact, not
+    // a CSS bug: the live page is fine.
+    await page.evaluate(() => window.scrollTo(0, 0));
+    await page.waitForTimeout(150); // let the sticky bar settle before the capture
+    await page.screenshot({ path: join(IMG, name), ...opts });
+    console.log("  wrote docs/img/" + name);
+  };
   // Tool cards (Bash console, Edit/Write diff, generic chips) render collapsed by default; expand them
   // all so the screenshots show the rendered content, not just the headers.
   const expandTools = async () => {
