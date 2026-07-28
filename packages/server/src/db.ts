@@ -37,6 +37,7 @@ import type {
 import { tableExists, queryAll, queryGet, orderBy, pushGrouped, pushDateRange, metaJoin, metaProjection } from "./sql-util.js";
 import type {
   CategoryRow,
+  ToolCallProjection,
   ClassificationProjectionRow,
   CountRow,
   EventProjectionRow,
@@ -138,7 +139,7 @@ export function listSources(db: DB): Source[] {
   // many subagent sidechains each task spawns.
   return queryAll<Source>(
     db,
-    `SELECT s.id, s.label, s.agent_id, s.config_dir,
+    `SELECT s.id, s.label,
             (SELECT COUNT(*) FROM sessions x WHERE x.source_id = s.id AND x.is_sidechain = 0) AS session_count
      FROM sources s ORDER BY s.label`,
   );
@@ -215,7 +216,7 @@ export function listSessions(db: DB, f: SessionFilters): SessionsPage {
 
   const total = queryGet<CountRow>(db, `SELECT COUNT(*) n FROM sessions s ${whereSql}`, ...params)!.n;
 
-  const baseSelect = `SELECT s.id, s.ai_title, s.slug, s.source_id, s.is_sidechain, s.started_at, s.ended_at,
+  const baseSelect = `SELECT s.id, s.ai_title, s.slug, s.source_id, s.is_sidechain, s.started_at,
               s.duration_ms, s.event_count, s.turn_count, p.path AS project_path,
               (SELECT GROUP_CONCAT(DISTINCT model) FROM token_usage t WHERE t.session_id = s.id) AS models,
               (SELECT COUNT(*) FROM tool_calls tc WHERE tc.session_id = s.id) AS tool_call_count,
@@ -304,10 +305,10 @@ function attachSessionCost(db: DB, rows: SessionListRow[]): SessionSummary[] {
       usageBySession.set(u.session_id, list);
     }
   }
-  return rows.map((r) => {
+  return rows.map(({ ai_title, slug, ...r }) => {
     const u = usageBySession.get(r.id) ?? [];
     const split = splitOf(u);
-    return { ...r, tokens: tokensOf(split), token_split: split, cost: costOf(u), title: r.ai_title || r.slug || null };
+    return { ...r, tokens: tokensOf(split), token_split: split, cost: costOf(u), title: ai_title || slug || null };
   });
 }
 
@@ -316,14 +317,12 @@ function attachSessionCost(db: DB, rows: SessionListRow[]): SessionSummary[] {
  * When a result_summary is the "Full output saved to: …/tool-results/<name>.txt" marker (the
  * transcript's 280-char stand-in), the un-truncated text is pulled from tool_results so the UI can
  * expand it. Keyed by (session_id, name); guarded for a pre-ingest DB. */
-function loadToolCalls(db: DB, id: string): ToolCall[] {
-  // The projection is exactly `ToolCall` minus its two derived fields (`full_result`, `findings`),
-  // both optional — so the response type doubles as the row type here, no separate shape needed.
-  const toolRows = queryAll<ToolCall>(
+function loadToolCalls(db: DB, id: string): ToolCallProjection[] {
+  const toolRows = queryAll<ToolCallProjection>(
     db,
     `SELECT id, event_uuid, tool_name, skill_name, skill_id, agent_type, spawned_session_id,
             workflow_run_id, workflow_name, status, error_type,
-            total_duration_ms, total_tokens, input_json, result_summary,
+            total_duration_ms, input_json, result_summary,
             (SELECT COUNT(*) FROM sessions s WHERE s.workflow_run_id = tool_calls.workflow_run_id) AS workflow_agent_count
      FROM tool_calls WHERE session_id = ?`,
     id,
@@ -344,7 +343,7 @@ function loadToolCalls(db: DB, id: string): ToolCall[] {
 /** Security findings (ADR-017): attaches each tool call's findings inline (for the transcript severity
  * badge + "why" panel) and returns the session-level list for the header summary, most-severe first.
  * Guarded for a read-only pre-ingest DB whose schema predates the findings table. */
-function loadFindings(db: DB, id: string, toolRows: ToolCall[]): Finding[] {
+function loadFindings(db: DB, id: string, toolRows: ToolCallProjection[]): Finding[] {
   if (!tableExists(db, "findings")) return [];
   const sessionFindings: Finding[] = [];
   const findingRows = queryAll<FindingProjectionRow>(
@@ -379,7 +378,14 @@ function loadFindings(db: DB, id: string, toolRows: ToolCall[]): Finding[] {
 }
 
 /** The session's transcript events in order, each with its flattened text/thinking and its tool calls. */
-function loadEvents(db: DB, id: string, toolRows: ToolCall[]): EventNode[] {
+/** Drop the columns the query needed but the response does not ship (ADR-026): `event_uuid` has just
+ *  been used to nest this call under its event, and `error_type` feeds the server-side
+ *  failure-vs-rejection split and reaches the UI only as a dashboard breakdown. */
+function toResponseToolCall({ event_uuid: _e, error_type: _t, ...call }: ToolCallProjection): ToolCall {
+  return call;
+}
+
+function loadEvents(db: DB, id: string, toolRows: ToolCallProjection[]): EventNode[] {
   const eventRows = queryAll<EventProjectionRow>(
     db,
     `SELECT uuid, type, role, timestamp, model, is_sidechain, turn_id, raw_json
@@ -387,7 +393,7 @@ function loadEvents(db: DB, id: string, toolRows: ToolCall[]): EventNode[] {
     id,
   );
 
-  const toolsByEvent = new Map<string, ToolCall[]>();
+  const toolsByEvent = new Map<string, ToolCallProjection[]>();
   for (const t of toolRows) {
     if (!t.event_uuid) continue;
     pushGrouped(toolsByEvent, t.event_uuid, t);
@@ -405,7 +411,7 @@ function loadEvents(db: DB, id: string, toolRows: ToolCall[]): EventNode[] {
       turn_id: e.turn_id,
       text,
       thinking,
-      toolCalls: toolsByEvent.get(e.uuid) ?? [],
+      toolCalls: (toolsByEvent.get(e.uuid) ?? []).map(toResponseToolCall),
     };
   });
 }
@@ -469,9 +475,9 @@ function loadChildren(db: DB, id: string): SessionChild[] {
      WHERE s.parent_session_id = ? ORDER BY s.started_at`,
     id,
   );
-  return children.map((ch) => {
+  return children.map(({ ai_title, slug, ...ch }) => {
     const u = sessionUsage(db, ch.id);
-    return { ...ch, title: ch.ai_title || ch.slug || null, tokens: tokensOf(splitOf(u)), cost: costOf(u) };
+    return { ...ch, title: ai_title || slug || null, tokens: tokensOf(splitOf(u)), cost: costOf(u) };
   });
 }
 
@@ -519,7 +525,7 @@ function withSessionTotals(
   db: DB,
   session: SessionRow & { project_path: string | null },
   id: string,
-  toolRows: ToolCall[],
+  toolRows: ToolCallProjection[],
 ): SessionDetailData {
   const usage = sessionUsage(db, id);
   const split = splitOf(usage);
@@ -615,9 +621,9 @@ function loadAgents(db: DB, runId: string): { agents: WorkflowAgent[]; stats: Wo
   let total_cost = 0;
   let started_at: string | null = null;
   let ended_at: string | null = null;
-  const agents: WorkflowAgent[] = agentRows.map((r) => {
+  const agents: WorkflowAgent[] = agentRows.map(({ ai_title, slug, ...r }) => {
     const u = sessionUsage(db, r.id);
-    const a = { ...r, title: r.ai_title || r.slug || null, tokens: tokensOf(splitOf(u)), cost: costOf(u) };
+    const a = { ...r, title: ai_title || slug || null, tokens: tokensOf(splitOf(u)), cost: costOf(u) };
     total_tokens += a.tokens;
     total_cost += a.cost;
     if (a.started_at && (!started_at || a.started_at < started_at)) started_at = a.started_at;
@@ -948,7 +954,7 @@ export function getSkill(db: DB, name: string): SkillDetail | null {
   );
 
   if (!versions.length && !sessionRows.length) return null;
-  const sessions: SkillSession[] = sessionRows.map((s) => ({ ...s, title: s.ai_title || s.slug || null }));
+  const sessions: SkillSession[] = sessionRows.map(({ ai_title, slug, ...s }) => ({ ...s, title: ai_title || slug || null }));
   const call_count = sessions.reduce((a, s) => a + s.fire_count, 0);
   return { name, versions, sessions, call_count };
 }

@@ -277,7 +277,10 @@ const andWhere = (w: Where) => (w.sql ? w.sql + " AND" : "WHERE");
 function modelBreakdown(db: DB, w: Where): DashBreakdowns["by_model"] {
   const modelRows = queryAll<ModelBreakdownRow>(
     db,
-    `SELECT t.model model, SUM(t.input_tokens) i, SUM(t.output_tokens) o,
+    // COALESCE the bucket label, exactly as by_source does for a null source_id: token_usage.model is
+    // nullable and this GROUP BY — unlike the model FILTER list — does not exclude nulls, so a
+    // null-model bucket reaches the chart. It used to render as a nameless bar.
+    `SELECT COALESCE(t.model, '(unknown)') model, SUM(t.input_tokens) i, SUM(t.output_tokens) o,
             SUM(t.cache_creation_input_tokens) cw, SUM(t.cache_read_input_tokens) cr,
             COUNT(DISTINCT t.session_id) sessions
      FROM token_usage t JOIN sessions s ON s.id = t.session_id ${w.sql}
