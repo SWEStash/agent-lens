@@ -449,6 +449,9 @@ than independently relocatable (ADR-021). Move `AGENT_LENS_DATA` to move the arc
 | `GET /api/security/summary` | finding roll-up (open counts by severity/category/rule + reference content) |
 | `GET /api/security/findings` | filtered, paginated findings list (see query params) |
 | `GET /api/security/mutes` | currently muted rules |
+| `GET /api/files` | filtered, paginated (project, file) change aggregate (ADR-022) |
+| `GET /api/file` | one file's provenance timeline, grouped by session (`path`, optional `project`) |
+| `GET /api/prefs/:key` | a stored UI preference (`{ value }`; `null` when unset or no writable store) |
 
 `/api/sessions` query params: `source`, `project`, `model`, `kind` (`main`\|`subagent`),
 `q` (full-text), `from`, `to` (date-inclusive), `severity` (comma-separated; sessions with a finding of
@@ -460,9 +463,17 @@ that severity), `error_type` (comma-separated; sessions with a failed tool call 
 `project`, `from`, `to` (date-inclusive), `status` (`open` default \| `dismissed` \| `muted` \|
 `all`), `sort`, `dir`, `limit`, `offset`.
 
+`/api/files` query params: `q` (path substring), `source`, `project`, `sort`, `dir`, `limit` (≤200),
+`offset`.
+
 **Write actions** (the exceptions to read-only; loopback-only + CSRF-guarded, see ADR-015/018):
-`POST /api/refresh` (collect+ingest), and the security-triage writes `POST /api/security/{dismiss,
-reopen,dismiss-matching,mute,unmute}` (which write the separate `triage.db`, never the analytics DB).
+`POST /api/refresh` (collect+ingest — the one action that writes the analytics DB, by re-running the
+pipeline rather than mutating it), plus the security-triage writes `POST /api/security/{dismiss,
+reopen,dismiss-matching,mute,unmute}` and `PUT /api/prefs/:key` (UI preferences), which write the
+separate `triage.db` sidecar and never touch the analytics DB.
+
+Every response shape above is declared once in `@agent-lens/contracts` and shared by the server and
+the SPA, so a renamed field is a compile error on both sides (ADR-026).
 
 ## Troubleshooting
 

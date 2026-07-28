@@ -296,16 +296,22 @@ This is the whole point of the tool, so it's a hard constraint, not a feature fl
 ## Project layout
 
 ```
-packages/core     shared types + SQLite schema, path/source resolution, the Node collector, the
-                  single-instance lock, and cross-platform OS-service install (agent-agnostic)
+packages/contracts  the shapes that cross package boundaries, as pure types (zero runtime, zero
+                  `node:` imports, so the browser bundle can share them): DB rows mirroring the DDL
+                  (ADR-024) + the HTTP response contracts the server returns and the SPA consumes
+                  (ADR-026)
+packages/core     SQLite schema, path/source resolution, the Node collector, the single-instance
+                  lock, and cross-platform OS-service install (agent-agnostic)
 packages/ingest   Stage-2 parser + heuristic classifier; ClaudeCodeAdapter (extensible)
 packages/server   Stage-3 read-only localhost API over the store
 packages/web      Vite + React SPA (browse + dashboards; light/dark theme)
 packages/cli      the published `agent-lens` binary — bundles the above into one CLI (tsup)
 scripts/          dev + maintenance helpers: sources.mjs (core shim) · prune.sh (retention) ·
                   validate.mjs · oracle.mjs · build-corpus.sh · build-scenarios.mjs · sandbox.sh ·
-                  smoke-tarball.mjs · gen-logo.mjs · export-snapshot.mjs · screenshots.mjs
-docs/             ARCHITECTURE.md · USAGE.md · INGEST-RUNBOOK.md · VALIDATION.md · RELEASING.md · decisions/ (ADRs)
+                  smoke-tarball.mjs · gen-logo.mjs · export-snapshot.mjs ·
+                  check-snapshot-links.mjs · screenshots.mjs
+docs/             ARCHITECTURE.md · USAGE.md · INGEST-RUNBOOK.md · VALIDATION.md · RELEASING.md ·
+                  DETECTOR-CHANGELOG.md · decisions/ (ADRs)
 test/fixtures/    committed redacted + synthetic validation corpus (no real data)
 data/             archive/<label>/ + agent-lens.db  (contents gitignored)
 ```
