@@ -1,6 +1,59 @@
 import Database from "better-sqlite3";
-import { SCHEMA_VERSION, unpackRaw, severityRank, SECURITY_CATEGORIES, errorKind } from "@agent-lens/core";
-import { tableExists, queryAll, orderBy, pushGrouped, pushDateRange, metaJoin, metaProjection } from "./sql-util.js";
+import { SCHEMA_VERSION, unpackRaw, severityRank, SECURITY_CATEGORIES, errorKind, type ToolErrorType } from "@agent-lens/core";
+import type {
+  Finding,
+  FindingListRow,
+  FileChangeRow,
+  FileSummary,
+  FileTimeline,
+  FileTimelineSession,
+  FilesPage,
+  EventNode,
+  Classification,
+  ClassificationSignals,
+  Project,
+  SecuritySummary,
+  SessionChild,
+  SessionDetail,
+  SessionDetailData,
+  SessionParent,
+  SessionRow,
+  SessionSummary,
+  SessionsPage,
+  SkillDetail,
+  SkillSummary,
+  SkillSession,
+  SkillVersion,
+  Source,
+  ToolCall,
+  TurnRow,
+  WorkflowAgent,
+  WorkflowCompletion,
+  WorkflowDetail,
+  WorkflowRun,
+  WorkflowRunResult,
+  FindingsPage,
+} from "@agent-lens/contracts";
+import { tableExists, queryAll, queryGet, orderBy, pushGrouped, pushDateRange, metaJoin, metaProjection } from "./sql-util.js";
+import type {
+  CategoryRow,
+  ClassificationProjectionRow,
+  CountRow,
+  EventProjectionRow,
+  FindingProjectionRow,
+  FileTimelineRow,
+  ModelRow,
+  RawJsonRow,
+  SessionChildRow,
+  SessionListRow,
+  SessionParentRow,
+  SkillListRow,
+  SkillSessionRow,
+  ToolResultRow,
+  WorkflowAgentRow,
+  WorkflowLaunchRow,
+  WorkflowResultRow,
+} from "./rows.js";
 import { sessionUsage, splitOf, tokensOf, costOf, USAGE_SUMS, type UsageRow } from "./usage.js";
 
 export type DB = Database.Database;
@@ -79,34 +132,31 @@ export interface SessionFilters {
   offset: number;
 }
 
-export function listSources(db: DB) {
-  return db
-    .prepare(
-      // Count MAIN sessions only (is_sidechain = 0): the dropdown filters the session list, which
-      // defaults to main-only, so a source's count must match what you'd see — not be inflated by the
-      // many subagent sidechains each task spawns.
-      `SELECT s.id, s.label, s.agent_id, s.config_dir,
-              (SELECT COUNT(*) FROM sessions x WHERE x.source_id = s.id AND x.is_sidechain = 0) AS session_count
-       FROM sources s ORDER BY s.label`,
-    )
-    .all();
+export function listSources(db: DB): Source[] {
+  // Count MAIN sessions only (is_sidechain = 0): the dropdown filters the session list, which
+  // defaults to main-only, so a source's count must match what you'd see — not be inflated by the
+  // many subagent sidechains each task spawns.
+  return queryAll<Source>(
+    db,
+    `SELECT s.id, s.label, s.agent_id, s.config_dir,
+            (SELECT COUNT(*) FROM sessions x WHERE x.source_id = s.id AND x.is_sidechain = 0) AS session_count
+     FROM sources s ORDER BY s.label`,
+  );
 }
 
-export function listProjects(db: DB) {
-  return db
-    .prepare(
-      `SELECT p.id, p.path,
-              (SELECT COUNT(*) FROM sessions x WHERE x.project_id = p.id AND x.is_sidechain = 0) AS session_count
-       FROM projects p ORDER BY session_count DESC, p.path`,
-    )
-    .all();
+export function listProjects(db: DB): Project[] {
+  return queryAll<Project>(
+    db,
+    `SELECT p.id, p.path,
+            (SELECT COUNT(*) FROM sessions x WHERE x.project_id = p.id AND x.is_sidechain = 0) AS session_count
+     FROM projects p ORDER BY session_count DESC, p.path`,
+  );
 }
 
-export function listModels(db: DB) {
-  return db
-    .prepare(`SELECT DISTINCT model FROM token_usage WHERE model IS NOT NULL ORDER BY model`)
-    .all()
-    .map((r: any) => r.model);
+export function listModels(db: DB): string[] {
+  return queryAll<ModelRow>(db, `SELECT DISTINCT model FROM token_usage WHERE model IS NOT NULL ORDER BY model`).map(
+    (r) => r.model,
+  );
 }
 
 /**
@@ -126,9 +176,9 @@ function toFtsQuery(raw: string): string {
     .join(" ");
 }
 
-export function listSessions(db: DB, f: SessionFilters) {
+export function listSessions(db: DB, f: SessionFilters): SessionsPage {
   const where: string[] = [];
-  const params: any[] = [];
+  const params: unknown[] = [];
   if (f.source) (where.push("s.source_id = ?"), params.push(f.source));
   if (f.project) (where.push("s.project_id = ?"), params.push(f.project));
   // Date-inclusive on both ends (see findingWhere): a picked `to` day must include that day's sessions.
@@ -163,7 +213,7 @@ export function listSessions(db: DB, f: SessionFilters) {
   }
   const whereSql = where.length ? `WHERE ${where.join(" AND ")}` : "";
 
-  const total = (db.prepare(`SELECT COUNT(*) n FROM sessions s ${whereSql}`).get(...params) as any).n;
+  const total = queryGet<CountRow>(db, `SELECT COUNT(*) n FROM sessions s ${whereSql}`, ...params)!.n;
 
   const baseSelect = `SELECT s.id, s.ai_title, s.slug, s.source_id, s.is_sidechain, s.started_at, s.ended_at,
               s.duration_ms, s.event_count, s.turn_count, p.path AS project_path,
@@ -191,15 +241,14 @@ export function listSessions(db: DB, f: SessionFilters) {
   // Columns sorted in JS over the whole matching set (derived/subquery metrics that the paged SQL
   // ORDER BY can't reach consistently): tokens/cost (costed below) plus the error/finding roll-ups.
   const JS_SORT = new Set(["tokens", "cost", "errors", "security"]);
-  let rows: any[];
+  let sessions: SessionSummary[];
   if (JS_SORT.has(sortKey)) {
     // Whole-list sort by a derived metric: materialize every matching session, cost them all, sort,
     // then take the page. Heavier than the SQL path but the only way to page a JS-computed column
     // consistently. Fine at this tool's scale (personal analytics).
-    const all = db.prepare(baseSelect).all(...params) as any[];
-    attachSessionCost(db, all);
+    const all = attachSessionCost(db, queryAll<SessionListRow>(db, baseSelect, ...params));
     const sign = f.dir === "asc" ? 1 : -1;
-    const metric = (r: any): number => {
+    const metric = (r: SessionSummary): number => {
       switch (sortKey) {
         case "tokens": return r.tokens;
         case "cost": return r.cost;
@@ -213,21 +262,28 @@ export function listSessions(db: DB, f: SessionFilters) {
       const c = (metric(a) - metric(b)) * sign;
       return c !== 0 ? c : String(a.id).localeCompare(String(b.id));
     });
-    rows = all.slice(f.offset, f.offset + f.limit);
+    sessions = all.slice(f.offset, f.offset + f.limit);
   } else {
-    rows = db
-      .prepare(`${baseSelect} ORDER BY ${orderBy(NATIVE_ORDER, sortKey, "started", f.dir)}, s.id ASC LIMIT ? OFFSET ?`)
-      .all(...params, f.limit, f.offset) as any[];
-    attachSessionCost(db, rows);
+    sessions = attachSessionCost(
+      db,
+      queryAll<SessionListRow>(
+        db,
+        `${baseSelect} ORDER BY ${orderBy(NATIVE_ORDER, sortKey, "started", f.dir)}, s.id ASC LIMIT ? OFFSET ?`,
+        ...params,
+        f.limit,
+        f.offset,
+      ),
+    );
   }
 
-  return { total, sessions: rows };
+  return { total, sessions };
 }
 
-/** Attach per-session `tokens`, `token_split`, `cost` (USD, cache-aware) and `title` in place. Costs
- * are grouped by model so per-model rates apply. IDs are chunked so the whole-list sort path (which can
- * pass thousands of sessions) stays under SQLite's bound-parameter limit. */
-function attachSessionCost(db: DB, rows: any[]) {
+/** Add per-session `tokens`, `token_split`, `cost` (USD, cache-aware) and `title` to each list row,
+ * turning the projection into the response shape. Costs are grouped by model so per-model rates apply.
+ * IDs are chunked so the whole-list sort path (which can pass thousands of sessions) stays under
+ * SQLite's bound-parameter limit. */
+function attachSessionCost(db: DB, rows: SessionListRow[]): SessionSummary[] {
   // Group each session's per-model usage rows, then reuse the shared split/cost helpers. IDs are
   // chunked so the whole-list sort path (which can pass thousands of sessions) stays under SQLite's
   // bound-parameter limit.
@@ -248,14 +304,11 @@ function attachSessionCost(db: DB, rows: any[]) {
       usageBySession.set(u.session_id, list);
     }
   }
-  for (const r of rows) {
+  return rows.map((r) => {
     const u = usageBySession.get(r.id) ?? [];
     const split = splitOf(u);
-    r.tokens = tokensOf(split);
-    r.token_split = split;
-    r.cost = costOf(u);
-    r.title = r.ai_title || r.slug || null;
-  }
+    return { ...r, tokens: tokensOf(split), token_split: split, cost: costOf(u), title: r.ai_title || r.slug || null };
+  });
 }
 
 /** The session's tool calls, with any spilled full output attached.
@@ -263,23 +316,25 @@ function attachSessionCost(db: DB, rows: any[]) {
  * When a result_summary is the "Full output saved to: …/tool-results/<name>.txt" marker (the
  * transcript's 280-char stand-in), the un-truncated text is pulled from tool_results so the UI can
  * expand it. Keyed by (session_id, name); guarded for a pre-ingest DB. */
-function loadToolCalls(db: DB, id: string): any[] {
-  const toolRows = db
-    .prepare(
-      `SELECT id, event_uuid, tool_name, skill_name, skill_id, agent_type, spawned_session_id,
-              workflow_run_id, workflow_name, status, error_type,
-              total_duration_ms, total_tokens, input_json, result_summary,
-              (SELECT COUNT(*) FROM sessions s WHERE s.workflow_run_id = tool_calls.workflow_run_id) AS workflow_agent_count
-       FROM tool_calls WHERE session_id = ?`,
-    )
-    .all(id) as any[];
+function loadToolCalls(db: DB, id: string): ToolCall[] {
+  // The projection is exactly `ToolCall` minus its two derived fields (`full_result`, `findings`),
+  // both optional — so the response type doubles as the row type here, no separate shape needed.
+  const toolRows = queryAll<ToolCall>(
+    db,
+    `SELECT id, event_uuid, tool_name, skill_name, skill_id, agent_type, spawned_session_id,
+            workflow_run_id, workflow_name, status, error_type,
+            total_duration_ms, total_tokens, input_json, result_summary,
+            (SELECT COUNT(*) FROM sessions s WHERE s.workflow_run_id = tool_calls.workflow_run_id) AS workflow_agent_count
+     FROM tool_calls WHERE session_id = ?`,
+    id,
+  );
 
   if (tableExists(db, "tool_results")) {
     const getFull = db.prepare("SELECT text, bytes FROM tool_results WHERE session_id = ? AND name = ?");
     for (const t of toolRows) {
       const m = typeof t.result_summary === "string" ? t.result_summary.match(/tool-results\/([A-Za-z0-9_-]+)\.txt/) : null;
       if (!m) continue;
-      const full = getFull.get(id, m[1]) as { text: string; bytes: number } | undefined;
+      const full = getFull.get(id, m[1]) as ToolResultRow | undefined;
       if (full) t.full_result = { text: full.text, bytes: full.bytes };
     }
   }
@@ -289,18 +344,18 @@ function loadToolCalls(db: DB, id: string): any[] {
 /** Security findings (ADR-017): attaches each tool call's findings inline (for the transcript severity
  * badge + "why" panel) and returns the session-level list for the header summary, most-severe first.
  * Guarded for a read-only pre-ingest DB whose schema predates the findings table. */
-function loadFindings(db: DB, id: string, toolRows: any[]): any[] {
+function loadFindings(db: DB, id: string, toolRows: ToolCall[]): Finding[] {
   if (!tableExists(db, "findings")) return [];
-  const sessionFindings: any[] = [];
-  const findingRows = db
-    .prepare(
-      `SELECT id, tool_call_id, event_uuid, turn_id, rule_id, category, framework_ref, severity, title, evidence, signals_json
-       FROM findings WHERE session_id = ?`,
-    )
-    .all(id) as any[];
-  const byToolCall = new Map<string, any[]>();
+  const sessionFindings: Finding[] = [];
+  const findingRows = queryAll<FindingProjectionRow>(
+    db,
+    `SELECT id, tool_call_id, event_uuid, turn_id, rule_id, category, framework_ref, severity, title, evidence, signals_json
+     FROM findings WHERE session_id = ?`,
+    id,
+  );
+  const byToolCall = new Map<string, Finding[]>();
   for (const fr of findingRows) {
-    const f = {
+    const f: Finding = {
       id: fr.id,
       tool_call_id: fr.tool_call_id,
       event_uuid: fr.event_uuid,
@@ -311,27 +366,28 @@ function loadFindings(db: DB, id: string, toolRows: any[]): any[] {
       severity: fr.severity,
       title: fr.title,
       evidence: fr.evidence,
-      signals: safeJson(fr.signals_json),
+      // Asserted, not validated: safeJson returns unknown and this is the assertion (ADR-026).
+      signals: safeJson(fr.signals_json) as Finding["signals"],
     };
     sessionFindings.push(f);
     if (fr.tool_call_id) pushGrouped(byToolCall, fr.tool_call_id, f);
   }
-  for (const t of toolRows) t.findings = byToolCall.get(t.id) ?? [];
+  for (const t of toolRows) t.findings = t.id ? (byToolCall.get(t.id) ?? []) : [];
   // Most-severe first so a session banner can lead with the worst.
   sessionFindings.sort((a, b) => severityRank(b.severity) - severityRank(a.severity));
   return sessionFindings;
 }
 
 /** The session's transcript events in order, each with its flattened text/thinking and its tool calls. */
-function loadEvents(db: DB, id: string, toolRows: any[]) {
-  const eventRows = db
-    .prepare(
-      `SELECT uuid, type, role, timestamp, model, is_sidechain, turn_id, raw_json
-       FROM events WHERE session_id = ? ORDER BY timestamp, seq`,
-    )
-    .all(id) as any[];
+function loadEvents(db: DB, id: string, toolRows: ToolCall[]): EventNode[] {
+  const eventRows = queryAll<EventProjectionRow>(
+    db,
+    `SELECT uuid, type, role, timestamp, model, is_sidechain, turn_id, raw_json
+     FROM events WHERE session_id = ? ORDER BY timestamp, seq`,
+    id,
+  );
 
-  const toolsByEvent = new Map<string, any[]>();
+  const toolsByEvent = new Map<string, ToolCall[]>();
   for (const t of toolRows) {
     if (!t.event_uuid) continue;
     pushGrouped(toolsByEvent, t.event_uuid, t);
@@ -356,17 +412,19 @@ function loadEvents(db: DB, id: string, toolRows: any[]) {
 
 /** Heuristic classification (Phase 4): category + complexity + the signals that produced them
  * (tool/skill mix, LoC, files, subagent count) — already captured in signals_json by the classifier. */
-function loadClassification(db: DB, id: string): any {
-  const cls = db
-    .prepare(
-      `SELECT category, complexity_score, complexity_band, signals_json, classifier_version
-       FROM classifications WHERE scope = 'session' AND target_id = ?`,
-    )
-    .get(id) as any;
+function loadClassification(db: DB, id: string): Classification | null {
+  const cls = queryGet<ClassificationProjectionRow>(
+    db,
+    `SELECT category, complexity_score, complexity_band, signals_json, classifier_version
+     FROM classifications WHERE scope = 'session' AND target_id = ?`,
+    id,
+  );
   if (!cls) return null;
-  let signals: any = null;
+  // Asserted, not validated (ADR-026) — a malformed blob degrades to null, a well-formed one of the
+  // wrong shape reaches the UI as declared.
+  let signals: ClassificationSignals | null = null;
   try {
-    signals = cls.signals_json ? JSON.parse(cls.signals_json) : null;
+    signals = cls.signals_json ? (JSON.parse(cls.signals_json) as ClassificationSignals) : null;
   } catch {
     /* ignore malformed */
   }
@@ -381,15 +439,16 @@ function loadClassification(db: DB, id: string): any {
 
 /** Subagent linkage (schema v3): if this is a sidechain session, resolve the parent turn/session that
  * spawned it so the UI can offer a "spawned by" crumb back to the originating turn. */
-function loadParent(db: DB, session: any): { id: string; title: string | null; turn_seq: number | null } | null {
+function loadParent(db: DB, session: SessionRow): SessionParent | null {
   if (!session.parent_session_id) return null;
-  const p = db
-    .prepare(
-      `SELECT ps.id, ps.ai_title, ps.slug, t.seq AS turn_seq
-       FROM sessions ps LEFT JOIN turns t ON t.id = ?
-       WHERE ps.id = ?`,
-    )
-    .get(session.parent_turn_id, session.parent_session_id) as any;
+  const p = queryGet<SessionParentRow>(
+    db,
+    `SELECT ps.id, ps.ai_title, ps.slug, t.seq AS turn_seq
+     FROM sessions ps LEFT JOIN turns t ON t.id = ?
+     WHERE ps.id = ?`,
+    session.parent_turn_id,
+    session.parent_session_id,
+  );
   return p ? { id: p.id, title: p.ai_title || p.slug || null, turn_seq: p.turn_seq ?? null } : null;
 }
 
@@ -399,24 +458,21 @@ function loadParent(db: DB, session: any): { id: string; title: string | null; t
  * Subagent metadata sidecars (session_meta) supply the authoritative agentType/description/spawnDepth
  * — LEFT JOIN so a subagent still lists when its meta hasn't been ingested (or the table is absent on
  * a pre-ingest read-only DB). */
-function loadChildren(db: DB, id: string): any[] {
+function loadChildren(db: DB, id: string): SessionChild[] {
   const hasMeta = tableExists(db, "session_meta");
-  const children = db
-    .prepare(
-      `SELECT s.id, s.ai_title, s.slug, s.turn_count, s.started_at, s.workflow_run_id,
-              (SELECT GROUP_CONCAT(DISTINCT model) FROM token_usage t WHERE t.session_id = s.id) AS models
-              ${metaProjection(hasMeta)}
-       FROM sessions s ${metaJoin(hasMeta)}
-       WHERE s.parent_session_id = ? ORDER BY s.started_at`,
-    )
-    .all(id) as any[];
-  for (const ch of children) {
-    ch.title = ch.ai_title || ch.slug || null;
+  const children = queryAll<SessionChildRow>(
+    db,
+    `SELECT s.id, s.ai_title, s.slug, s.turn_count, s.started_at, s.workflow_run_id,
+            (SELECT GROUP_CONCAT(DISTINCT model) FROM token_usage t WHERE t.session_id = s.id) AS models
+            ${metaProjection(hasMeta)}
+     FROM sessions s ${metaJoin(hasMeta)}
+     WHERE s.parent_session_id = ? ORDER BY s.started_at`,
+    id,
+  );
+  return children.map((ch) => {
     const u = sessionUsage(db, ch.id);
-    ch.tokens = tokensOf(splitOf(u));
-    ch.cost = costOf(u);
-  }
-  return children;
+    return { ...ch, title: ch.ai_title || ch.slug || null, tokens: tokensOf(splitOf(u)), cost: costOf(u) };
+  });
 }
 
 /** Workflow runs launched from THIS session: each Workflow tool_call carries a run id + name and sits
@@ -425,31 +481,31 @@ function loadChildren(db: DB, id: string): any[] {
  * Run status rides along from the result sidecar (workflow_results) when ingested, so the session's
  * workflow-run groups can flag a failed/completed run at a glance. NULL when no sidecar (async, still
  * pending) or the table isn't present yet (read-only pre-ingest DB). */
-function loadWorkflowRuns(db: DB, id: string): any[] {
+function loadWorkflowRuns(db: DB, id: string): WorkflowRun[] {
   const hasWR = tableExists(db, "workflow_results");
-  return db
-    .prepare(
-      `SELECT tc.workflow_run_id AS run_id, tc.workflow_name AS name, t.seq AS turn_seq,
-              (SELECT COUNT(*) FROM sessions s WHERE s.workflow_run_id = tc.workflow_run_id) AS agent_count
-              ${hasWR ? ", (SELECT status FROM workflow_results wr WHERE wr.run_id = tc.workflow_run_id) AS status" : ", NULL AS status"}
-       FROM tool_calls tc LEFT JOIN turns t ON t.id = tc.turn_id
-       WHERE tc.session_id = ? AND tc.workflow_run_id IS NOT NULL
-       ORDER BY t.seq`,
-    )
-    .all(id) as any[];
+  return queryAll<WorkflowRun>(
+    db,
+    `SELECT tc.workflow_run_id AS run_id, tc.workflow_name AS name, t.seq AS turn_seq,
+            (SELECT COUNT(*) FROM sessions s WHERE s.workflow_run_id = tc.workflow_run_id) AS agent_count
+            ${hasWR ? ", (SELECT status FROM workflow_results wr WHERE wr.run_id = tc.workflow_run_id) AS status" : ", NULL AS status"}
+     FROM tool_calls tc LEFT JOIN turns t ON t.id = tc.turn_id
+     WHERE tc.session_id = ? AND tc.workflow_run_id IS NOT NULL
+     ORDER BY t.seq`,
+    id,
+  );
 }
 
 /** File-modification provenance (ADR-022): the session's derived Edit/Write/NotebookEdit file
  * changes, for the "Files changed" header roll-up. Guarded for a pre-v14 read-only DB. */
-function loadFileChanges(db: DB, id: string): any[] {
+function loadFileChanges(db: DB, id: string): FileChangeRow[] {
   if (!tableExists(db, "file_changes")) return [];
-  return db
-    .prepare(
-      `SELECT fc.id, fc.tool_call_id, fc.turn_id, fc.event_uuid, fc.file_path, fc.tool_name,
-              fc.lines_added, fc.lines_removed, fc.timestamp
-       FROM file_changes fc WHERE fc.session_id = ? ORDER BY fc.timestamp`,
-    )
-    .all(id) as any[];
+  return queryAll<FileChangeRow>(
+    db,
+    `SELECT fc.id, fc.tool_call_id, fc.turn_id, fc.event_uuid, fc.file_path, fc.tool_name,
+            fc.lines_added, fc.lines_removed, fc.timestamp
+     FROM file_changes fc WHERE fc.session_id = ? ORDER BY fc.timestamp`,
+    id,
+  );
 }
 
 /** Roll-ups written onto the session row for the detail header: token split + cost, display title, and
@@ -459,38 +515,53 @@ function loadFileChanges(db: DB, id: string): any[] {
  * Cache stays IN the total and IS cost-attributed (at its discounted rate) — differentiated, never
  * dropped. The raw error count is authoritative; the failure-vs-rejection split uses the stored
  * heuristic error_type (rejection = the user/guardrail declined the call, not an agent failure). */
-function attachSessionTotals(db: DB, session: any, id: string, toolRows: any[]): void {
+function withSessionTotals(
+  db: DB,
+  session: SessionRow & { project_path: string | null },
+  id: string,
+  toolRows: ToolCall[],
+): SessionDetailData {
   const usage = sessionUsage(db, id);
   const split = splitOf(usage);
-  session.tokens = tokensOf(split);
-  session.token_split = split;
-  session.cost = costOf(usage);
-  session.title = session.ai_title || session.slug || null;
 
-  session.tool_call_count = toolRows.length;
-  session.tool_error_count = toolRows.filter((t) => t.status === "error").length;
-  session.tool_rejection_count = toolRows.filter((t) => t.status === "error" && t.error_type && errorKind(t.error_type) === "rejection").length;
-  session.tool_failure_count = session.tool_error_count - session.tool_rejection_count;
+  const tool_error_count = toolRows.filter((t) => t.status === "error").length;
+  // `error_type` is a plain column read, so nothing proves it is still one of core's ToolErrorType
+  // literals — an older DB could hold a bucket name that has since been renamed. errorKind is a set
+  // membership test that answers "failure" for anything unrecognized, so the cast is safe rather than
+  // merely convenient; it replaces an `any` that was making the same assumption invisibly.
+  const tool_rejection_count = toolRows.filter(
+    (t) => t.status === "error" && t.error_type && errorKind(t.error_type as ToolErrorType) === "rejection",
+  ).length;
+
+  return {
+    ...session,
+    tokens: tokensOf(split),
+    token_split: split,
+    cost: costOf(usage),
+    title: session.ai_title || session.slug || null,
+    tool_call_count: toolRows.length,
+    tool_error_count,
+    tool_rejection_count,
+    tool_failure_count: tool_error_count - tool_rejection_count,
+  };
 }
 
-export function getSession(db: DB, id: string) {
-  const session = db
-    .prepare(
-      `SELECT s.*, p.path AS project_path FROM sessions s
-       LEFT JOIN projects p ON p.id = s.project_id WHERE s.id = ?`,
-    )
-    .get(id) as any;
+export function getSession(db: DB, id: string): SessionDetail | null {
+  const session = queryGet<SessionRow & { project_path: string | null }>(
+    db,
+    `SELECT s.*, p.path AS project_path FROM sessions s
+     LEFT JOIN projects p ON p.id = s.project_id WHERE s.id = ?`,
+    id,
+  );
   if (!session) return null;
 
-  const turns = db.prepare("SELECT * FROM turns WHERE session_id = ? ORDER BY seq").all(id);
+  const turns = queryAll<TurnRow>(db, "SELECT * FROM turns WHERE session_id = ? ORDER BY seq", id);
   const toolRows = loadToolCalls(db, id);
   const findings = loadFindings(db, id, toolRows);
   const events = loadEvents(db, id, toolRows);
 
-  attachSessionTotals(db, session, id, toolRows);
-
   return {
-    session,
+    session: withSessionTotals(db, session, id, toolRows),
     turns,
     events,
     classification: loadClassification(db, id),
@@ -524,58 +595,35 @@ export function safeJson(s: string | null): unknown {
   }
 }
 
-interface WorkflowCompletion {
-  status: string | null;
-  summary: string | null;
-  result: string | null;
-  failures: string | null;
-}
-
-interface WorkflowRunRollup {
-  status: string | null;
-  summary: string | null;
-  default_model: string | null;
-  agent_count: number | null;
-  total_tokens: number | null;
-  total_tool_calls: number | null;
-  duration_ms: number | null;
-  started_at: string | null;
-  ended_at: string | null;
-  phases: unknown;
-  logs: unknown;
-  progress: unknown;
-}
-
 /** Subagent sessions in this run (same projection as getSession's children, plus the wall-clock fields
  * so the page can show each agent's span and a run-level min/max), with the run's token/cost/span
  * roll-up computed over them. LEFT JOIN session_meta for the authoritative type/description/depth —
  * these workflow agents carry none in-transcript. */
-function loadAgents(db: DB, runId: string) {
+function loadAgents(db: DB, runId: string): { agents: WorkflowAgent[]; stats: WorkflowDetail["stats"] } {
   const hasMeta = tableExists(db, "session_meta");
-  const agents = db
-    .prepare(
-      `SELECT s.id, s.ai_title, s.slug, s.turn_count, s.started_at, s.ended_at, s.duration_ms,
-              (SELECT GROUP_CONCAT(DISTINCT model) FROM token_usage t WHERE t.session_id = s.id) AS models
-              ${metaProjection(hasMeta)}
-       FROM sessions s ${metaJoin(hasMeta)}
-       WHERE s.workflow_run_id = ? ORDER BY s.started_at`,
-    )
-    .all(runId) as any[];
+  const agentRows = queryAll<WorkflowAgentRow>(
+    db,
+    `SELECT s.id, s.ai_title, s.slug, s.turn_count, s.started_at, s.ended_at, s.duration_ms,
+            (SELECT GROUP_CONCAT(DISTINCT model) FROM token_usage t WHERE t.session_id = s.id) AS models
+            ${metaProjection(hasMeta)}
+     FROM sessions s ${metaJoin(hasMeta)}
+     WHERE s.workflow_run_id = ? ORDER BY s.started_at`,
+    runId,
+  );
 
   let total_tokens = 0;
   let total_cost = 0;
   let started_at: string | null = null;
   let ended_at: string | null = null;
-  for (const a of agents) {
-    a.title = a.ai_title || a.slug || null;
-    const u = sessionUsage(db, a.id);
-    a.tokens = tokensOf(splitOf(u));
-    a.cost = costOf(u);
+  const agents: WorkflowAgent[] = agentRows.map((r) => {
+    const u = sessionUsage(db, r.id);
+    const a = { ...r, title: r.ai_title || r.slug || null, tokens: tokensOf(splitOf(u)), cost: costOf(u) };
     total_tokens += a.tokens;
     total_cost += a.cost;
     if (a.started_at && (!started_at || a.started_at < started_at)) started_at = a.started_at;
     if (a.ended_at && (!ended_at || a.ended_at > ended_at)) ended_at = a.ended_at;
-  }
+    return a;
+  });
   const duration_ms = started_at && ended_at ? new Date(ended_at).getTime() - new Date(started_at).getTime() : null;
 
   return {
@@ -588,15 +636,16 @@ function loadAgents(db: DB, runId: string) {
  * launching session — tc.result_summary is only the "launched in background" ack. Finds that message by
  * the Workflow tool-use id and surfaces its completion status, summary, result, and failures. (The same
  * task can notify more than once; takes the most recent.) */
-function parseCompletion(db: DB, wf: any): WorkflowCompletion | null {
+function parseCompletion(db: DB, wf: WorkflowLaunchRow): WorkflowCompletion | null {
   if (!wf.tool_use_id || !wf.parent_session_id) return null;
-  const ev = db
-    .prepare(
-      `SELECT raw_json FROM events
-       WHERE session_id = ? AND text LIKE '%<task-notification>%' AND text LIKE ?
-       ORDER BY timestamp DESC LIMIT 1`,
-    )
-    .get(wf.parent_session_id, `%${wf.tool_use_id}%`) as any;
+  const ev = queryGet<RawJsonRow>(
+    db,
+    `SELECT raw_json FROM events
+     WHERE session_id = ? AND text LIKE '%<task-notification>%' AND text LIKE ?
+     ORDER BY timestamp DESC LIMIT 1`,
+    wf.parent_session_id,
+    `%${wf.tool_use_id}%`,
+  );
   if (!ev) return null;
   const { text } = extractParts(ev.raw_json);
   const t = text ?? "";
@@ -613,19 +662,19 @@ function loadRunSidecar(
   db: DB,
   runId: string,
   completion: WorkflowCompletion | null,
-): { wr: any; run: WorkflowRunRollup | null; completion: WorkflowCompletion | null } {
+): { wr: WorkflowResultRow | null; run: WorkflowRunResult | null; completion: WorkflowCompletion | null } {
   const wr = tableExists(db, "workflow_results")
-    ? (db
-        .prepare(
-          `SELECT status, summary, default_model, result_json, phases_json, logs_json, progress_json,
-                  agent_count, total_tokens, total_tool_calls, duration_ms, started_at, ended_at
-           FROM workflow_results WHERE run_id = ?`,
-        )
-        .get(runId) as any)
+    ? (queryGet<WorkflowResultRow>(
+        db,
+        `SELECT status, summary, default_model, result_json, phases_json, logs_json, progress_json,
+                agent_count, total_tokens, total_tool_calls, duration_ms, started_at, ended_at
+         FROM workflow_results WHERE run_id = ?`,
+        runId,
+      ) ?? null)
     : null;
   if (!wr) return { wr: null, run: null, completion };
 
-  const run: WorkflowRunRollup = {
+  const run: WorkflowRunResult = {
     status: wr.status ?? null,
     summary: wr.summary ?? null,
     default_model: wr.default_model ?? null,
@@ -635,11 +684,13 @@ function loadRunSidecar(
     duration_ms: wr.duration_ms ?? null,
     started_at: wr.started_at ?? null,
     ended_at: wr.ended_at ?? null,
-    phases: safeJson(wr.phases_json),
-    logs: safeJson(wr.logs_json),
+    // The three JSON blobs are asserted, not validated (ADR-026): safeJson yields null for malformed
+    // stored text, and these casts are what claims the shape of everything else.
+    phases: safeJson(wr.phases_json) as WorkflowRunResult["phases"],
+    logs: safeJson(wr.logs_json) as WorkflowRunResult["logs"],
     // The per-phase/per-agent event timeline (workflowProgress) — lets the page render a phase graph
     // with a per-phase descriptor (agent count, models). Absent on older/failed runs → UI falls back.
-    progress: safeJson(wr.progress_json),
+    progress: safeJson(wr.progress_json) as WorkflowRunResult["progress"],
   };
 
   if (wr.result_json != null || wr.status) {
@@ -653,21 +704,21 @@ function loadRunSidecar(
   return { wr, run, completion };
 }
 
-export function getWorkflow(db: DB, runId: string) {
-  const wf = db
-    .prepare(
-      `SELECT tc.id AS tool_use_id, tc.workflow_run_id AS run_id, tc.workflow_name AS name, tc.status, tc.result_summary,
-              tc.input_json AS input_json,
-              tc.session_id AS parent_session_id, t.seq AS turn_seq,
-              ps.ai_title AS parent_ai_title, ps.slug AS parent_slug
-       FROM tool_calls tc
-       LEFT JOIN turns t ON t.id = tc.turn_id
-       LEFT JOIN sessions ps ON ps.id = tc.session_id
-       WHERE tc.workflow_run_id = ? AND tc.tool_name = 'Workflow'
-       ORDER BY t.seq
-       LIMIT 1`,
-    )
-    .get(runId) as any;
+export function getWorkflow(db: DB, runId: string): WorkflowDetail | null {
+  const wf = queryGet<WorkflowLaunchRow>(
+    db,
+    `SELECT tc.id AS tool_use_id, tc.workflow_run_id AS run_id, tc.workflow_name AS name, tc.status, tc.result_summary,
+            tc.input_json AS input_json,
+            tc.session_id AS parent_session_id, t.seq AS turn_seq,
+            ps.ai_title AS parent_ai_title, ps.slug AS parent_slug
+     FROM tool_calls tc
+     LEFT JOIN turns t ON t.id = tc.turn_id
+     LEFT JOIN sessions ps ON ps.id = tc.session_id
+     WHERE tc.workflow_run_id = ? AND tc.tool_name = 'Workflow'
+     ORDER BY t.seq
+     LIMIT 1`,
+    runId,
+  );
   if (!wf) return null;
 
   const { agents, stats } = loadAgents(db, runId);
@@ -699,9 +750,9 @@ export interface SkillFilters {
  * `call_count` counts every firing — so a skill whose body was never captured still appears. Filters
  * (name search, source, project) mirror the sessions list and apply to the firing session.
  */
-export function listSkills(db: DB, f: SkillFilters = {}) {
+export function listSkills(db: DB, f: SkillFilters = {}): SkillSummary[] {
   const where = ["tc.tool_name = 'Skill'", "tc.skill_name IS NOT NULL"];
-  const params: any[] = [];
+  const params: unknown[] = [];
   // Search matches the skill name OR any captured version body, so a query for a phrase that only
   // appears inside a SKILL.md still surfaces the skill. (skills.body is the normalized body; joined by
   // name rather than skill_id so firings with no captured body still match on name.)
@@ -712,23 +763,23 @@ export function listSkills(db: DB, f: SkillFilters = {}) {
   }
   if (f.source) (where.push("s.source_id = ?"), params.push(f.source));
   if (f.project) (where.push("s.project_id = ?"), params.push(f.project));
-  const rows = db
-    .prepare(
-      `SELECT tc.skill_name AS name,
-              COUNT(*) AS call_count,
-              COUNT(DISTINCT tc.skill_id) AS version_count,
-              MAX(e.timestamp) AS last_fired,
-              GROUP_CONCAT(DISTINCT s.source_id) AS sources
-       FROM tool_calls tc
-       JOIN sessions s ON s.id = tc.session_id
-       LEFT JOIN events e ON e.uuid = tc.event_uuid
-       WHERE ${where.join(" AND ")}
-       GROUP BY tc.skill_name
-       ORDER BY call_count DESC, name`,
-    )
-    .all(...params) as any[];
-  for (const r of rows) r.sources = r.sources ? String(r.sources).split(",").filter(Boolean) : [];
-  return rows;
+  const rows = queryAll<SkillListRow>(
+    db,
+    `SELECT tc.skill_name AS name,
+            COUNT(*) AS call_count,
+            COUNT(DISTINCT tc.skill_id) AS version_count,
+            MAX(e.timestamp) AS last_fired,
+            GROUP_CONCAT(DISTINCT s.source_id) AS sources
+     FROM tool_calls tc
+     JOIN sessions s ON s.id = tc.session_id
+     LEFT JOIN events e ON e.uuid = tc.event_uuid
+     WHERE ${where.join(" AND ")}
+     GROUP BY tc.skill_name
+     ORDER BY call_count DESC, name`,
+    ...params,
+  );
+  // GROUP_CONCAT hands back a comma-joined string; the response declares an array.
+  return rows.map((r) => ({ ...r, sources: r.sources ? String(r.sources).split(",").filter(Boolean) : [] }));
 }
 
 export interface FileFilters {
@@ -747,10 +798,10 @@ export interface FileFilters {
  * the changing session; q is a path substring). Sort whitelist is native SQL; count-then-page like
  * listSessions. Empty result (not an error) on a pre-v14 DB missing the table.
  */
-export function listFiles(db: DB, f: FileFilters = {}) {
+export function listFiles(db: DB, f: FileFilters = {}): FilesPage {
   if (!tableExists(db, "file_changes")) return { total: 0, files: [] };
   const where: string[] = [];
-  const params: any[] = [];
+  const params: unknown[] = [];
   if (f.q && f.q.trim()) (where.push("fc.file_path LIKE ?"), params.push(`%${f.q.trim()}%`));
   if (f.project) (where.push("fc.project_id = ?"), params.push(f.project));
   if (f.source) (where.push("EXISTS (SELECT 1 FROM sessions s WHERE s.id = fc.session_id AND s.source_id = ?)"), params.push(f.source));
@@ -766,7 +817,7 @@ export function listFiles(db: DB, f: FileFilters = {}) {
      FROM file_changes fc${whereSql}
      GROUP BY fc.project_id, fc.file_path`;
 
-  const total = (db.prepare(`SELECT COUNT(*) n FROM (${grouped})`).get(...params) as { n: number }).n;
+  const total = queryGet<CountRow>(db, `SELECT COUNT(*) n FROM (${grouped})`, ...params)!.n;
 
   const ORDER = {
     last_ts: "last_ts",
@@ -778,13 +829,15 @@ export function listFiles(db: DB, f: FileFilters = {}) {
   const limit = Math.min(f.limit ?? 50, 200);
   const offset = f.offset ?? 0;
 
-  const files = db
-    .prepare(
-      `SELECT g.*, p.path AS project_path FROM (${grouped}) g
-       LEFT JOIN projects p ON p.id = g.project_id
-       ORDER BY ${orderBy(ORDER, f.sort, "last_ts", f.dir)}, g.file_path ASC LIMIT ? OFFSET ?`,
-    )
-    .all(...params, limit, offset) as any[];
+  const files = queryAll<FileSummary>(
+    db,
+    `SELECT g.*, p.path AS project_path FROM (${grouped}) g
+     LEFT JOIN projects p ON p.id = g.project_id
+     ORDER BY ${orderBy(ORDER, f.sort, "last_ts", f.dir)}, g.file_path ASC LIMIT ? OFFSET ?`,
+    ...params,
+    limit,
+    offset,
+  );
   return { total, files };
 }
 
@@ -795,31 +848,31 @@ export function listFiles(db: DB, f: FileFilters = {}) {
  * title/date/category (classification join) like the skills detail. Returns null (→ 404) when the
  * path has no recorded changes.
  */
-export function getFileTimeline(db: DB, filePath: string, projectId?: string) {
+export function getFileTimeline(db: DB, filePath: string, projectId?: string): FileTimeline | null {
   if (!tableExists(db, "file_changes")) return null;
-  const params: any[] = [filePath];
+  const params: unknown[] = [filePath];
   let scope = "fc.file_path = ?";
   if (projectId) (scope += " AND fc.project_id = ?"), params.push(projectId);
-  const rows = db
-    .prepare(
-      `SELECT fc.id, fc.session_id, fc.turn_id, fc.event_uuid, fc.tool_name, fc.lines_added,
-              fc.lines_removed, fc.timestamp, fc.project_id,
-              s.ai_title, s.slug, s.source_id, s.started_at, t.seq AS turn_seq, t.prompt_preview,
-              p.path AS project_path
-       FROM file_changes fc
-       JOIN sessions s ON s.id = fc.session_id
-       LEFT JOIN turns t ON t.id = fc.turn_id
-       LEFT JOIN projects p ON p.id = fc.project_id
-       WHERE ${scope} ORDER BY fc.timestamp`,
-    )
-    .all(...params) as any[];
+  const rows = queryAll<FileTimelineRow>(
+    db,
+    `SELECT fc.id, fc.session_id, fc.turn_id, fc.event_uuid, fc.tool_name, fc.lines_added,
+            fc.lines_removed, fc.timestamp, fc.project_id,
+            s.ai_title, s.slug, s.source_id, s.started_at, t.seq AS turn_seq, t.prompt_preview,
+            p.path AS project_path
+     FROM file_changes fc
+     JOIN sessions s ON s.id = fc.session_id
+     LEFT JOIN turns t ON t.id = fc.turn_id
+     LEFT JOIN projects p ON p.id = fc.project_id
+     WHERE ${scope} ORDER BY fc.timestamp`,
+    ...params,
+  );
   if (!rows.length) return null;
 
   const cat = tableExists(db, "classifications")
     ? db.prepare("SELECT category FROM classifications WHERE scope = 'session' AND target_id = ?")
     : null;
 
-  const bySession = new Map<string, any>();
+  const bySession = new Map<string, FileTimelineSession>();
   for (const r of rows) {
     let g = bySession.get(r.session_id);
     if (!g) {
@@ -828,7 +881,7 @@ export function getFileTimeline(db: DB, filePath: string, projectId?: string) {
         title: r.ai_title || r.slug || null,
         source_id: r.source_id,
         started_at: r.started_at,
-        category: cat ? ((cat.get(r.session_id) as any)?.category ?? null) : null,
+        category: cat ? ((cat.get(r.session_id) as CategoryRow | undefined)?.category ?? null) : null,
         changes: [],
       };
       bySession.set(r.session_id, g);
@@ -871,32 +924,32 @@ export function getFileTimeline(db: DB, filePath: string, projectId?: string) {
  * firing count) and the sessions that fired it, tagged with which version (`version_id`) so the UI
  * can map the session list to the selected version. Returns null (→ 404) when the name never fired.
  */
-export function getSkill(db: DB, name: string) {
-  const versions = db
-    .prepare(
-      `SELECT sk.id, sk.base_dir, sk.summary, sk.body, sk.body_bytes, sk.first_seen, sk.last_seen,
-              (SELECT COUNT(*) FROM tool_calls tc WHERE tc.skill_id = sk.id) AS call_count
-       FROM skills sk WHERE sk.name = ? ORDER BY sk.last_seen DESC, sk.id`,
-    )
-    .all(name) as any[];
+export function getSkill(db: DB, name: string): SkillDetail | null {
+  const versions = queryAll<SkillVersion>(
+    db,
+    `SELECT sk.id, sk.base_dir, sk.summary, sk.body, sk.body_bytes, sk.first_seen, sk.last_seen,
+            (SELECT COUNT(*) FROM tool_calls tc WHERE tc.skill_id = sk.id) AS call_count
+     FROM skills sk WHERE sk.name = ? ORDER BY sk.last_seen DESC, sk.id`,
+    name,
+  );
 
-  const sessions = db
-    .prepare(
-      `SELECT s.id, s.ai_title, s.slug, s.source_id, s.started_at, p.path AS project_path,
-              tc.skill_id AS version_id, MIN(e.timestamp) AS fired_at, COUNT(*) AS fire_count
-       FROM tool_calls tc
-       JOIN sessions s ON s.id = tc.session_id
-       LEFT JOIN projects p ON p.id = s.project_id
-       LEFT JOIN events e ON e.uuid = tc.event_uuid
-       WHERE tc.tool_name = 'Skill' AND tc.skill_name = ?
-       GROUP BY s.id, tc.skill_id
-       ORDER BY fired_at DESC`,
-    )
-    .all(name) as any[];
+  const sessionRows = queryAll<SkillSessionRow>(
+    db,
+    `SELECT s.id, s.ai_title, s.slug, s.source_id, s.started_at, p.path AS project_path,
+            tc.skill_id AS version_id, MIN(e.timestamp) AS fired_at, COUNT(*) AS fire_count
+     FROM tool_calls tc
+     JOIN sessions s ON s.id = tc.session_id
+     LEFT JOIN projects p ON p.id = s.project_id
+     LEFT JOIN events e ON e.uuid = tc.event_uuid
+     WHERE tc.tool_name = 'Skill' AND tc.skill_name = ?
+     GROUP BY s.id, tc.skill_id
+     ORDER BY fired_at DESC`,
+    name,
+  );
 
-  if (!versions.length && !sessions.length) return null;
-  for (const s of sessions) s.title = s.ai_title || s.slug || null;
-  const call_count = sessions.reduce((a, s) => a + (s.fire_count as number), 0);
+  if (!versions.length && !sessionRows.length) return null;
+  const sessions: SkillSession[] = sessionRows.map((s) => ({ ...s, title: s.ai_title || s.slug || null }));
+  const call_count = sessions.reduce((a, s) => a + s.fire_count, 0);
   return { name, versions, sessions, call_count };
 }
 
@@ -936,9 +989,9 @@ export function triageAttached(db: DB): boolean {
 }
 
 /** WHERE fragments shared by list + summary: user filters (no status) over findings f / sessions s. */
-function findingWhere(f: FindingFilters): { sql: string[]; params: any[] } {
+function findingWhere(f: FindingFilters): { sql: string[]; params: unknown[] } {
   const sql: string[] = [];
-  const params: any[] = [];
+  const params: unknown[] = [];
   if (f.severity) (sql.push("f.severity = ?"), params.push(f.severity));
   if (f.category) (sql.push("f.category = ?"), params.push(f.category));
   if (f.rule) (sql.push("f.rule_id = ?"), params.push(f.rule));
@@ -972,7 +1025,7 @@ function statusWhere(status: FindingFilters["status"], attached: boolean): strin
  * its triage state (dismissed flag/note/when) when the triage store is attached. Default status hides
  * dismissed + muted so real, un-triaged findings surface. Guarded for a pre-ingest read-only DB.
  */
-export function listFindings(db: DB, f: FindingFilters) {
+export function listFindings(db: DB, f: FindingFilters): FindingsPage {
   if (!tableExists(db, "findings")) return { total: 0, findings: [] };
   const attached = triageAttached(db);
 
@@ -985,11 +1038,11 @@ export function listFindings(db: DB, f: FindingFilters) {
     ? `, (d.finding_id IS NOT NULL) AS dismissed, d.note AS dismiss_note, d.dismissed_at, ${MUTED_SQL} AS muted`
     : `, 0 AS dismissed, NULL AS dismiss_note, NULL AS dismissed_at, 0 AS muted`;
 
-  const total = (
-    db
-      .prepare(`SELECT COUNT(*) n FROM findings f JOIN sessions s ON s.id = f.session_id ${dismissJoin} ${whereSql}`)
-      .get(...w.params) as any
-  ).n;
+  const total = queryGet<CountRow>(
+    db,
+    `SELECT COUNT(*) n FROM findings f JOIN sessions s ON s.id = f.session_id ${dismissJoin} ${whereSql}`,
+    ...w.params,
+  )!.n;
 
   const ORDER = {
     severity: SEVERITY_RANK_SQL,
@@ -999,22 +1052,24 @@ export function listFindings(db: DB, f: FindingFilters) {
     time: "s.started_at",
   };
 
-  const findings = db
-    .prepare(
-      `SELECT f.id, f.session_id, f.tool_call_id, f.event_uuid, f.turn_id, f.rule_id, f.category,
-              f.framework_ref, f.severity, f.title, f.evidence, tc.tool_name,
-              COALESCE(s.ai_title, s.slug) AS session_title, s.source_id, s.is_sidechain,
-              s.started_at, p.path AS project_path, s.project_id ${triageCols}
-       FROM findings f
-       JOIN sessions s ON s.id = f.session_id
-       LEFT JOIN projects p ON p.id = s.project_id
-       LEFT JOIN tool_calls tc ON tc.id = f.tool_call_id
-       ${dismissJoin}
-       ${whereSql}
-       ORDER BY ${orderBy(ORDER, f.sort, "severity", f.dir)}, ${SEVERITY_RANK_SQL} DESC, f.id ASC
-       LIMIT ? OFFSET ?`,
-    )
-    .all(...w.params, f.limit, f.offset);
+  const findings = queryAll<FindingListRow>(
+    db,
+    `SELECT f.id, f.session_id, f.tool_call_id, f.event_uuid, f.turn_id, f.rule_id, f.category,
+            f.framework_ref, f.severity, f.title, f.evidence, tc.tool_name,
+            COALESCE(s.ai_title, s.slug) AS session_title, s.source_id, s.is_sidechain,
+            s.started_at, p.path AS project_path, s.project_id ${triageCols}
+     FROM findings f
+     JOIN sessions s ON s.id = f.session_id
+     LEFT JOIN projects p ON p.id = s.project_id
+     LEFT JOIN tool_calls tc ON tc.id = f.tool_call_id
+     ${dismissJoin}
+     ${whereSql}
+     ORDER BY ${orderBy(ORDER, f.sort, "severity", f.dir)}, ${SEVERITY_RANK_SQL} DESC, f.id ASC
+     LIMIT ? OFFSET ?`,
+    ...w.params,
+    f.limit,
+    f.offset,
+  );
 
   return { total, findings };
 }
@@ -1025,7 +1080,7 @@ export function listFindings(db: DB, f: FindingFilters) {
  * what still needs review; `dismissed` and `muted` totals ride along for the triage affordances. The
  * framework reference content (core) powers the "what & why" explainers. Guarded for a pre-ingest DB.
  */
-export function securitySummary(db: DB) {
+export function securitySummary(db: DB): SecuritySummary {
   const categories = SECURITY_CATEGORIES;
   if (!tableExists(db, "findings")) {
     return { total: 0, sessions_flagged: 0, dismissed: 0, muted: 0, by_severity: [], by_category: [], by_rule: [], categories };
@@ -1035,19 +1090,24 @@ export function securitySummary(db: DB) {
   const base = `FROM findings f JOIN sessions s ON s.id = f.session_id ${dismissJoin}`;
   const openWhere = attached ? `WHERE d.finding_id IS NULL AND NOT ${MUTED_SQL}` : "";
 
-  const scalar = (sql: string) => (db.prepare(sql).get() as any).n as number;
+  const scalar = (sql: string): number => queryGet<CountRow>(db, sql)!.n;
   const total = scalar(`SELECT COUNT(*) n ${base} ${openWhere}`);
   const sessions_flagged = scalar(`SELECT COUNT(DISTINCT f.session_id) n ${base} ${openWhere}`);
   const dismissed = attached ? scalar(`SELECT COUNT(*) n FROM findings f LEFT JOIN triage.dismissed_findings d ON d.finding_id = f.id WHERE d.finding_id IS NOT NULL`) : 0;
   const muted = attached ? scalar(`SELECT COUNT(*) n ${base} WHERE d.finding_id IS NULL AND ${MUTED_SQL}`) : 0;
 
-  const by_severity = db.prepare(`SELECT f.severity AS severity, COUNT(*) n ${base} ${openWhere} GROUP BY f.severity ORDER BY ${SEVERITY_RANK_SQL} DESC`).all();
-  const by_category = db.prepare(`SELECT f.category AS category, COUNT(*) n ${base} ${openWhere} GROUP BY f.category ORDER BY n DESC`).all();
-  const by_rule = db
-    .prepare(
-      `SELECT f.rule_id AS rule_id, f.category AS category, f.title AS title, COUNT(*) n, MAX(${SEVERITY_RANK_SQL}) AS rank
-       ${base} ${openWhere} GROUP BY f.rule_id ORDER BY rank DESC, n DESC`,
-    )
-    .all();
+  const by_severity = queryAll<SecuritySummary["by_severity"][number]>(
+    db,
+    `SELECT f.severity AS severity, COUNT(*) n ${base} ${openWhere} GROUP BY f.severity ORDER BY ${SEVERITY_RANK_SQL} DESC`,
+  );
+  const by_category = queryAll<SecuritySummary["by_category"][number]>(
+    db,
+    `SELECT f.category AS category, COUNT(*) n ${base} ${openWhere} GROUP BY f.category ORDER BY n DESC`,
+  );
+  const by_rule = queryAll<SecuritySummary["by_rule"][number]>(
+    db,
+    `SELECT f.rule_id AS rule_id, f.category AS category, f.title AS title, COUNT(*) n, MAX(${SEVERITY_RANK_SQL}) AS rank
+     ${base} ${openWhere} GROUP BY f.rule_id ORDER BY rank DESC, n DESC`,
+  );
   return { total, sessions_flagged, dismissed, muted, by_severity, by_category, by_rule, categories };
 }

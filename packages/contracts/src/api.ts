@@ -107,6 +107,9 @@ export interface SessionsPage {
 
 export interface ToolCall {
   id: string | null;
+  /** The transcript event this call belongs to. The server groups tool calls by it before nesting
+   *  them under `EventNode.toolCalls`, so by the time the UI sees one the grouping is already done. */
+  event_uuid: string | null;
   tool_name: string;
   skill_name: string | null;
   /** the specific skill version (content hash) this call fired; null when no body was captured */
@@ -120,6 +123,7 @@ export interface ToolCall {
   /** Heuristic error bucket, non-null only on status='error' rows (see core's errors.ts). */
   error_type: string | null;
   total_duration_ms: number | null;
+  total_tokens: number | null;
   input_json: string | null;
   result_summary: string | null;
   /** Present when the transcript truncated this result to a "…/tool-results/<name>.txt" marker and the
@@ -266,7 +270,10 @@ export interface FindingSignals {
 /** One security finding — a (tool_call, rule) match. List rows also carry session context. */
 export interface Finding {
   id: string;
-  session_id: string;
+  /** Present on the /security list rows. **Absent** from the inline session projection, which omits
+   *  it as redundant — you already know the session you are reading. This was declared required and
+   *  silently unmet before ADR-026; it is `?` because that is what the server actually emits. */
+  session_id?: string;
   tool_call_id: string | null;
   event_uuid: string | null;
   turn_id: string | null;
@@ -297,9 +304,22 @@ export interface Finding {
   muted?: number;
 }
 
+/**
+ * A row of the /security list. The list projection joins `sessions`, so it always carries the session
+ * context that the inline (per-transcript) projection leaves out — most importantly `session_id`,
+ * which every row in this list links to.
+ *
+ * This split is the honest form of a mismatch ADR-026 turned up: `Finding.session_id` was declared
+ * required and the inline projection never emitted it. Narrowing it here keeps the list callers
+ * unguarded without lying about the inline case.
+ */
+export interface FindingListRow extends Finding {
+  session_id: string;
+}
+
 export interface FindingsPage {
   total: number;
-  findings: Finding[];
+  findings: FindingListRow[];
 }
 
 /** A muted rule (GET /api/security/mutes) — suppresses its findings from the open view. */

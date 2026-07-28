@@ -1,6 +1,6 @@
 import { useCallback, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
-import { apiPost, SNAPSHOT, type Finding, type FindingsPage, type MuteRow, type Project, type SecuritySummary, type Source } from "./api";
+import { apiPost, SNAPSHOT, type FindingListRow, type FindingsPage, type MuteRow, type Project, type SecuritySummary, type Source } from "./api";
 import { useFetch, useLookup } from "./useFetch";
 import { useQueryState } from "./useQueryState";
 import { useResetOn } from "./useResetOn";
@@ -306,7 +306,7 @@ export default function SecurityView() {
 function FindingRow({
   f, selected, onToggle, busy, onDismiss, onReopen, onMute,
 }: {
-  f: Finding;
+  f: FindingListRow;
   selected: boolean;
   onToggle: () => void;
   busy: boolean;
