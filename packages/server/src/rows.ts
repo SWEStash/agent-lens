@@ -15,7 +15,18 @@
  * being an `any` that silently absorbs whatever the response assembly then claims about it.
  */
 
-import type { Severity } from "@agent-lens/contracts";
+import type { Severity, ToolCall } from "@agent-lens/contracts";
+
+/**
+ * A tool call as the QUERY returns it: the response shape plus the two columns the loaders need but
+ * the response deliberately does not ship — `event_uuid` (used to nest calls under their event) and
+ * `error_type` (used for the failure-vs-rejection split). `toResponseToolCall` in db.ts drops them
+ * at the point of nesting, which is the only place the distinction has to be made.
+ */
+export interface ToolCallProjection extends ToolCall {
+  event_uuid: string | null;
+  error_type: string | null;
+}
 
 /** `SELECT COUNT(*) n …` — the count half of every count-then-page endpoint. */
 export interface CountRow {
@@ -36,7 +47,6 @@ export interface SessionListRow {
   source_id: string | null;
   is_sidechain: number;
   started_at: string | null;
-  ended_at: string | null;
   duration_ms: number | null;
   event_count: number;
   turn_count: number;
@@ -278,7 +288,9 @@ export interface WorkflowStatusAggRow {
   dur_n: number | null;
 }
 
-/** `UsageAggRow` plus the distinct-session count, for the by-model breakdown. */
+/** `UsageAggRow` plus the distinct-session count, for the by-model breakdown. `model` narrows to
+ *  non-null here because that query COALESCEs the bucket label to `(unknown)`. */
 export interface ModelBreakdownRow extends UsageAggRow {
+  model: string;
   sessions: number | null;
 }

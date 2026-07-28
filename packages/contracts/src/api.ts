@@ -66,22 +66,22 @@ export interface Project {
 export interface Source {
   id: string;
   label: string;
-  agent_id: string;
-  config_dir: string | null;
   session_count: number;
 }
 
 // ---- Sessions list ------------------------------------------------------
 
+/**
+ * A row of the sessions list. `title` is derived server-side (`ai_title || slug || null`) and the raw
+ * columns behind it are deliberately NOT shipped — see the note on `SessionDetailData`, which is the
+ * one shape that does carry them.
+ */
 export interface SessionSummary {
   id: string;
   title: string | null;
-  ai_title: string | null;
-  slug: string | null;
   source_id: string | null;
   is_sidechain: number;
   started_at: string | null;
-  ended_at: string | null;
   duration_ms: number | null;
   event_count: number;
   turn_count: number;
@@ -105,11 +105,14 @@ export interface SessionsPage {
 
 // ---- Session detail / transcript ----------------------------------------
 
+/**
+ * A tool call, nested under its `EventNode`. Three columns the query needs are deliberately not on
+ * the wire: `event_uuid` (the server has already used it to do the nesting), `error_type` (consumed
+ * server-side for the failure-vs-rejection split, and surfaced to the UI as a dashboard breakdown,
+ * never per-call), and `total_tokens` (nothing reads it).
+ */
 export interface ToolCall {
   id: string | null;
-  /** The transcript event this call belongs to. The server groups tool calls by it before nesting
-   *  them under `EventNode.toolCalls`, so by the time the UI sees one the grouping is already done. */
-  event_uuid: string | null;
   tool_name: string;
   skill_name: string | null;
   /** the specific skill version (content hash) this call fired; null when no body was captured */
@@ -120,10 +123,7 @@ export interface ToolCall {
   workflow_name: string | null;
   workflow_agent_count: number | null;
   status: string | null;
-  /** Heuristic error bucket, non-null only on status='error' rows (see core's errors.ts). */
-  error_type: string | null;
   total_duration_ms: number | null;
-  total_tokens: number | null;
   input_json: string | null;
   result_summary: string | null;
   /** Present when the transcript truncated this result to a "…/tool-results/<name>.txt" marker and the
@@ -268,12 +268,15 @@ export interface FindingSignals {
 }
 
 /** One security finding — a (tool_call, rule) match. List rows also carry session context. */
+/**
+ * One security finding — a (tool_call, rule) match, as returned inline on a session detail.
+ *
+ * Note there is no `session_id`: the inline projection omits it as redundant (you already know the
+ * session you are reading), and the /security list rows that DO carry it are `FindingListRow`.
+ * Before ADR-026 this was declared required on both and silently unmet on one.
+ */
 export interface Finding {
   id: string;
-  /** Present on the /security list rows. **Absent** from the inline session projection, which omits
-   *  it as redundant — you already know the session you are reading. This was declared required and
-   *  silently unmet before ADR-026; it is `?` because that is what the server actually emits. */
-  session_id?: string;
   tool_call_id: string | null;
   event_uuid: string | null;
   turn_id: string | null;
@@ -382,8 +385,6 @@ export interface SkillVersion {
 export interface SkillSession {
   id: string;
   title: string | null;
-  ai_title: string | null;
-  slug: string | null;
   source_id: string | null;
   started_at: string | null;
   project_path: string | null;
@@ -593,9 +594,9 @@ export interface DashTimeseries {
 }
 
 export interface DashBreakdowns {
-  /** `model` is nullable: `token_usage.model` is, and unlike the model *filter* list (which filters
-   *  `IS NOT NULL`) this group-by does not exclude it — so a null-model bucket can appear. */
-  by_model: Array<{ model: string | null; tokens: TokenSplit; total_tokens: number; cost: number; sessions: number; priced: boolean }>;
+  /** `token_usage.model` is nullable and this group-by (unlike the model *filter* list) does not
+   *  exclude nulls, so the query COALESCEs the bucket to `(unknown)` — same convention as by_source. */
+  by_model: Array<{ model: string; tokens: TokenSplit; total_tokens: number; cost: number; sessions: number; priced: boolean }>;
   by_source: Array<{ source: string; sessions: number; turns: number }>;
   by_category: Array<{ category: string; n: number }>;
   by_complexity: Array<{ band: string; n: number }>;

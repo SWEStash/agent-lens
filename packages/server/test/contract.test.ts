@@ -26,14 +26,16 @@ function expectKeys(actual: unknown, expected: string[], what: string) {
 }
 
 // ---- The contract, restated as runtime key sets -------------------------
-// Keep these in step with packages/contracts/src/api.ts. Fields marked below as "unread by web" are
-// the trim candidates ADR-026 records; they are asserted because they ARE currently emitted.
+// Keep these in step with packages/contracts/src/api.ts. Every list below is EXACT: a response
+// carrying an extra key fails just as loudly as one missing a key, which is what stops payload
+// nobody declared from accumulating again.
 
-const SOURCE_KEYS = ["id", "label", "agent_id", "config_dir", "session_count"];
+const SOURCE_KEYS = ["id", "label", "session_count"];
 const PROJECT_KEYS = ["id", "path", "session_count"];
 
+// `title` is derived (ai_title || slug); the raw columns behind it are deliberately not shipped.
 const SESSION_SUMMARY_KEYS = [
-  "id", "ai_title", "slug", "source_id", "is_sidechain", "started_at", "ended_at", "duration_ms",
+  "id", "source_id", "is_sidechain", "started_at", "duration_ms",
   "event_count", "turn_count", "project_path", "models", "tokens", "token_split", "cost", "title",
   "tool_call_count", "tool_error_count", "finding_count", "worst_severity",
 ];
@@ -45,9 +47,11 @@ const SESSION_DETAIL_KEYS = [
 
 const EVENT_NODE_KEYS = ["uuid", "type", "role", "timestamp", "model", "is_sidechain", "turn_id", "text", "thinking", "toolCalls"];
 
+// No event_uuid (the server already used it to nest this call), no error_type (server-side split
+// only), no total_tokens (nothing reads it) — see ToolCallProjection in server/src/rows.ts.
 const TOOL_CALL_KEYS = [
-  "id", "event_uuid", "tool_name", "skill_name", "skill_id", "agent_type", "spawned_session_id",
-  "workflow_run_id", "workflow_name", "status", "error_type", "total_duration_ms", "total_tokens",
+  "id", "tool_name", "skill_name", "skill_id", "agent_type", "spawned_session_id",
+  "workflow_run_id", "workflow_name", "status", "total_duration_ms",
   "input_json", "result_summary", "workflow_agent_count", "findings",
 ];
 
@@ -81,7 +85,6 @@ describe("response contracts — populated DB", () => {
     const app = await appFor(seedBasic());
     const body = (await app.inject({ method: "GET", url: "/api/sources" })).json();
     expect(body).toHaveLength(1);
-    // agent_id + config_dir are emitted and read nowhere in packages/web — trim candidates (ADR-026).
     expectKeys(body[0], SOURCE_KEYS, "source row");
     await app.close();
   });
@@ -211,12 +214,81 @@ describe("response contracts — populated DB", () => {
 
     const detail = (await app.inject({ method: "GET", url: "/api/skills/test-suite-design" })).json();
     expectKeys(detail, ["name", "versions", "sessions", "call_count"], "skill detail");
-    // ai_title is emitted here and read nowhere in packages/web — a trim candidate (ADR-026).
     expectKeys(
       detail.sessions[0],
-      ["id", "ai_title", "slug", "source_id", "started_at", "project_path", "version_id", "fired_at", "fire_count", "title"],
+      ["id", "source_id", "started_at", "project_path", "version_id", "fired_at", "fire_count", "title"],
       "skill session",
     );
+    await app.close();
+  });
+});
+
+describe("the wire carries only what the contract declares", () => {
+  // These pin the *trim* specifically: each asserts a field is absent, so re-adding it to a SELECT
+  // (the way six of them accumulated in the first place) fails here rather than shipping unnoticed.
+
+  it("derives `title` and does not ship the raw title columns", async () => {
+    const db = seedBasic();
+    addSession(db, "kid", { parent: "sess1", sidechain: true, title: "child", startedAt: "2026-01-01T00:01:00Z" });
+    const app = await appFor(db);
+
+    const list = (await app.inject({ method: "GET", url: "/api/sessions" })).json();
+    // By id, not by index: the list is unfiltered here and the subagent sorts first by started_at.
+    const row = list.sessions.find((s: { id: string }) => s.id === "sess1");
+    expect(row.title).toBe("Demo session");
+    expect(row).not.toHaveProperty("ai_title");
+    expect(row).not.toHaveProperty("slug");
+
+    const detail = (await app.inject({ method: "GET", url: "/api/sessions/sess1" })).json();
+    expect(detail.children[0].title).toBe("child");
+    expect(detail.children[0]).not.toHaveProperty("ai_title");
+    expect(detail.children[0]).not.toHaveProperty("slug");
+
+    // The ONE shape that does carry them, and deliberately: getSession's `SELECT s.*` is the whole
+    // row, which is why SessionDetailData extends SessionRow (ADR-026).
+    expect(detail.session).toHaveProperty("ai_title");
+    expect(detail.session).toHaveProperty("slug");
+    await app.close();
+  });
+
+  it("a tool call keeps its internal columns off the wire", async () => {
+    const db = seedBasic();
+    const app = await appFor(db);
+    const body = (await app.inject({ method: "GET", url: "/api/sessions/sess1" })).json();
+    const call = body.events.find((e: { toolCalls: unknown[] }) => e.toolCalls.length > 0).toolCalls[0];
+    for (const k of ["event_uuid", "error_type", "total_tokens"]) {
+      expect(call, `tool call should not ship ${k}`).not.toHaveProperty(k);
+    }
+    await app.close();
+  });
+
+  it("still splits failures from rejections after error_type left the payload", async () => {
+    // error_type is dropped from the RESPONSE but still read server-side; this is the assertion that
+    // stops the trim from quietly breaking the split.
+    const db = seedBasic();
+    db.prepare("UPDATE tool_calls SET status = 'error', error_type = 'user-rejected' WHERE id = 'tc1'").run();
+    const app = await appFor(db);
+
+    const s = (await app.inject({ method: "GET", url: "/api/sessions/sess1" })).json().session;
+    expect(s.tool_error_count).toBe(1);
+    expect(s.tool_rejection_count).toBe(1);
+    expect(s.tool_failure_count).toBe(0);
+    await app.close();
+  });
+
+  it("labels a null-model token bucket instead of emitting a nameless one", async () => {
+    // token_usage.model is nullable and the by_model GROUP BY does not exclude nulls, so the bucket
+    // reached the chart with model: null and rendered as an unnamed bar. Now COALESCEd, as by_source
+    // already does. Red without the COALESCE.
+    const db = freshDb();
+    addSession(db, "s1", { startedAt: "2026-01-01T00:00:00Z" });
+    addEventlessUsage(db, "s1");
+    const app = await appFor(db);
+
+    const bd = (await app.inject({ method: "GET", url: "/api/dashboard/breakdowns" })).json();
+    const bucket = bd.by_model.find((m: { model: string }) => m.model === "(unknown)");
+    expect(bucket, "a null-model bucket should be labelled, not null").toBeTruthy();
+    expect(bd.by_model.every((m: { model: unknown }) => typeof m.model === "string")).toBe(true);
     await app.close();
   });
 });
@@ -294,6 +366,17 @@ describe("response contracts — degraded DBs keep the shape stable", () => {
     await app.close();
   });
 });
+
+/** Token usage with a NULL model — the case the by_model GROUP BY does not filter out. `addTokens`
+ *  requires a model, so this one writes the row directly. */
+function addEventlessUsage(db: Database.Database, session: string) {
+  db.prepare("INSERT INTO events (uuid, session_id, seq, type, role, timestamp, raw_json) VALUES ('ev0', ?, 0, 'assistant', 'assistant', '2026-01-01T00:00:00Z', '{}')").run(session);
+  db.prepare(
+    `INSERT INTO token_usage (event_uuid, session_id, model, input_tokens, output_tokens,
+                              cache_creation_input_tokens, cache_read_input_tokens)
+     VALUES ('ev0', ?, NULL, 10, 5, 0, 0)`,
+  ).run(session);
+}
 
 /** A findings row (ADR-017). Not in seed.ts because only the security suites need it. */
 function addFinding(db: Database.Database, id: string, session: string, toolCall: string) {
