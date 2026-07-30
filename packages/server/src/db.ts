@@ -994,8 +994,11 @@ export function triageAttached(db: DB): boolean {
   return (db.prepare("PRAGMA database_list").all() as Array<{ name: string }>).some((r) => r.name === "triage");
 }
 
+/** The filter half of FindingFilters — what narrows the set, without status/sort/paging. */
+export type FindingScope = Omit<FindingFilters, "status" | "sort" | "dir" | "limit" | "offset">;
+
 /** WHERE fragments shared by list + summary: user filters (no status) over findings f / sessions s. */
-function findingWhere(f: FindingFilters): { sql: string[]; params: unknown[] } {
+function findingWhere(f: FindingScope): { sql: string[]; params: unknown[] } {
   const sql: string[] = [];
   const params: unknown[] = [];
   if (f.severity) (sql.push("f.severity = ?"), params.push(f.severity));
@@ -1078,6 +1081,32 @@ export function listFindings(db: DB, f: FindingFilters): FindingsPage {
   );
 
   return { total, findings };
+}
+
+/**
+ * Ids of every OPEN finding matching `f` — the id-only half of listFindings, for bulk dismiss
+ * (POST /api/security/dismiss-matching). Shares findingWhere + statusWhere with the list so "what
+ * matches" cannot drift between browsing and bulk-dismissing; only the projection differs, so this
+ * skips the list's COUNT(*) pass, session/tool context columns, and ORDER BY. Status is fixed to
+ * open: a bulk dismiss acts on what the user can currently see, never on dismissed or muted rows.
+ */
+export function openFindingIds(db: DB, f: FindingScope): string[] {
+  if (!tableExists(db, "findings")) return [];
+  const attached = triageAttached(db);
+
+  const w = findingWhere(f);
+  const st = statusWhere("open", attached);
+  const where = [...w.sql, ...(st ? [st] : [])];
+
+  return queryAll<{ id: string }>(
+    db,
+    `SELECT f.id
+     FROM findings f
+     JOIN sessions s ON s.id = f.session_id
+     ${attached ? "LEFT JOIN triage.dismissed_findings d ON d.finding_id = f.id" : ""}
+     ${where.length ? `WHERE ${where.join(" AND ")}` : ""}`,
+    ...w.params,
+  ).map((r) => r.id);
 }
 
 /**

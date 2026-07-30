@@ -8,7 +8,7 @@ import { existsSync } from "node:fs";
 import Fastify, { type FastifyInstance, type FastifyReply } from "fastify";
 import fastifyStatic from "@fastify/static";
 import { renderSessionExport, parseRedactionLevel } from "./export.js";
-import { type DB, lastIngested, schemaStatus, listSources, listProjects, listModels, listSessions, getSession, getWorkflow, listSkills, getSkill, listFindings, securitySummary, listFiles, getFileTimeline, safeJson } from "./db.js";
+import { type DB, lastIngested, schemaStatus, listSources, listProjects, listModels, listSessions, getSession, getWorkflow, listSkills, getSkill, listFindings, openFindingIds, securitySummary, listFiles, getFileTimeline, safeJson } from "./db.js";
 import { dashboardOverview, dashboardTimeseries, dashboardBreakdowns, type DashFilters } from "./dashboard.js";
 import { writeBlocked, runRefresh, LOOPBACK_HOSTS } from "./refresh.js";
 import { openTriage, dismiss, reopen, muteRule, unmute, listMutes, type TriageDB, type MuteScope } from "./triage.js";
@@ -230,8 +230,7 @@ export async function createApp(db: DB, opts: CreateAppOpts = {}): Promise<Fasti
   app.post("/api/security/dismiss-matching", async (req, reply) => {
     if (!guardWrite(req, reply)) return reply;
     const b = (req.body ?? {}) as { filter?: Record<string, string>; note?: string };
-    const page = listFindings(db, { ...findingFilters(b.filter ?? {}), status: "open", limit: 100000, offset: 0 });
-    const ids = (page.findings as Array<{ id: string }>).map((r) => r.id);
+    const ids = openFindingIds(db, findingFilters(b.filter ?? {}));
     const n = dismiss(triageDb!, ids, b.note ?? null);
     return { ok: true, dismissed: n };
   });
