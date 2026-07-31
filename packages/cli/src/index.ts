@@ -3,8 +3,8 @@
  * plus watch (resident collect+ingest) and service (install collect+ingest and/or serve as OS
  * services). Bundled into a single file by tsup so it installs as one npm package (ADR-010).
  */
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { existsSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { cac } from "cac";
 import {
@@ -19,6 +19,7 @@ import {
   resolveDataDir,
   resolveDbPath,
   resolveServerConfig,
+  resolveVersion,
   runService,
   triageDbFor,
 } from "@agent-lens/core";
@@ -26,13 +27,11 @@ import { runIngest, runMetrics } from "@agent-lens/ingest";
 import { startServer, openReadonly, renderSessionExport, parseRedactionLevel } from "@agent-lens/server";
 import { runWatch } from "./watch.js";
 
+// `agent-lens --version`. Shared with the server's /api/health so the CLI and the web UI can never
+// disagree about what build this is (ADR-027). A published install reports "0.9.6"; a clone reports
+// the richer "v0.9.6-3-gabc1234", which is the more useful answer for a dev build.
 function version(): string {
-  try {
-    const pkg = JSON.parse(readFileSync(join(dirname(fileURLToPath(import.meta.url)), "../package.json"), "utf8"));
-    return pkg.version ?? "0.0.0";
-  } catch {
-    return "0.0.0";
-  }
+  return resolveVersion().version;
 }
 
 /** Run `fn` under the single-instance lock so collect/ingest never overlap another run. */

@@ -1,9 +1,30 @@
+import { execFileSync, } from "node:child_process";
 import { copyFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { defineConfig, type Plugin } from "vite";
 import react from "@vitejs/plugin-react";
 
 const apiTarget = process.env.AGENT_LENS_API || "http://127.0.0.1:4477";
+
+/**
+ * Stamp the revision this bundle was built from, so the About page can flag a SPA that does not match
+ * the server serving it (ADR-027). Mirrors core's resolveVersion chain, minus the npm branch: a web
+ * build always happens from a working tree, never from an installed tarball.
+ *
+ * Deliberately not read from package.json — it holds the `0.0.0` release placeholder, since
+ * @semantic-release/git was dropped in PR #6 and nothing is committed back.
+ */
+function buildVersion(): string {
+  try {
+    return execFileSync("git", ["describe", "--tags", "--always", "--dirty"], {
+      cwd: __dirname,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+    }).trim() || "unknown";
+  } catch {
+    return "unknown"; // no git, no tags, or a source archive — same honest fallback as the server
+  }
+}
 
 /**
  * SPA deep-link fallback for static hosts (GitHub Pages).
@@ -29,6 +50,7 @@ function spaFallback(): Plugin {
 }
 
 export default defineConfig({
+  define: { __BUILD_VERSION__: JSON.stringify(buildVersion()) },
   plugins: [react(), spaFallback()],
   // Served at "/" locally and by the loopback server; GitHub Pages hosts under a repo subpath, so the
   // Pages build sets VITE_BASE (e.g. "/agent-lens/"). Trailing slash matters for asset URLs.

@@ -34,6 +34,63 @@ export interface HealthResponse {
   schema_version: number | null;
   /** True when the on-disk DB was written by an older schema (needs `agent-lens ingest --full`). */
   schema_stale: boolean;
+  /**
+   * The running build (ADR-027). Deliberately on `health` rather than `about`: it is the one part of
+   * the diagnostics safe to publish, so the static Pages snapshot carries it and the version badge
+   * works there too. Not always semver — a clone reports `v0.9.6-3-gabc1234`; read `version_source`
+   * rather than parsing the string's shape.
+   */
+  version: string;
+  version_source: VersionSource;
+}
+
+/** Which link of the version chain answered — see ADR-027 and `core/version.ts`. */
+export type VersionSource = "npm" | "git" | "unknown";
+
+/**
+ * GET /api/about — the diagnostics surface (ADR-027). **Excluded from the static snapshot on
+ * purpose**: it carries absolute filesystem paths, and `export-snapshot.mjs` publishes to a public
+ * GitHub Pages demo. The SPA hides the whole page when `SNAPSHOT` is set.
+ *
+ * Read-only by design. Configuration resolves flag > env > config file > default, so a UI could only
+ * ever write the third layer and would silently do nothing for anyone using env — hence values carry
+ * their `origin` instead of being editable, mirroring `agent-lens config`.
+ */
+export interface AboutResponse {
+  versions: {
+    app: string;
+    app_source: VersionSource;
+    schema: number | null;
+    schema_expected: number;
+    schema_stale: boolean;
+  };
+  /** Absolute paths, each with where the value came from. `config_file` is null when none is used. */
+  paths: {
+    config_file: string | null;
+    data_dir: PathInfo;
+    archive: PathInfo;
+    db: PathInfo;
+    triage_db: PathInfo;
+  };
+  server: { host: string; port: number; loopback_only: boolean };
+  sources: Array<{ label: string; agent: string; config_dir: string }>;
+  /**
+   * `archive_bytes` is **ingested** bytes — `SUM(ingest_state.size)`, not `du` of the archive dir, so
+   * anything present but not ingested (notably `.versions/` retention snapshots) is excluded. It is
+   * "as of `last_ingested`" by construction, since ingest_state *is* the ingest bookkeeping.
+   */
+  storage: {
+    db_bytes: number | null;
+    archive_bytes: number;
+    archive_files: number;
+    last_ingested: string | null;
+  };
+}
+
+export interface PathInfo {
+  path: string;
+  /** "fixed" = not independently relocatable (ADR-021); otherwise where the value was resolved from. */
+  origin: "env" | "default" | "file" | "flag" | "fixed";
 }
 
 /** GET /api/prefs/:key — `value` is null both when unset and when no writable store is configured. */

@@ -6,7 +6,7 @@
  * Markdown export, and serves the built web SPA. (env: AGENT_LENS_DB, AGENT_LENS_PORT, AGENT_LENS_HOST)
  */
 import { existsSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { findRepoRoot, resolveDbPath, resolveServerConfig, resolveWebDist, triageDbFor } from "@agent-lens/core";
 import { openReadonly } from "./db.js";
@@ -30,7 +30,7 @@ export async function startServer(overrides: StartServerOverrides = {}): Promise
   const here = dirname(fileURLToPath(import.meta.url));
   const repoRoot = findRepoRoot(here);
   // db/port/host all resolve with precedence flag > env > file > default (bad port fails fast).
-  const { path: dbPath } = resolveDbPath(overrides.db);
+  const { path: dbPath, origin: dbOrigin } = resolveDbPath(overrides.db);
   const { host, port } = resolveServerConfig({ port: overrides.port, host: overrides.host });
   const webDist = resolveWebDist(here, repoRoot);
 
@@ -54,7 +54,14 @@ export async function startServer(overrides: StartServerOverrides = {}): Promise
   // Enforce a loopback Host allowlist (DNS-rebinding defense) whenever we're bound to loopback. An
   // intentional non-loopback bind (host set + AGENT_LENS_ALLOW_NONLOCAL, checked above) opts out.
   const enforceLoopbackHost = host === "127.0.0.1" || host === "localhost";
-  const app = await createApp(db, { webDist, triageDbPath, enforceLoopbackHost });
+  // /api/about reports what this process actually resolved (ADR-027) — pass the facts down rather
+  // than letting it re-resolve, or `serve --db /custom.db` would report the default path instead.
+  const app = await createApp(db, {
+    webDist,
+    triageDbPath,
+    enforceLoopbackHost,
+    about: { db: { path: dbPath, origin: dbOrigin }, host, port, loopbackOnly: enforceLoopbackHost, repoRoot },
+  });
 
   try {
     await app.listen({ host, port });

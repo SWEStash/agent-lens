@@ -160,3 +160,4 @@ erDiagram
 | [024](decisions/ADR-024-shared-contract-types.md) | Shared contract types package (`@agent-lens/contracts`) |
 | [025](decisions/ADR-025-web-data-fetching-convention.md) | One data-fetching and URL-state convention for the SPA |
 | [026](decisions/ADR-026-api-response-contracts.md) | API response contracts live in the shared package |
+| [027](decisions/ADR-027-runtime-diagnostics-surface.md) | Read-only diagnostics surface; runtime version resolution |

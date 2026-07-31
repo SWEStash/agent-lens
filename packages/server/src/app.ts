@@ -7,11 +7,13 @@
 import { existsSync } from "node:fs";
 import Fastify, { type FastifyInstance, type FastifyReply } from "fastify";
 import fastifyStatic from "@fastify/static";
+import { resolveVersion } from "@agent-lens/core";
 import { renderSessionExport, parseRedactionLevel } from "./export.js";
 import { type DB, lastIngested, schemaStatus, listSources, listProjects, listModels, listSessions, getSession, getWorkflow, listSkills, getSkill, listFindings, openFindingIds, securitySummary, listFiles, getFileTimeline, safeJson } from "./db.js";
 import { dashboardOverview, dashboardTimeseries, dashboardBreakdowns, type DashFilters } from "./dashboard.js";
 import { writeBlocked, runRefresh, LOOPBACK_HOSTS } from "./refresh.js";
 import { openTriage, dismiss, reopen, muteRule, unmute, listMutes, type TriageDB, type MuteScope } from "./triage.js";
+import { about, type AboutContext } from "./about.js";
 import { PREFS_SCHEMA_SQL, getPref, setPref } from "./prefs.js";
 import { pageLimit, pageOffset } from "./sql-util.js";
 
@@ -24,6 +26,9 @@ export interface CreateAppOpts {
   /** Reject any request whose Host authority is not loopback (DNS-rebinding defense, HIGH-001).
    *  Defaults to true; the intentional non-local bind (AGENT_LENS_ALLOW_NONLOCAL) passes false. */
   enforceLoopbackHost?: boolean;
+  /** Startup facts backing GET /api/about (ADR-027). Omit and the route is not registered — an
+   *  embedder that never resolved a db path has nothing truthful to report. */
+  about?: AboutContext;
 }
 
 /** Structured 404 envelope. Every not-found response shares this shape so a client can uniformly read
@@ -92,8 +97,27 @@ export async function createApp(db: DB, opts: CreateAppOpts = {}): Promise<Fasti
 
   app.get("/api/health", async () => {
     const s = schemaStatus(db);
-    return { ok: true, last_ingested: lastIngested(db), schema_version: s.db_version, schema_stale: s.stale };
+    // `version` rides on health rather than /api/about because it is the one diagnostic safe to
+    // publish: health IS exported to the static Pages snapshot, so the badge works there too
+    // (ADR-027). resolveVersion() is memoized — health is polled and must not spawn git per request.
+    const v = resolveVersion();
+    return {
+      ok: true,
+      last_ingested: lastIngested(db),
+      schema_version: s.db_version,
+      schema_stale: s.stale,
+      version: v.version,
+      version_source: v.source,
+    };
   });
+
+  // Diagnostics (ADR-027). Read-only, and deliberately NOT in the static snapshot: it carries
+  // absolute filesystem paths. Registered only when startServer passed the context it resolved —
+  // re-resolving here would ignore `serve --db` and report a path nobody is reading.
+  if (opts.about) {
+    const ctx = opts.about;
+    app.get("/api/about", async () => about(db, ctx));
+  }
 
   // The one write-action on this read-only server: run a collect + ingest pass on the host so the UI
   // can pull in new transcripts on demand (ADR-015). Guarded against cross-site CSRF (Origin) and
