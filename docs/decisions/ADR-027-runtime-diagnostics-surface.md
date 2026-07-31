@@ -129,8 +129,17 @@ web mirrors that. Changing configuration remains a CLI/env/file operation.
   diverge in an npm install (the SPA ships prebuilt inside the CLI bundle); the warning is for
   development and for a stale installed service, which is precisely when it is worth having.
 - Detector and classifier versions are stamped per row (`findings.detector_version`,
-  `classifications`), so the page can report *"this data was classified by v2, this build is v3"* —
-  making a pending `agent-lens-metrics` re-run visible rather than folklore.
+  `classifications.classifier_version`), so the page reports *"this data was classified by v2, this
+  build is v3"* — making a pending re-run visible rather than folklore. Each is an `EngineVersion`:
+  `expected` (what a re-run writes now) plus `in_data` (the distinct versions actually stored).
+  Reporting `expected` alone would answer the less useful question. Rows stamped **newer** than the
+  build — an older server against a DB a newer ingest wrote — are deliberately *not* flagged stale,
+  because re-running would downgrade them. The constants are re-exported from `ingest`'s package
+  entry (`run.ts`) rather than reached for across the package boundary.
+- Retention (`.versions keep`) is included, because the page mirrors `agent-lens config` and that
+  command prints it. The 90-day default moved to `core` as `DEFAULT_VERSIONS_KEEP_DAYS` +
+  `resolveRetention()`, so the CLI and the server cannot drift. `scripts/prune.sh` still carries its
+  own copy — bash cannot import it — and both are commented as a pair.
 - No schema change, no migration, no ingest change.
 - `git describe` output is not semver (`v0.9.6-3-gabc1234`). Anything parsing the version field must
   tolerate that, which is why provenance is a sibling field rather than something to infer from the

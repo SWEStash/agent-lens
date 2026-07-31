@@ -11,7 +11,7 @@
 import { useFetch } from "./useFetch";
 import { AsyncBoundary } from "./AsyncBoundary";
 import { BUILD_VERSION } from "./buildInfo";
-import type { AboutResponse, PathInfo } from "./api";
+import type { AboutResponse, EngineVersion, PathInfo } from "./api";
 
 /** 1.2 GB / 903 MB / 12 kB — SI units, matching how disk sizes are reported elsewhere. */
 function bytes(n: number | null): string {
@@ -61,6 +61,33 @@ function originHelp(origin: PathInfo["origin"]): string {
     default:
       return "Built-in default";
   }
+}
+
+/**
+ * A stamped engine: what this build produces, against what actually produced the stored rows.
+ * Showing only the build number would answer the less useful question — the point is whether your
+ * data predates the rules this build has, which is exactly when a re-run is worth doing.
+ */
+function Engine({ label, v, what, rerun }: { label: string; v: EngineVersion; what: string; rerun: string }) {
+  const older = v.in_data.filter((n) => n < v.expected);
+  return (
+    <Row label={label}>
+      v{v.expected}
+      {v.stale && <> <span className="warn-tag">data is older</span></>}
+      <div className="muted">
+        {v.in_data.length === 0 ? (
+          <>No {what} stored yet.</>
+        ) : v.stale ? (
+          <>
+            Stored {what} came from v{older.join(", v")} — re-run <code>{rerun}</code> to relabel with v
+            {v.expected}.
+          </>
+        ) : (
+          <>All stored {what} came from v{v.in_data.join(", v")}.</>
+        )}
+      </div>
+    </Row>
+  );
 }
 
 export default function AboutView() {
@@ -117,6 +144,18 @@ export default function AboutView() {
                       </>
                     )}
                   </Row>
+                  <Engine
+                    label="Detector"
+                    v={a.versions.detector}
+                    what="security findings"
+                    rerun="agent-lens ingest --full"
+                  />
+                  <Engine
+                    label="Classifier"
+                    v={a.versions.classifier}
+                    what="session categories"
+                    rerun="agent-lens metrics"
+                  />
                 </tbody>
               </table>
             </section>
@@ -156,6 +195,24 @@ export default function AboutView() {
                         </div>
                       </>
                     )}
+                  </Row>
+                </tbody>
+              </table>
+            </section>
+
+            <section>
+              <h2>Retention</h2>
+              <table className="kv">
+                <tbody>
+                  <Row label="Keep .versions">
+                    {a.retention.versions_keep_days} day{a.retention.versions_keep_days === 1 ? "" : "s"}{" "}
+                    <span className="origin-tag" title={originHelp(a.retention.origin)}>
+                      {a.retention.origin}
+                    </span>
+                    <div className="muted">
+                      How long superseded transcript snapshots are kept before <code>scripts/prune.sh</code>{" "}
+                      removes them. Does not affect the database.
+                    </div>
                   </Row>
                 </tbody>
               </table>

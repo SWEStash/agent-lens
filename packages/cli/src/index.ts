@@ -18,6 +18,7 @@ import {
   resolveConfigFile,
   resolveDataDir,
   resolveDbPath,
+  resolveRetention,
   resolveServerConfig,
   resolveVersion,
   runService,
@@ -164,8 +165,7 @@ cli
     const { path: dbPath, origin: dbOrigin } = resolveDbPath();
     const archive = resolveArchiveDir(repoRoot);
     const triageDb = triageDbFor(dbPath);
-    const keepDays = process.env.AGENT_LENS_VERSIONS_KEEP_DAYS || "90";
-    const keepOrigin = process.env.AGENT_LENS_VERSIONS_KEEP_DAYS ? "env" : "default";
+    const { keepDays, origin: keepOrigin } = resolveRetention();
 
     console.log("agent-lens config (precedence: flag > env > config file > default)\n");
     console.log("Paths");

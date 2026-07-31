@@ -96,12 +96,98 @@ describe("about: versions", () => {
     expect(body.versions.schema_stale).toBe(true);
   });
 
+  it("reports what a re-run would produce AND what produced the stored rows", async () => {
+    const db = seedBasic();
+    // Two findings stamped by an older detector than this build writes.
+    db.prepare("INSERT INTO tool_calls (id, session_id, tool_name) VALUES ('tcx','sess1','Bash')").run();
+    const ins = db.prepare(
+      "INSERT INTO findings (id, session_id, tool_call_id, event_uuid, rule_id, category, framework_ref, severity, title, evidence, signals_json, detector_version) VALUES (?,'sess1','tcx','e1','r','c','f','low','t','e','{}',?)",
+    );
+    ins.run("f1", 7);
+    ins.run("f2", 7);
+
+    const d = (await getAbout(db)).json().versions.detector;
+    expect(d.in_data).toEqual([7]);
+    expect(d.expected).toBeGreaterThan(7);
+    expect(d.stale).toBe(true); // a re-run would relabel them
+  });
+
+  it("is not stale when the stored rows already match this build", async () => {
+    const db = seedBasic();
+    const expected = (await getAbout(db)).json().versions.detector.expected;
+    db.prepare("INSERT INTO tool_calls (id, session_id, tool_name) VALUES ('tcy','sess1','Bash')").run();
+    db.prepare(
+      "INSERT INTO findings (id, session_id, tool_call_id, event_uuid, rule_id, category, framework_ref, severity, title, evidence, signals_json, detector_version) VALUES ('f3','sess1','tcy','e1','r','c','f','low','t','e','{}',?)",
+    ).run(expected);
+
+    const d = (await getAbout(db)).json().versions.detector;
+    expect(d.in_data).toEqual([expected]);
+    expect(d.stale).toBe(false);
+  });
+
+  it("does not flag rows stamped NEWER than this build as stale", async () => {
+    // An older server reading a DB a newer ingest wrote. Re-running would DOWNGRADE those rows, so
+    // calling it "stale" would prompt exactly the wrong action.
+    const db = seedBasic();
+    const expected = (await getAbout(db)).json().versions.detector.expected;
+    db.prepare("INSERT INTO tool_calls (id, session_id, tool_name) VALUES ('tcz','sess1','Bash')").run();
+    db.prepare(
+      "INSERT INTO findings (id, session_id, tool_call_id, event_uuid, rule_id, category, framework_ref, severity, title, evidence, signals_json, detector_version) VALUES ('f4','sess1','tcz','e1','r','c','f','low','t','e','{}',?)",
+    ).run(expected + 1);
+
+    expect((await getAbout(db)).json().versions.detector.stale).toBe(false);
+  });
+
+  it("reports empty in_data when nothing has been stored yet", async () => {
+    const v = (await getAbout(freshDb())).json().versions;
+    expect(v.detector.in_data).toEqual([]);
+    expect(v.detector.stale).toBe(false);
+    expect(v.classifier.in_data).toEqual([]);
+  });
+
   it("reports an unstamped DB as null, and not as stale", async () => {
     // A DB that predates the stamp isn't known-old, it's unknown — claiming "stale" would send the
     // user to run a full re-ingest on no evidence.
     const body = (await getAbout(seedBasic())).json();
     expect(body.versions.schema).toBeNull();
     expect(body.versions.schema_stale).toBe(false);
+  });
+});
+
+describe("about: retention", () => {
+  const KEY = "AGENT_LENS_VERSIONS_KEEP_DAYS";
+
+  it("reports the built-in default when the env is unset", async () => {
+    const saved = process.env[KEY];
+    delete process.env[KEY];
+    try {
+      expect((await getAbout(seedBasic())).json().retention).toEqual({ versions_keep_days: 90, origin: "default" });
+    } finally {
+      if (saved !== undefined) process.env[KEY] = saved;
+    }
+  });
+
+  it("reports an env override as env-sourced", async () => {
+    const saved = process.env[KEY];
+    process.env[KEY] = "30";
+    try {
+      expect((await getAbout(seedBasic())).json().retention).toEqual({ versions_keep_days: 30, origin: "env" });
+    } finally {
+      if (saved === undefined) delete process.env[KEY];
+      else process.env[KEY] = saved;
+    }
+  });
+
+  it("falls back to the default when the env value is not a number", async () => {
+    const saved = process.env[KEY];
+    process.env[KEY] = "not-a-number";
+    try {
+      // Reporting NaN days would be worse than reporting the value actually in force.
+      expect((await getAbout(seedBasic())).json().retention).toEqual({ versions_keep_days: 90, origin: "default" });
+    } finally {
+      if (saved === undefined) delete process.env[KEY];
+      else process.env[KEY] = saved;
+    }
   });
 });
 

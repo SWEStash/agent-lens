@@ -63,6 +63,9 @@ export interface AboutResponse {
     schema: number | null;
     schema_expected: number;
     schema_stale: boolean;
+    /** Deterministic engines whose output is stamped per row — see EngineVersion. */
+    detector: EngineVersion;
+    classifier: EngineVersion;
   };
   /** Absolute paths, each with where the value came from. `config_file` is null when none is used. */
   paths: {
@@ -73,6 +76,8 @@ export interface AboutResponse {
     triage_db: PathInfo;
   };
   server: { host: string; port: number; loopback_only: boolean };
+  /** `.versions/` snapshot retention, mirroring the Retention block of `agent-lens config`. */
+  retention: { versions_keep_days: number; origin: "env" | "default" };
   sources: Array<{ label: string; agent: string; config_dir: string }>;
   /**
    * `archive_bytes` is **ingested** bytes — `SUM(ingest_state.size)`, not `du` of the archive dir, so
@@ -91,6 +96,23 @@ export interface PathInfo {
   path: string;
   /** "fixed" = not independently relocatable (ADR-021); otherwise where the value was resolved from. */
   origin: "env" | "default" | "file" | "flag" | "fixed";
+}
+
+/**
+ * A deterministic engine (detector, classifier) whose version is stamped onto every row it writes,
+ * so stored output can be superseded when the rules change.
+ *
+ * Reporting `expected` alone would be misleading: it says what a *re-run* would produce, not what
+ * produced the rows you are looking at. `in_data` is what is actually stamped in the store, so the
+ * page can say "your findings came from v7, this build is v8" — which is the whole diagnostic.
+ */
+export interface EngineVersion {
+  /** What this build stamps on rows it writes now. */
+  expected: number;
+  /** Distinct versions present in stored rows, ascending. Empty when nothing has been written yet. */
+  in_data: number[];
+  /** True when any stored row predates `expected` — re-running the engine would relabel it. */
+  stale: boolean;
 }
 
 /** GET /api/prefs/:key — `value` is null both when unset and when no writable store is configured. */

@@ -3,7 +3,7 @@
  * schema, a non-loopback bind, and a server/UI version mismatch all have to be *visible*, because
  * each one silently invalidates what the rest of the app is showing you.
  */
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AboutResponse } from "../src/api";
@@ -19,7 +19,15 @@ vi.mock("../src/buildInfo", () => ({ BUILD_VERSION: "v9.9.9-test" }));
 import AboutView from "../src/AboutView";
 
 const base: AboutResponse = {
-  versions: { app: "v9.9.9-test", app_source: "git", schema: 14, schema_expected: 14, schema_stale: false },
+  versions: {
+    app: "v9.9.9-test",
+    app_source: "git",
+    schema: 14,
+    schema_expected: 14,
+    schema_stale: false,
+    detector: { expected: 8, in_data: [8], stale: false },
+    classifier: { expected: 3, in_data: [3], stale: false },
+  },
   paths: {
     config_file: null,
     data_dir: { path: "/home/u/.local/share/agent-lens", origin: "default" },
@@ -28,6 +36,7 @@ const base: AboutResponse = {
     triage_db: { path: "/home/u/.local/share/agent-lens/triage.db", origin: "fixed" },
   },
   server: { host: "127.0.0.1", port: 4477, loopback_only: true },
+  retention: { versions_keep_days: 90, origin: "default" },
   sources: [{ label: "personal", agent: "claude-code", config_dir: "/home/u/.claude" }],
   storage: { db_bytes: 790_000_000, archive_bytes: 903_337_568, archive_files: 7522, last_ingested: "2026-07-30T12:00:00Z" },
 };
@@ -93,6 +102,35 @@ describe("AboutView", () => {
   it("says so when no config file is in use, rather than showing a blank", async () => {
     await renderAbout();
     expect(screen.getByText(/using built-in defaults/i)).toBeTruthy();
+  });
+
+  it("shows the engine versions that produced the stored data", async () => {
+    await renderAbout();
+    expect(screen.getByText(/All stored security findings came from v8/)).toBeTruthy();
+    expect(screen.getByText(/All stored session categories came from v3/)).toBeTruthy();
+  });
+
+  it("names the re-run command when stored data predates this build", async () => {
+    await renderAbout({
+      versions: { ...base.versions, classifier: { expected: 3, in_data: [2], stale: true } },
+    });
+    expect(screen.getByText(/data is older/)).toBeTruthy();
+    expect(screen.getByText(/agent-lens metrics/)).toBeTruthy();
+  });
+
+  it("says so when an engine has produced nothing yet", async () => {
+    await renderAbout({
+      versions: { ...base.versions, detector: { expected: 8, in_data: [], stale: false } },
+    });
+    expect(screen.getByText(/No security findings stored yet/)).toBeTruthy();
+  });
+
+  it("shows the retention window and where it came from", async () => {
+    await renderAbout({ retention: { versions_keep_days: 30, origin: "env" } });
+    // Scoped to the row: "env" also tags the db path in the fixture, so a bare query is ambiguous.
+    const row = screen.getByText("Keep .versions").closest("tr")!;
+    expect(within(row).getByText(/30 days/)).toBeTruthy();
+    expect(within(row).getByText("env")).toBeTruthy();
   });
 
   it("explains an unknown version instead of leaving it bare", async () => {
