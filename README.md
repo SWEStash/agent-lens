@@ -310,6 +310,8 @@ scripts/          dev + maintenance helpers: sources.mjs (core shim) · prune.sh
                   validate.mjs · oracle.mjs · build-corpus.sh · build-scenarios.mjs · sandbox.sh ·
                   smoke-tarball.mjs · gen-logo.mjs · export-snapshot.mjs ·
                   check-snapshot-links.mjs · screenshots.mjs
+scripts/lib/      shared code for the above (not runnable): sandbox.mjs — the corpus-server launch
+                  recipe used by export-snapshot.mjs and screenshots.mjs
 docs/             ARCHITECTURE.md · USAGE.md · INGEST-RUNBOOK.md · VALIDATION.md · RELEASING.md ·
                   DETECTOR-CHANGELOG.md · decisions/ (ADRs)
 test/fixtures/    committed redacted + synthetic validation corpus (no real data)
