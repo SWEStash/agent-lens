@@ -28,6 +28,20 @@ export const DEFAULT_PORT = 4477;
 export const DEFAULT_HOST = "127.0.0.1"; // loopback only
 export const DEFAULT_DB_NAME = "agent-lens.db";
 
+/** `.versions/` retention window. NOTE: `scripts/prune.sh` carries its own copy (bash can't import
+ *  this) — change both together. The TS side reads it here so the CLI and the server cannot drift. */
+export const DEFAULT_VERSIONS_KEEP_DAYS = 90;
+
+/** The retention window in force. Narrower than ConfigOrigin on purpose: retention has no flag or
+ *  config-file layer, so "env" and "default" are the only outcomes this can ever produce. */
+export function resolveRetention(): { keepDays: number; origin: "env" | "default" } {
+  const raw = process.env.AGENT_LENS_VERSIONS_KEEP_DAYS;
+  const parsed = raw ? Number(raw) : NaN;
+  return Number.isFinite(parsed) && parsed >= 0
+    ? { keepDays: parsed, origin: "env" }
+    : { keepDays: DEFAULT_VERSIONS_KEEP_DAYS, origin: "default" };
+}
+
 /**
  * Read + parse the resolved config file once, or null when none exists. Shared by `sources.ts`
  * (sources/exclude) and this module (server settings) so the JSON is read a single time per call.

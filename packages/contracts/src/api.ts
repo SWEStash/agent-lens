@@ -34,6 +34,85 @@ export interface HealthResponse {
   schema_version: number | null;
   /** True when the on-disk DB was written by an older schema (needs `agent-lens ingest --full`). */
   schema_stale: boolean;
+  /**
+   * The running build (ADR-027). Deliberately on `health` rather than `about`: it is the one part of
+   * the diagnostics safe to publish, so the static Pages snapshot carries it and the version badge
+   * works there too. Not always semver — a clone reports `v0.9.6-3-gabc1234`; read `version_source`
+   * rather than parsing the string's shape.
+   */
+  version: string;
+  version_source: VersionSource;
+}
+
+/** Which link of the version chain answered — see ADR-027 and `core/version.ts`. */
+export type VersionSource = "npm" | "git" | "unknown";
+
+/**
+ * GET /api/about — the diagnostics surface (ADR-027). **Excluded from the static snapshot on
+ * purpose**: it carries absolute filesystem paths, and `export-snapshot.mjs` publishes to a public
+ * GitHub Pages demo. The SPA hides the whole page when `SNAPSHOT` is set.
+ *
+ * Read-only by design. Configuration resolves flag > env > config file > default, so a UI could only
+ * ever write the third layer and would silently do nothing for anyone using env — hence values carry
+ * their `origin` instead of being editable, mirroring `agent-lens config`.
+ */
+export interface AboutResponse {
+  versions: {
+    app: string;
+    app_source: VersionSource;
+    schema: number | null;
+    schema_expected: number;
+    schema_stale: boolean;
+    /** Deterministic engines whose output is stamped per row — see EngineVersion. */
+    detector: EngineVersion;
+    classifier: EngineVersion;
+  };
+  /** Absolute paths, each with where the value came from. `config_file` is null when none is used. */
+  paths: {
+    config_file: string | null;
+    data_dir: PathInfo;
+    archive: PathInfo;
+    db: PathInfo;
+    triage_db: PathInfo;
+  };
+  server: { host: string; port: number; loopback_only: boolean };
+  /** `.versions/` snapshot retention, mirroring the Retention block of `agent-lens config`. */
+  retention: { versions_keep_days: number; origin: "env" | "default" };
+  sources: Array<{ label: string; agent: string; config_dir: string }>;
+  /**
+   * `archive_bytes` is **ingested** bytes — `SUM(ingest_state.size)`, not `du` of the archive dir, so
+   * anything present but not ingested (notably `.versions/` retention snapshots) is excluded. It is
+   * "as of `last_ingested`" by construction, since ingest_state *is* the ingest bookkeeping.
+   */
+  storage: {
+    db_bytes: number | null;
+    archive_bytes: number;
+    archive_files: number;
+    last_ingested: string | null;
+  };
+}
+
+export interface PathInfo {
+  path: string;
+  /** "fixed" = not independently relocatable (ADR-021); otherwise where the value was resolved from. */
+  origin: "env" | "default" | "file" | "flag" | "fixed";
+}
+
+/**
+ * A deterministic engine (detector, classifier) whose version is stamped onto every row it writes,
+ * so stored output can be superseded when the rules change.
+ *
+ * Reporting `expected` alone would be misleading: it says what a *re-run* would produce, not what
+ * produced the rows you are looking at. `in_data` is what is actually stamped in the store, so the
+ * page can say "your findings came from v7, this build is v8" — which is the whole diagnostic.
+ */
+export interface EngineVersion {
+  /** What this build stamps on rows it writes now. */
+  expected: number;
+  /** Distinct versions present in stored rows, ascending. Empty when nothing has been written yet. */
+  in_data: number[];
+  /** True when any stored row predates `expected` — re-running the engine would relabel it. */
+  stale: boolean;
 }
 
 /** GET /api/prefs/:key — `value` is null both when unset and when no writable store is configured. */

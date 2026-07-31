@@ -120,6 +120,13 @@ function printIngestReport(db: DB, dbPath: string, r: IngestReport): void {
 }
 
 /** Stage 2: (re)build the derived SQLite store from the local archive. Idempotent. */
+// This module is the package entry (`exports: ./dist/run.js`), so re-export the stamped engine
+// versions here: the server's /api/about reports what a re-run would produce against what is
+// actually stamped in the stored rows (ADR-027). Importing them from ./detect.js or ./classify.js
+// across the package boundary would reach past the public surface.
+export { CLASSIFIER_VERSION } from "./classify.js";
+export { DETECTOR_VERSION } from "./detect.js";
+
 export function runIngest(argv: string[] = process.argv.slice(2)): void {
   const args = parseIngestArgs(argv);
   // --archive stays as an explicit per-run override (ingesting a copied archive); there is no

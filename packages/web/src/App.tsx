@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { Link, NavLink, Outlet, useLocation } from "react-router-dom";
 import logoUrl from "./assets/logo.png";
-import { api, apiPost, SNAPSHOT } from "./api";
+import { api, apiPost, SNAPSHOT, type HealthResponse } from "./api";
 import { useTheme } from "./theme";
 
 /** Compact "3m ago" style label for an ISO8601 instant. */
@@ -23,11 +23,15 @@ export default function App() {
   const [lastIngested, setLastIngested] = useState<string | null>(null);
   // Schema-version drift: the on-disk DB was written by an older build and needs a full re-ingest.
   const [schemaStale, setSchemaStale] = useState(false);
+  // The running build (ADR-027). It rides on /health rather than /about precisely so the badge also
+  // works in the static Pages demo, where /about is not exported.
+  const [version, setVersion] = useState<string | null>(null);
   const refreshStatus = useCallback(() => {
-    api<{ last_ingested?: string | null; schema_stale?: boolean }>("/health")
+    api<Partial<HealthResponse>>("/health")
       .then((h) => {
         setLastIngested(h.last_ingested ?? null);
         setSchemaStale(!!h.schema_stale);
+        setVersion(h.version ?? null);
       })
       .catch(() => {});
   }, []);
@@ -67,6 +71,18 @@ export default function App() {
         <Link to="/" className="brand">
           <img src={logoUrl} alt="" className="brand-logo" /> Agent Lens
         </Link>
+        {/* Which build is this? In the static demo /about isn't exported (it carries filesystem
+            paths), so the badge degrades to plain text rather than linking to a 404. */}
+        {version &&
+          (SNAPSHOT ? (
+            <span className="version-badge" title={`Agent Lens ${version}`}>
+              {version}
+            </span>
+          ) : (
+            <Link to="/about" className="version-badge" title={`Agent Lens ${version} — open diagnostics`}>
+              {version}
+            </Link>
+          ))}
         <nav className="nav">
           <NavLink to="/" end className={({ isActive }) => (isActive ? "nav-link active" : "nav-link")}>
             Sessions

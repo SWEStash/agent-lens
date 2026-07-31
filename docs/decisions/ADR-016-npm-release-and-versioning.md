@@ -39,7 +39,18 @@ Two facts shaped the decision:
 - **semantic-release** (`.releaserc.json`, run from the repo root with `pkgRoot: packages/cli`) then
   drives subsequent releases from conventional commits: `fix:` → patch, `feat:` → minor, and a future
   intentional `feat!` / `BREAKING CHANGE` → major (correct once there is a published API to break).
-  Plugin chain: commit-analyzer → release-notes-generator → changelog → npm → git → github.
+  Plugin chain: commit-analyzer → release-notes-generator → npm → github.
+
+  > **Amended by PR #6 (2026-07).** The chain originally ran
+  > `… → changelog → npm → **git** → github`, committing a version bump + `CHANGELOG.md` back to
+  > `main`. `@semantic-release/git` does `git push HEAD:main`, which the `protect-main` ruleset
+  > rejects, so the release job broke once the branch was protected. Both plugins were dropped.
+  > Consequences, still in force: `packages/cli/package.json` holds the `0.0.0-development`
+  > placeholder (the published tarball is stamped by `@semantic-release/npm` at pack time),
+  > `CHANGELOG.md` is a pointer to the GitHub Releases page — now the canonical changelog — and
+  > the git tag remains the only in-repo record of a version, pushed by semantic-release core
+  > rather than the removed plugin. See [ADR-027](ADR-027-runtime-diagnostics-surface.md) for how
+  > the app resolves its own version given this.
 - **CI gate** (`.github/workflows/release.yml`, on push to `main`): `pnpm build` + `pnpm test` + a
   **real global-install** tarball smoke (`node scripts/smoke-tarball.mjs --global`, which does
   `npm install -g` so better-sqlite3's prebuild fetch is exercised) must pass before semantic-release

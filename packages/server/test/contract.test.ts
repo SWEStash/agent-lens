@@ -72,12 +72,49 @@ const SECURITY_SUMMARY_KEYS = [
   "total", "sessions_flagged", "dismissed", "muted", "by_severity", "by_category", "by_rule", "categories",
 ];
 
-const HEALTH_KEYS = ["ok", "last_ingested", "schema_version", "schema_stale"];
+const HEALTH_KEYS = ["ok", "last_ingested", "schema_version", "schema_stale", "version", "version_source"];
+
+// /api/about (ADR-027). Nested groups are asserted separately below — the exact-key rule applies at
+// every level, since that is where an undeclared path or metric would slip in.
+const ABOUT_KEYS = ["versions", "paths", "server", "retention", "sources", "storage"];
+const ABOUT_VERSIONS_KEYS = ["app", "app_source", "schema", "schema_expected", "schema_stale", "detector", "classifier"];
+const ENGINE_VERSION_KEYS = ["expected", "in_data", "stale"];
+const ABOUT_RETENTION_KEYS = ["versions_keep_days", "origin"];
+const ABOUT_PATHS_KEYS = ["config_file", "data_dir", "archive", "db", "triage_db"];
+const ABOUT_SERVER_KEYS = ["host", "port", "loopback_only"];
+const ABOUT_STORAGE_KEYS = ["db_bytes", "archive_bytes", "archive_files", "last_ingested"];
+const PATH_INFO_KEYS = ["path", "origin"];
 
 describe("response contracts — populated DB", () => {
   it("GET /api/health matches HealthResponse", async () => {
     const app = await appFor(seedBasic());
     expectKeys((await app.inject({ method: "GET", url: "/api/health" })).json(), HEALTH_KEYS, "health");
+    await app.close();
+  });
+
+  it("GET /api/about matches AboutResponse, at every level", async () => {
+    const app = await appFor(seedBasic(), {
+      about: {
+        db: { path: "/tmp/x/agent-lens.db", origin: "default" },
+        host: "127.0.0.1",
+        port: 4477,
+        loopbackOnly: true,
+        repoRoot: null,
+      },
+    });
+    const body = (await app.inject({ method: "GET", url: "/api/about" })).json();
+    expectKeys(body, ABOUT_KEYS, "about");
+    expectKeys(body.versions, ABOUT_VERSIONS_KEYS, "about.versions");
+    expectKeys(body.paths, ABOUT_PATHS_KEYS, "about.paths");
+    expectKeys(body.server, ABOUT_SERVER_KEYS, "about.server");
+    expectKeys(body.storage, ABOUT_STORAGE_KEYS, "about.storage");
+    expectKeys(body.retention, ABOUT_RETENTION_KEYS, "about.retention");
+    expectKeys(body.versions.detector, ENGINE_VERSION_KEYS, "about.versions.detector");
+    expectKeys(body.versions.classifier, ENGINE_VERSION_KEYS, "about.versions.classifier");
+    // Every path except config_file (a bare string|null) is a PathInfo carrying its provenance.
+    for (const k of ["data_dir", "archive", "db", "triage_db"]) {
+      expectKeys(body.paths[k], PATH_INFO_KEYS, `about.paths.${k}`);
+    }
     await app.close();
   });
 

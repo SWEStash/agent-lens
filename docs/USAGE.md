@@ -433,7 +433,7 @@ than independently relocatable (ADR-021). Move `AGENT_LENS_DATA` to move the arc
 
 | Method · Path | Returns |
 |---|---|
-| `GET /api/health` | `{ ok: true }` |
+| `GET /api/health` | liveness, last-ingest time, schema version + staleness, and the running build (`version`, `version_source`) |
 | `GET /api/sources` | configured sources + session counts |
 | `GET /api/projects` | projects (cwd) + session counts |
 | `GET /api/models` | distinct model ids |
@@ -452,6 +452,7 @@ than independently relocatable (ADR-021). Move `AGENT_LENS_DATA` to move the arc
 | `GET /api/files` | filtered, paginated (project, file) change aggregate (ADR-022) |
 | `GET /api/file` | one file's provenance timeline, grouped by session (`path`, optional `project`) |
 | `GET /api/prefs/:key` | a stored UI preference (`{ value }`; `null` when unset or no writable store) |
+| `GET /api/about` | diagnostics: versions (app, schema, detector, classifier), resolved paths + their origin, binding, retention, sources, storage ([ADR-027](decisions/ADR-027-runtime-diagnostics-surface.md)). Read-only, and **not** in the static snapshot — it carries filesystem paths |
 
 `/api/sessions` query params: `source`, `project`, `model`, `kind` (`main`\|`subagent`),
 `q` (full-text), `from`, `to` (date-inclusive), `severity` (comma-separated; sessions with a finding of

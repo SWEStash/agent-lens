@@ -3,6 +3,7 @@ import { createRoot } from "react-dom/client";
 import { BrowserRouter, Routes, Route } from "react-router-dom";
 import App from "./App";
 import SessionsView from "./SessionsView";
+import { SNAPSHOT } from "./api";
 import { Loading } from "./AsyncBoundary";
 import { ThemeProvider } from "./theme";
 import "./styles.css";
@@ -17,6 +18,7 @@ const SkillView = lazy(() => import("./SkillView"));
 const FilesView = lazy(() => import("./FilesView"));
 const FileView = lazy(() => import("./FileView"));
 const SecurityView = lazy(() => import("./SecurityView"));
+const AboutView = lazy(() => import("./AboutView"));
 
 
 // Under GitHub Pages the app is served from a repo subpath (Vite's BASE_URL, e.g. "/agent-lens/");
@@ -94,6 +96,20 @@ createRoot(document.getElementById("root")!).render(
               </Suspense>
             }
           />
+          {/* Diagnostics (ADR-027). Omitted entirely from a snapshot build: /api/about is not
+              exported — it carries absolute filesystem paths and the snapshot is published
+              publicly — so the route would render a permanent error. Note check-snapshot-links.mjs
+              could NOT catch that, since it follows links in exported payloads, not SPA source. */}
+          {!SNAPSHOT && (
+            <Route
+              path="about"
+              element={
+                <Suspense fallback={<Loading />}>
+                  <AboutView />
+                </Suspense>
+              }
+            />
+          )}
         </Route>
         </Routes>
       </BrowserRouter>

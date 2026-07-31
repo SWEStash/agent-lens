@@ -115,6 +115,20 @@ select:focus-visible,
 .brand { font-weight: 700; font-size: 16px; color: var(--text); display: inline-flex; align-items: center; gap: 8px; }
 .brand-logo { height: 22px; width: auto; display: block; }
 .tagline { color: var(--muted); font-size: 12px; }
+/* Which build is running (ADR-027). Deliberately quiet — it sits next to the wordmark as identity,
+   not as navigation, so it must not compete with the nav links. */
+.version-badge {
+  color: var(--muted);
+  font-size: 11px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  padding: 2px 6px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  margin-left: -4px; /* hug the wordmark: the topbar's 12px gap reads as detached here */
+  white-space: nowrap;
+}
+a.version-badge:hover { color: var(--text); border-color: var(--muted); }
+
 /* Actions (refresh + theme toggle) cluster at the far right of the top bar. */
 .topbar-actions { margin-left: auto; display: inline-flex; align-items: center; gap: 8px; }
 .theme-toggle { font-size: 15px; line-height: 1; padding: 5px 9px; }
@@ -1129,3 +1143,41 @@ tr.is-dismissed { opacity: 0.6; }
 .mute-note { margin-left: 6px; }
 .linkish.unmute { margin-left: 8px; }
 .sec-reference-intro { margin-top: 0; }
+
+/* ---- /about — diagnostics (ADR-027) ------------------------------------- */
+.about { max-width: 900px; }
+.about h1 { margin-bottom: 4px; }
+.about > p.muted { margin-top: 0; }
+.about section { margin-top: 28px; }
+.about h2 { font-size: 14px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); margin-bottom: 8px; }
+table.kv { width: 100%; border-collapse: collapse; }
+table.kv th[scope="row"] {
+  text-align: left;
+  font-weight: 500;
+  color: var(--muted);
+  padding: 8px 16px 8px 0;
+  vertical-align: top;
+  white-space: nowrap;
+  width: 1%;
+}
+table.kv td { padding: 8px 0; vertical-align: top; }
+table.kv tr + tr th, table.kv tr + tr td { border-top: 1px solid var(--border); }
+table.kv .muted { font-size: 12px; margin-top: 4px; }
+/* Paths can be long; wrap rather than forcing the page to scroll sideways. */
+.about code.path { word-break: break-all; }
+.origin-tag {
+  font-size: 11px;
+  color: var(--muted);
+  background: var(--tag);
+  border-radius: 8px;
+  padding: 1px 6px;
+  white-space: nowrap;
+}
+.warn-tag {
+  font-size: 11px;
+  color: #e0b85a;
+  background: #3a2f10;
+  border-radius: 8px;
+  padding: 1px 6px;
+  white-space: nowrap;
+}
