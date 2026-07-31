@@ -74,6 +74,53 @@ describe("triage: dismiss / reopen", () => {
   });
 });
 
+// dismiss-matching resolves "which findings match" server-side, so it must apply exactly the same
+// filter + open-status semantics as GET /api/security/findings. These pin that equivalence across
+// every filter dimension the UI can send, independent of how the ids are collected.
+describe("triage: dismiss-matching filter semantics", () => {
+  const dismissMatching = async (filter: Record<string, string>) =>
+    JSON.parse((await post("/api/security/dismiss-matching", { filter })).body).dismissed;
+
+  it("narrows by severity and by session", async () => {
+    expect(await dismissMatching({ severity: "high" })).toBe(1);
+    expect(ids(await get("/api/security/findings"))).toEqual(["f-crit", "f-med"]);
+
+    expect(await dismissMatching({ session: "sess1" })).toBe(2); // the two still open
+    expect((await get("/api/security/findings")).findings).toHaveLength(0);
+  });
+
+  it("an empty filter dismisses every open finding", async () => {
+    expect(await dismissMatching({})).toBe(3);
+    expect((await get("/api/security/findings")).findings).toHaveLength(0);
+    expect(ids(await get("/api/security/findings?status=dismissed"))).toEqual(["f-crit", "f-high", "f-med"]);
+  });
+
+  it("skips muted findings — muting is not dismissing", async () => {
+    await post("/api/security/mute", { rule_id: "privilege.sudo", scope: "global" });
+    // f-med matches the filter but is muted, so it is not open and must not be dismissed.
+    expect(await dismissMatching({ category: "privilege-bypass" })).toBe(1); // f-high only
+    expect(ids(await get("/api/security/findings?status=dismissed"))).toEqual(["f-high"]);
+    expect(ids(await get("/api/security/findings?status=muted"))).toEqual(["f-med"]);
+  });
+
+  it("honours the date range, inclusive on the `to` bound", async () => {
+    expect(await dismissMatching({ to: "2026-07-09" })).toBe(0); // findings are dated 2026-07-10
+    expect(await dismissMatching({ from: "2026-07-10", to: "2026-07-10" })).toBe(3);
+  });
+
+  it("is idempotent — a second call matches nothing, since the first left none open", async () => {
+    expect(await dismissMatching({ category: "privilege-bypass" })).toBe(2);
+    expect(await dismissMatching({ category: "privilege-bypass" })).toBe(0);
+    expect(ids(await get("/api/security/findings?status=dismissed"))).toEqual(["f-high", "f-med"]);
+  });
+
+  it("ignores a status in the filter — it always acts on open findings", async () => {
+    await post("/api/security/dismiss", { ids: ["f-crit"] });
+    // `status: all` in the request filter must not resurrect the already-dismissed f-crit.
+    expect(await dismissMatching({ status: "all", severity: "critical" })).toBe(0);
+  });
+});
+
 describe("triage: rule mute", () => {
   it("muting a rule hides its findings from open + summary; mutes list + unmute restore", async () => {
     await post("/api/security/mute", { rule_id: "privilege.sudo", scope: "global", note: "always noise" });
