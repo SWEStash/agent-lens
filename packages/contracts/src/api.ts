@@ -78,6 +78,23 @@ export interface AboutResponse {
   server: { host: string; port: number; loopback_only: boolean };
   /** `.versions/` snapshot retention, mirroring the Retention block of `agent-lens config`. */
   retention: { versions_keep_days: number; origin: "env" | "default" };
+  /**
+   * Model pricing (ADR-028). Cost is derived at read time from a price table, so a model with no
+   * rate reads as $0 rather than as an error — `unpriced` is how that becomes visible instead of
+   * silently understating every total that includes it.
+   */
+  pricing: {
+    /** "file" once a config override is in force, else "default". No flag/env layer exists. */
+    origin: "file" | "default";
+    /** Model-id prefixes the built-in table knows, after overrides. */
+    models: number;
+    /** Override keys applied from the config file. */
+    applied: string[];
+    /** Override keys rejected as malformed — reported, never applied. */
+    invalid: string[];
+    /** Models with real token usage in this store but no rate. Excludes `<synthetic>`. */
+    unpriced: string[];
+  };
   sources: Array<{ label: string; agent: string; config_dir: string }>;
   /**
    * `archive_bytes` is **ingested** bytes — `SUM(ingest_state.size)`, not `du` of the archive dir, so
@@ -169,6 +186,8 @@ export interface SessionSummary {
   tokens: number;
   token_split: TokenSplit;
   cost: number;
+  /** Models in this session with no list price, so `cost` understates it. Empty when fully priced. */
+  unpriced_models: string[];
   /** Tool-call roll-ups for the sessions-list Errors + Security columns. */
   tool_call_count: number;
   tool_error_count: number;
@@ -309,6 +328,8 @@ export interface SessionDetailData extends SessionRow {
   tokens: number;
   token_split: TokenSplit;
   cost: number;
+  /** Models in this session with no list price, so `cost` understates it. Empty when fully priced. */
+  unpriced_models: string[];
   title: string | null;
   tool_call_count: number;
   tool_error_count: number;

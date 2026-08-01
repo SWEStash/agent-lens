@@ -2,7 +2,7 @@
  * (classification, security findings, files changed) that sit above the transcript itself. */
 import { Link } from "react-router-dom";
 import type { SessionDetail } from "../api";
-import { fmtCost, fmtDate, fmtDuration, fmtTokens, tokenSplitTitle } from "../format";
+import { costTitle, fmtCost, fmtDate, fmtDuration, fmtTokens, tokenSplitTitle } from "../format";
 import { ExportMenu } from "./ExportMenu";
 import { ClassificationBadge } from "./Classification";
 import { SecurityBanner } from "./Findings";
@@ -30,7 +30,12 @@ export function SessionHeader({ d }: { d: SessionDetail }) {
         <span>{d.turns.length} turns</span>
         <span>{s.event_count} events</span>
         <span title={tokenSplitTitle(s.token_split)}>{fmtTokens(s.tokens)} tok</span>
-        <span title="Estimated at API list prices (cache-aware)">{fmtCost(s.cost)}</span>
+        {/* Optional-chained: a newer SPA can be served by an older server that predates this field
+            (the Versions block above warns about exactly that mismatch) — degrade, don't crash. */}
+        <span title={costTitle(s.unpriced_models)}>
+          {fmtCost(s.cost)}
+          {s.unpriced_models?.length ? <span className="warn-tag"> ⚠</span> : null}
+        </span>
         {s.tool_call_count > 0 && (
           <span
             className={s.tool_failure_count > 0 ? "tool-err-stat" : "muted"}

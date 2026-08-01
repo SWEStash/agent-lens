@@ -9,7 +9,7 @@
 import { describe, it, expect, beforeAll } from "vitest";
 import { packRaw } from "@agent-lens/core";
 import { extractParts } from "../dist/db.js";
-import { addEvent, addSession, addSource, addTool, addTurn, appFor, freshDb, seedBasic } from "./helpers/seed";
+import { addEvent, addSession, addSource, addTokens, addTool, addTurn, appFor, freshDb, seedBasic } from "./helpers/seed";
 
 let app: Awaited<ReturnType<typeof appFor>>;
 beforeAll(async () => {
@@ -359,6 +359,53 @@ describe("health surfaces schema staleness", () => {
     const body = (await local.inject({ method: "GET", url: "/api/health" })).json();
     expect(body.schema_version).toBe(1);
     expect(body.schema_stale).toBe(true);
+    await local.close();
+  });
+});
+
+/**
+ * Per-session cost carries the models it could not price (ADR-028). Without this the sessions list
+ * and the transcript header show "$0" for a fully-unpriced session, which reads as "this was free"
+ * rather than "we don't know" — the exact confusion that hid a week of Opus 5 usage.
+ */
+describe("unpriced models travel with the cost they understate", () => {
+  const withModels = (...models: string[]) => {
+    const db = seedBasic();
+    models.forEach((model, i) => {
+      addEvent(db, "sess1", `ev-unpriced-${i}`, { seq: 20 + i, role: "assistant", model });
+      addTokens(db, `ev-unpriced-${i}`, "sess1", model, { input: 1000 });
+    });
+    return db;
+  };
+
+  it("is empty when every model in the session is priced", async () => {
+    const body = (await app.inject({ method: "GET", url: "/api/sessions" })).json();
+    expect(body.sessions[0].unpriced_models).toEqual([]);
+  });
+
+  it("names the unpriced model on both the list row and the detail", async () => {
+    const local = await appFor(withModels("claude-zeta-9"));
+    const list = (await local.inject({ method: "GET", url: "/api/sessions" })).json();
+    expect(list.sessions[0].unpriced_models).toEqual(["claude-zeta-9"]);
+
+    const detail = (await local.inject({ method: "GET", url: "/api/sessions/sess1" })).json();
+    expect(detail.session.unpriced_models).toEqual(["claude-zeta-9"]);
+    // The priced half still contributes: seedBasic's opus-4-8 usage is costed as usual.
+    expect(detail.session.cost).toBeGreaterThan(0);
+    await local.close();
+  });
+
+  it("dedupes and sorts, and never reports <synthetic>", async () => {
+    const local = await appFor(withModels("claude-zeta-9", "<synthetic>", "claude-alpha-1", "claude-zeta-9"));
+    const body = (await local.inject({ method: "GET", url: "/api/sessions/sess1" })).json();
+    expect(body.session.unpriced_models).toEqual(["claude-alpha-1", "claude-zeta-9"]);
+    await local.close();
+  });
+
+  it("survives the JS whole-list sort path (sort=cost), which builds rows separately", async () => {
+    const local = await appFor(withModels("claude-zeta-9"));
+    const body = (await local.inject({ method: "GET", url: "/api/sessions?sort=cost&dir=desc" })).json();
+    expect(body.sessions[0].unpriced_models).toEqual(["claude-zeta-9"]);
     await local.close();
   });
 });

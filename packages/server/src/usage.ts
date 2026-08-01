@@ -4,7 +4,7 @@
  * were copy-pasted at 6+ sites (SLOP-036). Keep the column aliases (`i/o/cw/cr`) and the pricing call
  * in one place so a pricing or column change is a single edit.
  */
-import { costForUsage } from "@agent-lens/core";
+import { costForUsage, unpricedModels } from "@agent-lens/core";
 import { type DB } from "./db.js";
 import { queryAll } from "./sql-util.js";
 
@@ -49,6 +49,14 @@ export function splitOf(rows: UsageRow[]): TokenSplit {
 /** Total tokens (all categories, cache included) for a set of usage rows. */
 export function tokensOf(split: TokenSplit): number {
   return split.input + split.output + split.cache_creation + split.cache_read;
+}
+
+/**
+ * The models in these rows that have real token usage but no rate, so {@link costOf} understates the
+ * total. Empty for a fully-priced scope. `<synthetic>` is excluded — it never had an API cost.
+ */
+export function unpricedOf(rows: UsageRow[]): string[] {
+  return unpricedModels(rows.filter((u) => u.i || u.o || u.cw || u.cr).map((u) => u.model));
 }
 
 /** Cache-aware USD cost (per-model rates) for a set of usage rows, rounded to 4dp. */

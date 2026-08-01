@@ -9,11 +9,14 @@ import { readFileSync, statSync, mkdirSync, existsSync } from "node:fs";
 import { dirname, join } from "node:path";
 import {
   costForUsage,
+  installPricing,
   loadExcludes,
   loadSources,
+  rateForModel,
   resolveArchiveDir,
   resolveDbPath,
   SCHEMA_VERSION,
+  SYNTHETIC_MODEL,
   type SourceAdapter,
 } from "@agent-lens/core";
 import { openDb, openRaw, readSchemaVersion, resetSchema, type DB } from "./db.js";
@@ -92,10 +95,22 @@ function printIngestReport(db: DB, dbPath: string, r: IngestReport): void {
     .all() as any[];
   let cost = 0;
   let totalTokens = 0;
+  // A model with no rate contributes $0 silently (ADR-028) — that is how a whole week of sessions
+  // once read as free. Tally it here, where a human is watching the run, instead of letting the
+  // estimate quietly understate itself.
+  const unpriced = new Map<string, number>();
   for (const u of usageRows) {
     cost += costForUsage(u.model, u);
     totalTokens += u.input_tokens + u.output_tokens + u.cache_creation_input_tokens + u.cache_read_input_tokens;
+    if (u.model && u.model !== SYNTHETIC_MODEL && !rateForModel(u.model)) {
+      unpriced.set(u.model, (unpriced.get(u.model) ?? 0) + 1);
+    }
   }
+  const unpricedLine = unpriced.size
+    ? `\n  unpriced=${unpriced.size} model(s): ` +
+      [...unpriced].map(([m, n]) => `${m} (${n} records)`).join(", ") +
+      ` — cost above excludes them; add rates under "pricing" in agent-lens.config.json`
+    : "";
 
   const wfRuns = count("SELECT COUNT(*) n FROM workflow_results");
   const metaRows = count("SELECT COUNT(*) n FROM session_meta");
@@ -115,7 +130,8 @@ function printIngestReport(db: DB, dbPath: string, r: IngestReport): void {
       `  tool_results=${trRows} (upserted=${r.trStats.upserted} skipped=${r.trStats.skipped} malformed=${r.trStats.malformed})\n` +
       `  findings=${r.detected.count} (${sevLine})\n` +
       `  file_changes=${r.fileChanges.count}\n` +
-      `  tokens=${totalTokens.toLocaleString()} est_cost=$${cost.toFixed(2)} db=${dbPath}`,
+      `  tokens=${totalTokens.toLocaleString()} est_cost=$${cost.toFixed(2)} db=${dbPath}` +
+      unpricedLine,
   );
 }
 
@@ -133,6 +149,9 @@ export function runIngest(argv: string[] = process.argv.slice(2)): void {
   // env/config equivalent — the location is fixed so collect and ingest can never disagree (ADR-021).
   const archiveRoot = args.archive || resolveArchiveDir();
   const { path: dbPath } = resolveDbPath(args.db);
+  // Cost in the end-of-run report is derived through the effective table (ADR-028), so install any
+  // config overrides before the report — and warn here about malformed ones, where a human is looking.
+  installPricing();
 
   if (!existsSync(archiveRoot)) {
     console.error(`agent-lens-ingest: archive not found: ${archiveRoot} (run 'agent-lens collect' first)`);

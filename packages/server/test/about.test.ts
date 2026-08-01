@@ -13,8 +13,8 @@
  */
 import { describe, it, expect } from "vitest";
 import Database from "better-sqlite3";
-import { SCHEMA_SQL } from "@agent-lens/core";
-import { appFor, freshDb, seedBasic } from "./helpers/seed";
+import { PRICE_TABLE, resolvePricing, SCHEMA_SQL, usePricing } from "@agent-lens/core";
+import { addEvent, addTokens, appFor, freshDb, seedBasic } from "./helpers/seed";
 
 const CTX = {
   db: { path: "/tmp/nowhere/custom.db", origin: "flag" as const },
@@ -22,6 +22,9 @@ const CTX = {
   port: 4477,
   loopbackOnly: true,
   repoRoot: null,
+  // The price table the process installed at startup (ADR-028), same as the other facts here: passed
+  // in rather than re-resolved, so a test can pin overrides without touching a config file.
+  pricing: resolvePricing(null),
 };
 
 const getAbout = async (db: Database.Database, ctx = CTX) => {
@@ -188,6 +191,79 @@ describe("about: retention", () => {
       if (saved === undefined) delete process.env[KEY];
       else process.env[KEY] = saved;
     }
+  });
+});
+
+/**
+ * Pricing (ADR-028). A model with no rate contributes $0 to every cost the UI shows, silently — this
+ * block is what makes that visible, so the assertions that matter are "the store's unknown models are
+ * named" and "a rejected override does not masquerade as an applied one".
+ */
+describe("about: pricing", () => {
+  /** seedBasic already carries priced claude-opus-4-8 usage; each [model, input] adds one more row. */
+  const seedUsage = (...models: Array<[string, number]>) => {
+    const db = seedBasic();
+    models.forEach(([model, input], i) => {
+      const uuid = `ev-price-${i}`;
+      addEvent(db, "sess1", uuid, { seq: 10 + i, role: "assistant", model });
+      addTokens(db, uuid, "sess1", model, { input });
+    });
+    return db;
+  };
+
+  it("reports the built-in table when no override is configured", async () => {
+    const body = (await getAbout(seedBasic())).json();
+    expect(body.pricing.origin).toBe("default");
+    expect(body.pricing.models).toBe(Object.keys(PRICE_TABLE).length);
+    expect(body.pricing.applied).toEqual([]);
+    expect(body.pricing.invalid).toEqual([]);
+  });
+
+  it("names models that have usage but no rate", async () => {
+    const body = (await getAbout(seedUsage(["claude-opus-5", 100], ["claude-zeta-9", 100]))).json();
+    expect(body.pricing.unpriced).toEqual(["claude-zeta-9"]);
+  });
+
+  it("does not report <synthetic>, which never had an API cost", async () => {
+    const body = (await getAbout(seedUsage(["<synthetic>", 500]))).json();
+    expect(body.pricing.unpriced).toEqual([]);
+  });
+
+  it("ignores a model row with no tokens — nothing is being understated", async () => {
+    const body = (await getAbout(seedUsage(["claude-zeta-9", 0]))).json();
+    expect(body.pricing.unpriced).toEqual([]);
+  });
+
+  it("reports the applied overrides the process started with, and stops flagging them", async () => {
+    const ctx = { ...CTX, pricing: resolvePricing({ pricing: { "claude-zeta-9": { input: 1, output: 2 } } }) };
+    // The route reports the startup table; the cost path reads the same one via usePricing.
+    usePricing(ctx.pricing.table);
+    try {
+      const body = (await getAbout(seedUsage(["claude-zeta-9", 100]), ctx)).json();
+      expect(body.pricing.origin).toBe("file");
+      expect(body.pricing.applied).toEqual(["claude-zeta-9"]);
+      expect(body.pricing.unpriced).toEqual([]);
+    } finally {
+      usePricing(PRICE_TABLE);
+    }
+  });
+
+  it("surfaces a malformed override as ignored, not applied", async () => {
+    const ctx = { ...CTX, pricing: resolvePricing({ pricing: { "claude-zeta-9": { output: 2 } } }) };
+    const body = (await getAbout(seedUsage(["claude-zeta-9", 100]), ctx)).json();
+    expect(body.pricing.invalid).toEqual(["claude-zeta-9"]);
+    expect(body.pricing.applied).toEqual([]);
+    expect(body.pricing.origin).toBe("default");
+    expect(body.pricing.unpriced).toEqual(["claude-zeta-9"]); // still unpriced — the override never took
+  });
+
+  it("survives a DB with no token_usage table", async () => {
+    const db = new Database(":memory:");
+    db.exec(SCHEMA_SQL);
+    db.exec("DROP TABLE token_usage");
+    const res = await getAbout(db);
+    expect(res.statusCode).toBe(200);
+    expect(res.json().pricing.unpriced).toEqual([]);
   });
 });
 

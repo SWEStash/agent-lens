@@ -16,6 +16,7 @@
  */
 import { describe, it, expect } from "vitest";
 import type Database from "better-sqlite3";
+import { resolvePricing } from "@agent-lens/core";
 import { addSession, appFor, freshDb, seedBasic } from "./helpers/seed";
 
 /** Exact-key assertion. Sorted so the failure message reads as a set diff, not an ordering complaint. */
@@ -36,7 +37,8 @@ const PROJECT_KEYS = ["id", "path", "session_count"];
 // `title` is derived (ai_title || slug); the raw columns behind it are deliberately not shipped.
 const SESSION_SUMMARY_KEYS = [
   "id", "source_id", "is_sidechain", "started_at", "duration_ms",
-  "event_count", "turn_count", "project_path", "models", "tokens", "token_split", "cost", "title",
+  "event_count", "turn_count", "project_path", "models", "tokens", "token_split", "cost",
+  "unpriced_models", "title",
   "tool_call_count", "tool_error_count", "finding_count", "worst_severity",
 ];
 
@@ -76,10 +78,11 @@ const HEALTH_KEYS = ["ok", "last_ingested", "schema_version", "schema_stale", "v
 
 // /api/about (ADR-027). Nested groups are asserted separately below — the exact-key rule applies at
 // every level, since that is where an undeclared path or metric would slip in.
-const ABOUT_KEYS = ["versions", "paths", "server", "retention", "sources", "storage"];
+const ABOUT_KEYS = ["versions", "paths", "server", "retention", "pricing", "sources", "storage"];
 const ABOUT_VERSIONS_KEYS = ["app", "app_source", "schema", "schema_expected", "schema_stale", "detector", "classifier"];
 const ENGINE_VERSION_KEYS = ["expected", "in_data", "stale"];
 const ABOUT_RETENTION_KEYS = ["versions_keep_days", "origin"];
+const ABOUT_PRICING_KEYS = ["origin", "models", "applied", "invalid", "unpriced"];
 const ABOUT_PATHS_KEYS = ["config_file", "data_dir", "archive", "db", "triage_db"];
 const ABOUT_SERVER_KEYS = ["host", "port", "loopback_only"];
 const ABOUT_STORAGE_KEYS = ["db_bytes", "archive_bytes", "archive_files", "last_ingested"];
@@ -100,6 +103,7 @@ describe("response contracts — populated DB", () => {
         port: 4477,
         loopbackOnly: true,
         repoRoot: null,
+        pricing: resolvePricing(null),
       },
     });
     const body = (await app.inject({ method: "GET", url: "/api/about" })).json();
@@ -109,6 +113,7 @@ describe("response contracts — populated DB", () => {
     expectKeys(body.server, ABOUT_SERVER_KEYS, "about.server");
     expectKeys(body.storage, ABOUT_STORAGE_KEYS, "about.storage");
     expectKeys(body.retention, ABOUT_RETENTION_KEYS, "about.retention");
+    expectKeys(body.pricing, ABOUT_PRICING_KEYS, "about.pricing");
     expectKeys(body.versions.detector, ENGINE_VERSION_KEYS, "about.versions.detector");
     expectKeys(body.versions.classifier, ENGINE_VERSION_KEYS, "about.versions.classifier");
     // Every path except config_file (a bare string|null) is a PathInfo carrying its provenance.
@@ -165,7 +170,7 @@ describe("response contracts — populated DB", () => {
 
     // SessionDetailData extends SessionRow (the endpoint does SELECT s.*), so assert the added
     // fields rather than restating the whole DDL — that part is the row contract's job.
-    for (const k of ["project_path", "tokens", "token_split", "cost", "title", "tool_call_count", "tool_error_count", "tool_rejection_count", "tool_failure_count"]) {
+    for (const k of ["project_path", "tokens", "token_split", "cost", "unpriced_models", "title", "tool_call_count", "tool_error_count", "tool_rejection_count", "tool_failure_count"]) {
       expect(body.session, `session detail is missing ${k}`).toHaveProperty(k);
     }
 
