@@ -149,7 +149,7 @@ the unread fields visible.
 
 - **Infer the response types from the server's return types** (`ReturnType<typeof getSession>`) and
   have `web` import those. No hand-maintenance at all, but it makes `web` depend on
-  `@agent-lens/server` — a Node package with `better-sqlite3` and `fastify` in it — for types alone,
+  `@agent-lens/server` — a Node package with `node:sqlite` and `fastify` in it — for types alone,
   which is exactly the barrel problem ADR-024 created `contracts` to avoid. It also inverts the
   dependency: the contract would be whatever the implementation happens to return, so an accidental
   extra field becomes part of the API rather than a diff to review.

@@ -59,9 +59,9 @@ Two facts shaped the decision:
   > the app resolves its own version given this.
 - **CI gate** (`.github/workflows/release.yml`, on push to `main`): `pnpm build` + `pnpm test` + a
   **real global-install** tarball smoke (`node scripts/smoke-tarball.mjs --global`, which does
-  `npm install -g` so better-sqlite3's prebuild fetch is exercised) must pass before semantic-release
-  publishes. The release step is guarded by `if: ${{ env.NPM_TOKEN != '' }}` so the workflow stays
-  green until the `NPM_TOKEN` repo secret is configured. `ci.yml` runs the fast (network-free)
+  `npm install -g` so the published bundle is exercised as a user gets it) must pass before
+  semantic-release publishes. The release step is guarded by `if: ${{ env.NPM_TOKEN != '' }}` so the
+  workflow stays green until the `NPM_TOKEN` repo secret is configured. `ci.yml` runs the fast (network-free)
   tarball smoke on every PR.
 
 ### Packaging
@@ -81,8 +81,12 @@ fixtures) from the packaged `web/`, since the runtime server serves the live API
   minor) and no git-history rewrite.
 - Releases require an npm **automation token** as the `NPM_TOKEN` repo secret; publishes use npm
   **provenance** (`id-token: write` + `NPM_CONFIG_PROVENANCE`).
-- **better-sqlite3 fallback:** if a platform/ABI has no prebuilt binary, `npm install` compiles it
-  from source via node-gyp (needs a C++ toolchain + Python). Documented in the CLI README.
+- ~~**better-sqlite3 fallback:** if a platform/ABI has no prebuilt binary, `npm install` compiles it
+  from source via node-gyp (needs a C++ toolchain + Python).~~ Removed by
+  [ADR-029](ADR-029-node-sqlite-driver.md) — there is no native module, so no fallback and no
+  toolchain requirement. The global tarball smoke is still a release gate, but for a different
+  reason: it is the only check that exercises the tsup **bundle** rather than per-package `tsc`
+  output.
 
 ## Alternatives considered
 

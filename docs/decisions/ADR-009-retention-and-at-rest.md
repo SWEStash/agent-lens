@@ -52,9 +52,10 @@ We need a policy before the store grows large, without compromising the local-on
 
 ## Alternatives considered
 
-- **App-level DB encryption (SQLCipher).** Encrypts the DB at rest transparently, but requires
-  recompiling `better-sqlite3` against SQLCipher, adds a key-management burden, and offers no
-  protection for the raw archive files. Rejected — wrong cost/benefit for a local tool; full-volume
+- **App-level DB encryption (SQLCipher).** Encrypts the DB at rest transparently, but requires a
+  SQLite driver built against SQLCipher, adds a key-management burden, and offers no protection for
+  the raw archive files. (The cost went *up* with [ADR-029](ADR-029-node-sqlite-driver.md): the
+  built-in `node:sqlite` links Node's own SQLite, so this would mean reintroducing a native module.) Rejected — wrong cost/benefit for a local tool; full-volume
   encryption covers archive + DB + WAL uniformly.
 - **Prune the mirror too (age-based).** Would cap total size hardest, but destroys the durable archive
   that ADR-001 exists to provide and that protects against parser bugs. Rejected.

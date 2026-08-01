@@ -51,7 +51,7 @@ flowchart TB
   SCHED -->|"agent-lens collect --then-ingest"| ARCHIVE
   ARCHIVE --> INGEST
   INGEST -->|"writes"| DB
-  DB -->|"reads (readonly, query_only)"| SERVER
+  DB -->|"reads (readOnly, query_only)"| SERVER
   SERVER --> WEB
 ```
 
@@ -66,7 +66,7 @@ install); adding a new agent is a new `SourceAdapter` in `ingest` with no schema
 
 **Concurrency.** SQLite runs in WAL mode (`PRAGMA journal_mode = WAL`). Ingest is the single writer (a
 oneshot that opens, writes, closes); the server is a long-lived reader opened read-only
-(`readonly`, `query_only = ON`). WAL lets the reader and writer coexist; the dirty-session rebuild
+(`readOnly`, `query_only = ON`). WAL lets the reader and writer coexist; the dirty-session rebuild
 (ADR-010) shortens the writer's transaction and therefore the lock window the reader can observe.
 
 ## 3. Ingest runtime (Stage 2)
@@ -162,3 +162,4 @@ erDiagram
 | [026](decisions/ADR-026-api-response-contracts.md) | API response contracts live in the shared package |
 | [027](decisions/ADR-027-runtime-diagnostics-surface.md) | Read-only diagnostics surface; runtime version resolution |
 | [028](decisions/ADR-028-model-pricing.md) | Cost derived at read time; config-overridable price table; unpriced models flagged |
+| [029](decisions/ADR-029-node-sqlite-driver.md) | SQLite via Node's built-in `node:sqlite`; no compiled dependencies |
