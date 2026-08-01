@@ -5,19 +5,19 @@
  * integrity. Imports the BUILT dist.
  */
 import { describe, it, expect } from "vitest";
-import Database from "better-sqlite3";
+import { DatabaseSync } from "node:sqlite";
 import { SCHEMA_SQL } from "@agent-lens/core";
 import { deriveFileChanges, normalizeFilePath, FILECHANGES_VERSION } from "../dist/filechanges.js";
 
-function freshDb(): Database.Database {
-  const db = new Database(":memory:");
+function freshDb(): DatabaseSync {
+  const db = new DatabaseSync(":memory:");
   db.exec(SCHEMA_SQL);
-  db.pragma("foreign_keys = OFF");
+  db.exec("PRAGMA foreign_keys = OFF");
   return db;
 }
 
 /** Seed a session (optionally with a project path, for relative-path resolution + project_id). */
-function addSession(db: Database.Database, id: string, projectPath?: string) {
+function addSession(db: DatabaseSync, id: string, projectPath?: string) {
   if (projectPath) {
     const pid = `p-${id}`;
     db.prepare(`INSERT INTO projects (id, agent_id, path) VALUES (?, 'claude-code', ?)`).run(pid, projectPath);
@@ -30,7 +30,7 @@ function addSession(db: Database.Database, id: string, projectPath?: string) {
 let seq = 0;
 /** Seed a tool call (+ its event, so the derived row picks up a timestamp); returns its id. */
 function addTool(
-  db: Database.Database,
+  db: DatabaseSync,
   session: string,
   tool: string,
   opts: { input?: any; status?: string; turn?: string; ts?: string } = {},
@@ -46,7 +46,7 @@ function addTool(
   return id;
 }
 
-const rowsFor = (db: Database.Database, session: string) =>
+const rowsFor = (db: DatabaseSync, session: string) =>
   db.prepare("SELECT * FROM file_changes WHERE session_id = ? ORDER BY tool_call_id").all(session) as any[];
 
 describe("normalizeFilePath", () => {

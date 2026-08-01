@@ -13,6 +13,11 @@ queries over time; the browser needs full-text search over transcripts. Single l
 
 - **Store:** a single SQLite database file (`data/agent-lens.db`) accessed via `better-sqlite3`
   (synchronous, fast, zero-server). FTS5 virtual table for transcript search.
+
+  > **Amended by [ADR-029](ADR-029-node-sqlite-driver.md) (2026-08).** The driver is now Node's
+  > built-in `node:sqlite`, removing the project's only compiled dependency. Everything else in this
+  > ADR is unchanged: same file, same schema, same FTS5, same synchronous single-writer model — the
+  > on-disk format is identical, so existing databases are read in place with no migration.
 - **Model:** normalized, **agent-agnostic** hierarchy `agents → projects → sessions → turns → events`,
   with `tool_calls`, `token_usage`, `classifications`, and `ingest_state`. Every transcript line is an
   `event` keyed by stable `uuid` (the dedup/UPSERT key). `raw_json` preserves each line verbatim for

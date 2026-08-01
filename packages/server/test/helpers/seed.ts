@@ -9,7 +9,7 @@
  * Foreign keys are ON by default (the API reads across the graph and a broken join should fail loudly);
  * pass `{ foreignKeys: false }` to seed a partial graph deliberately.
  */
-import Database from "better-sqlite3";
+import { DatabaseSync } from "node:sqlite";
 import { SCHEMA_SQL } from "@agent-lens/core";
 import { createApp } from "../../dist/app.js";
 
@@ -17,20 +17,20 @@ export const AGENT = "claude-code";
 export const SOURCE = "test";
 
 /** A fresh in-memory DB with the schema applied and one agent + one source, which everything else FKs to. */
-export function freshDb(opts: { foreignKeys?: boolean; source?: string } = {}): Database.Database {
-  const db = new Database(":memory:");
+export function freshDb(opts: { foreignKeys?: boolean; source?: string } = {}): DatabaseSync {
+  const db = new DatabaseSync(":memory:");
   db.exec(SCHEMA_SQL);
-  db.pragma(`foreign_keys = ${opts.foreignKeys === false ? "OFF" : "ON"}`);
+  db.exec(`PRAGMA foreign_keys = ${opts.foreignKeys === false ? "OFF" : "ON"}`);
   db.prepare("INSERT INTO agents (id, name, kind) VALUES (?, 'Claude Code CLI', 'cli')").run(AGENT);
   addSource(db, opts.source ?? SOURCE);
   return db;
 }
 
-export function addSource(db: Database.Database, id: string, label = id) {
+export function addSource(db: DatabaseSync, id: string, label = id) {
   db.prepare("INSERT INTO sources (id, label, agent_id, config_dir) VALUES (?, ?, ?, NULL)").run(id, label, AGENT);
 }
 
-export function addProject(db: Database.Database, id: string, path: string, encodedDir = path.replace(/\//g, "-")) {
+export function addProject(db: DatabaseSync, id: string, path: string, encodedDir = path.replace(/\//g, "-")) {
   db.prepare(
     `INSERT INTO projects (id, agent_id, path, encoded_dir, first_seen, last_seen)
      VALUES (?, ?, ?, ?, '2026-01-01T00:00:00Z', '2026-01-01T00:10:00Z')`,
@@ -52,7 +52,7 @@ export interface SessionOpts {
   workflowRun?: string | null;
 }
 
-export function addSession(db: Database.Database, id: string, o: SessionOpts = {}) {
+export function addSession(db: DatabaseSync, id: string, o: SessionOpts = {}) {
   db.prepare(
     `INSERT INTO sessions (id, agent_id, source_id, project_id, ai_title, is_sidechain, started_at, ended_at,
                            duration_ms, event_count, turn_count, parent_session_id, parent_turn_id, workflow_run_id)
@@ -77,7 +77,7 @@ export function addSession(db: Database.Database, id: string, o: SessionOpts = {
 
 /** Seed a turn. Returns its id, which is the `<session>:<seq>` convention the rest of the graph uses. */
 export function addTurn(
-  db: Database.Database,
+  db: DatabaseSync,
   session: string,
   seq: number,
   o: { userEvent?: string; preview?: string | null; model?: string | null; startedAt?: string | null; endedAt?: string | null; durationMs?: number | null } = {},
@@ -104,7 +104,7 @@ export interface EventOpts {
   sidechain?: boolean;
 }
 
-export function addEvent(db: Database.Database, session: string, uuid: string, o: EventOpts = {}) {
+export function addEvent(db: DatabaseSync, session: string, uuid: string, o: EventOpts = {}) {
   const role = o.role ?? o.type ?? "assistant";
   const raw =
     o.raw ??
@@ -142,7 +142,7 @@ export interface ToolOpts {
   workflowName?: string | null;
 }
 
-export function addTool(db: Database.Database, session: string, event: string, id: string, tool: string, o: ToolOpts = {}) {
+export function addTool(db: DatabaseSync, session: string, event: string, id: string, tool: string, o: ToolOpts = {}) {
   db.prepare(
     `INSERT INTO tool_calls (id, event_uuid, session_id, turn_id, tool_name, input_json, result_summary, status,
                              skill_name, agent_type, spawned_session_id, workflow_run_id, workflow_name)
@@ -165,7 +165,7 @@ export function addTool(db: Database.Database, session: string, event: string, i
 }
 
 export function addTokens(
-  db: Database.Database,
+  db: DatabaseSync,
   event: string,
   session: string,
   model: string,
@@ -179,7 +179,7 @@ export function addTokens(
 }
 
 /** Build + start the Fastify app over `db`. Callers close it; `app.inject()` binds no socket. */
-export async function appFor(db: Database.Database, opts?: Parameters<typeof createApp>[1]) {
+export async function appFor(db: DatabaseSync, opts?: Parameters<typeof createApp>[1]) {
   const app = await createApp(db, opts);
   await app.ready();
   return app;
@@ -190,7 +190,7 @@ export async function appFor(db: Database.Database, opts?: Parameters<typeof cre
  * token usage, and a Skill tool call. Mirrors the original hand-written `seed()` exactly so the
  * assertions built on it (total_tokens 150, "Demo session", the test-suite-design skill) still hold.
  */
-export function seedBasic(): Database.Database {
+export function seedBasic(): DatabaseSync {
   const db = freshDb();
   addProject(db, "proj1", "/tmp/proj", "-tmp-proj");
   addSession(db, "sess1", {

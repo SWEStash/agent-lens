@@ -157,7 +157,7 @@ describe("query parameter boundaries", () => {
   });
 
   it("a non-integer offset is floored instead of 500ing", async () => {
-    // The bug: Number("1.5") is truthy and non-integer, so it reached better-sqlite3, which refuses to
+    // The bug: Number("1.5") is truthy and non-integer, so it reached SQLite, which refuses to
     // bind a float to an integer parameter.
     for (const qs of ["offset=1.5", "offset=0.9", "offset=1e0", "offset=-2.7"]) {
       const r = await app.inject({ method: "GET", url: "/api/sessions?" + qs });

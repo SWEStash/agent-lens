@@ -11,8 +11,16 @@ export default defineConfig({
   bundle: true,
   // Inline the workspace code (their `workspace:*` versions can't be published) + the tiny CLI parser.
   noExternal: [/^@agent-lens\//, "cac"],
-  // Keep native + framework deps external — resolved from node_modules at runtime.
-  external: ["better-sqlite3", "fastify", "@fastify/static", "chokidar"],
+  // Keep framework deps external — resolved from node_modules at runtime. There is no native
+  // dependency any more; SQLite is the `node:sqlite` builtin (ADR-029).
+  external: ["fastify", "@fastify/static", "chokidar"],
+  // tsup 8 rewrites `node:foo` imports to bare `foo` by default. Harmless for the legacy builtins
+  // (`fs`, `zlib`, … resolve either way), but `node:sqlite` is prefix-ONLY: stripped to `"sqlite"`
+  // it resolves to nothing and the CLI dies on startup with ERR_MODULE_NOT_FOUND. esbuild itself
+  // preserves the prefix at every target — this is tsup's rewrite, so turn it off (ADR-029).
+  // Only the bundle is affected; per-package tsc output keeps the prefix, which is why the test
+  // suite cannot catch this and the from-tarball smoke can.
+  removeNodeProtocol: false,
   banner: { js: "#!/usr/bin/env node" },
   clean: true,
   sourcemap: true,

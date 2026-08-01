@@ -1,4 +1,4 @@
-import Database from "better-sqlite3";
+import { DatabaseSync } from "node:sqlite";
 import { SCHEMA_VERSION, unpackRaw, severityRank, SECURITY_CATEGORIES, errorKind, type ToolErrorType } from "@agent-lens/core";
 import type {
   Finding,
@@ -57,11 +57,13 @@ import type {
 } from "./rows.js";
 import { sessionUsage, splitOf, tokensOf, costOf, unpricedOf, USAGE_SUMS, type UsageRow } from "./usage.js";
 
-export type DB = Database.Database;
+export type DB = DatabaseSync;
 
 export function openReadonly(file: string): DB {
-  const db = new Database(file, { readonly: true, fileMustExist: true });
-  db.pragma("query_only = ON");
+  // `readOnly` also supplies the old `fileMustExist`: node:sqlite refuses to create a DB it may not
+  // write. `query_only` is belt-and-braces on top — it also blocks writes through an ATTACHed handle.
+  const db = new DatabaseSync(file, { readOnly: true });
+  db.exec("PRAGMA query_only = ON");
   return db;
 }
 
@@ -92,10 +94,10 @@ export function lastIngested(db: DB): string | null {
 
 /**
  * Split a raw transcript line's message content into natural text vs thinking. Accepts the stored
- * `events.raw_json` value, which is a gzip BLOB (Buffer) post-ADR-011 but may be a legacy plain string;
+ * `events.raw_json` value, which is a gzip BLOB (Uint8Array) post-ADR-011 but may be a legacy plain string;
  * `unpackRaw` normalizes both.
  */
-export function extractParts(rawJson: string | Buffer): { text: string | null; thinking: string | null } {
+export function extractParts(rawJson: string | Uint8Array): { text: string | null; thinking: string | null } {
   let text = "";
   let thinking = "";
   try {

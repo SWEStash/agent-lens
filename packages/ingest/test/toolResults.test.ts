@@ -7,7 +7,7 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import Database from "better-sqlite3";
+import { DatabaseSync } from "node:sqlite";
 import { SCHEMA_SQL, encodeProjectPath } from "@agent-lens/core";
 import { ingestToolResults, newToolResultStats } from "../dist/toolResults.js";
 
@@ -22,7 +22,7 @@ function writeResult(sessionId: string, name: string, text: string) {
 }
 
 function db() {
-  const d = new Database(":memory:");
+  const d = new DatabaseSync(":memory:");
   d.exec(SCHEMA_SQL);
   return d;
 }

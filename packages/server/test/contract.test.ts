@@ -2,7 +2,7 @@
  * The runtime half of ADR-026.
  *
  * `@agent-lens/contracts` makes server and web agree at COMPILE time, but `queryAll<T>` is still an
- * unchecked cast — better-sqlite3 has no static knowledge of a query's columns, so a `SELECT` that
+ * unchecked cast — SQLite has no static knowledge of a query's columns, so a `SELECT` that
  * stops emitting a column, or starts emitting an extra one, type-checks perfectly and drifts anyway.
  * That is the exact gap these tests close: they assert each endpoint's payload has EXACTLY the keys
  * the contract declares, so drift in either direction fails here instead of in the browser.
@@ -15,7 +15,7 @@
  * let the drift happen in the first place.
  */
 import { describe, it, expect } from "vitest";
-import type Database from "better-sqlite3";
+import type { DatabaseSync } from "node:sqlite";
 import { resolvePricing } from "@agent-lens/core";
 import { addSession, appFor, freshDb, seedBasic } from "./helpers/seed";
 
@@ -411,7 +411,7 @@ describe("response contracts — degraded DBs keep the shape stable", () => {
 
 /** Token usage with a NULL model — the case the by_model GROUP BY does not filter out. `addTokens`
  *  requires a model, so this one writes the row directly. */
-function addEventlessUsage(db: Database.Database, session: string) {
+function addEventlessUsage(db: DatabaseSync, session: string) {
   db.prepare("INSERT INTO events (uuid, session_id, seq, type, role, timestamp, raw_json) VALUES ('ev0', ?, 0, 'assistant', 'assistant', '2026-01-01T00:00:00Z', '{}')").run(session);
   db.prepare(
     `INSERT INTO token_usage (event_uuid, session_id, model, input_tokens, output_tokens,
@@ -421,7 +421,7 @@ function addEventlessUsage(db: Database.Database, session: string) {
 }
 
 /** A findings row (ADR-017). Not in seed.ts because only the security suites need it. */
-function addFinding(db: Database.Database, id: string, session: string, toolCall: string) {
+function addFinding(db: DatabaseSync, id: string, session: string, toolCall: string) {
   db.prepare(
     `INSERT INTO findings (id, session_id, tool_call_id, rule_id, category, framework_ref, severity, title, evidence, signals_json, detector_version)
      VALUES (?, ?, ?, 'SA01', 'secrets', 'OWASP-A02', 'high', 'Secret in command', 'export TOKEN=...', '{"rule":"SA01"}', 1)`,

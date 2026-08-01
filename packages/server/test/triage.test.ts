@@ -8,14 +8,14 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import Database from "better-sqlite3";
+import { DatabaseSync } from "node:sqlite";
 import { SCHEMA_SQL } from "@agent-lens/core";
 import { createApp } from "../dist/app.js";
 
 /** Seed sessions + tool_calls + three findings (critical exfil, high + medium privilege). */
-function seed(): Database.Database {
-  const db = new Database(":memory:");
-  db.pragma("foreign_keys = OFF"); // we test triage SQL, not referential integrity
+function seed(): DatabaseSync {
+  const db = new DatabaseSync(":memory:");
+  db.exec("PRAGMA foreign_keys = OFF"); // we test triage SQL, not referential integrity
   db.exec(SCHEMA_SQL);
   db.exec(`
     INSERT INTO agents (id, name, kind) VALUES ('claude-code','Claude Code CLI','cli');

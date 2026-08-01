@@ -283,8 +283,10 @@ describe("prunes phantom zero-event sessions (e.g. workflow journals)", () => {
 // decodes back to the verbatim line. This is about our wiring, not zlib's behavior.
 describe("compresses raw_json at rest (ADR-011)", () => {
   it("ingest stores a compressed BLOB that decodes to the original line", () => {
-    const row = db.prepare("SELECT raw_json FROM events WHERE uuid = ?").get("u1") as { raw_json: Buffer };
-    expect(Buffer.isBuffer(row.raw_json)).toBe(true); // stored to the BLOB column, not as TEXT
+    const row = db.prepare("SELECT raw_json FROM events WHERE uuid = ?").get("u1") as { raw_json: Uint8Array };
+    // A BLOB column, not TEXT. node:sqlite hands BLOBs back as Uint8Array (not Buffer) — asserting
+    // Buffer here would pass under better-sqlite3 and mask the codec bug ADR-029 had to fix.
+    expect(row.raw_json).toBeInstanceOf(Uint8Array);
     expect(row.raw_json[0]).toBe(0x1f); // packRaw was applied (gzip), not a raw/plaintext write
     const decoded = JSON.parse(unpackRaw(row.raw_json));
     expect(decoded.uuid).toBe("u1");

@@ -6,14 +6,14 @@
  * Foreign keys are left OFF — we test the aggregation SQL, not referential integrity.
  */
 import { describe, it, expect, beforeAll } from "vitest";
-import Database from "better-sqlite3";
+import { DatabaseSync } from "node:sqlite";
 import { SCHEMA_SQL } from "@agent-lens/core";
 import { dashboardOverview, dashboardBreakdowns, dashboardTimeseries } from "../dist/dashboard.js";
 
-function seed(): Database.Database {
-  const db = new Database(":memory:");
+function seed(): DatabaseSync {
+  const db = new DatabaseSync(":memory:");
   db.exec(SCHEMA_SQL);
-  db.pragma("foreign_keys = OFF"); // test aggregation SQL, not the full FK graph
+  db.exec("PRAGMA foreign_keys = OFF"); // test aggregation SQL, not the full FK graph
   // Sessions: m1 (isf, main, cache-heavy opus), a1 (isf, subagent, dated haiku), m2 (personal, main, <synthetic>).
   db.exec(`
     INSERT INTO sessions (id, agent_id, source_id, is_sidechain, started_at, duration_ms, turn_count) VALUES

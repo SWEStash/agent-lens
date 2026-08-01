@@ -13,7 +13,7 @@
  */
 import { createHash } from "node:crypto";
 import { posix as path } from "node:path";
-import { bumpSeverity, type Severity, type SecurityCategoryKey } from "@agent-lens/core";
+import { transaction, bumpSeverity, type Severity, type SecurityCategoryKey } from "@agent-lens/core";
 import type { DB } from "./db.js";
 import { createDirtySet } from "./dirtyset.js";
 import { parseStored } from "./storedjson.js";
@@ -705,7 +705,7 @@ export function detect(db: DB, dirty?: Set<string> | null): { count: number; ver
       `SELECT tc.id, tc.session_id, tc.event_uuid, tc.turn_id, tc.tool_name, tc.input_json, tc.result_summary, tc.status
        FROM tool_calls tc${scope}`,
     )
-    .all() as ToolRow[];
+    .all() as unknown as ToolRow[];
 
   const insert = db.prepare(
     `INSERT INTO findings (id, session_id, tool_call_id, event_uuid, turn_id, rule_id, category, framework_ref, severity, title, evidence, signals_json, detector_version)
@@ -716,7 +716,7 @@ export function detect(db: DB, dirty?: Set<string> | null): { count: number; ver
     ? "DELETE FROM findings WHERE session_id IN (SELECT id FROM _dirty_sec)"
     : "DELETE FROM findings";
 
-  const tx = db.transaction(() => {
+  const tx = transaction(db, () => {
     db.exec(delScope);
     for (const row of rows) {
       const ctx = buildContext(row, projPath.get(row.session_id) ?? null, ownedConfigDirs);

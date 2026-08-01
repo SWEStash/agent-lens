@@ -4,13 +4,13 @@
  * session data. Enforced by a global onRequest hook; opt-out only via the intentional non-local bind.
  */
 import { describe, it, expect, beforeAll } from "vitest";
-import Database from "better-sqlite3";
+import { DatabaseSync } from "node:sqlite";
 import { SCHEMA_SQL } from "@agent-lens/core";
 import { createApp } from "../dist/app.js";
 
-function db(): Database.Database {
-  const d = new Database(":memory:");
-  d.pragma("foreign_keys = ON");
+function db(): DatabaseSync {
+  const d = new DatabaseSync(":memory:");
+  d.exec("PRAGMA foreign_keys = ON");
   d.exec(SCHEMA_SQL);
   return d;
 }

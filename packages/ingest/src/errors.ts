@@ -9,7 +9,7 @@
  * letting SQL do the filtering/grouping. The raw `status='error'` count stays the authoritative signal;
  * `error_type` is the heuristic bucket (see packages/core/src/errors.ts for the authority boundary).
  */
-import { classifyToolError, ERROR_CLASSIFIER_VERSION } from "@agent-lens/core";
+import { transaction, classifyToolError, ERROR_CLASSIFIER_VERSION } from "@agent-lens/core";
 import type { DB } from "./db.js";
 import { createDirtySet } from "./dirtyset.js";
 
@@ -29,7 +29,7 @@ export function classifyErrors(db: DB, dirty?: Set<string> | null): { count: num
     .all() as Array<{ id: string; result_summary: string | null }>;
 
   const update = db.prepare("UPDATE tool_calls SET error_type = ? WHERE id = ?");
-  const tx = db.transaction(() => {
+  const tx = transaction(db, () => {
     // Reset the scoped rows' error_type first so a row that stops being an error (or changes bucket) on
     // re-derive doesn't keep a stale label. Non-error rows always have NULL.
     db.exec(`UPDATE tool_calls SET error_type = NULL WHERE error_type IS NOT NULL${scope}`);
