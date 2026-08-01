@@ -1,5 +1,5 @@
 import { DatabaseSync } from "node:sqlite";
-import { SCHEMA_VERSION, unpackRaw, severityRank, SECURITY_CATEGORIES, errorKind, type ToolErrorType } from "@agent-lens/core";
+import { SCHEMA_VERSION, unpackRaw, severityRank, activePricing, SECURITY_CATEGORIES, errorKind, type ToolErrorType, type Rate } from "@agent-lens/core";
 import type {
   Finding,
   FindingListRow,
@@ -179,6 +179,60 @@ function toFtsQuery(raw: string): string {
     .join(" ");
 }
 
+/** Total tokens for one session (all four classes), matching `tokensOf(splitOf(…))`. */
+const TOKENS_SORT_SQL = `(SELECT COALESCE(SUM(t.input_tokens + t.output_tokens
+      + t.cache_creation_input_tokens + t.cache_read_input_tokens), 0)
+    FROM token_usage t WHERE t.session_id = s.id)`;
+
+/**
+ * Security ordering: worst severity first, finding count as the tiebreak — the same metric the JS
+ * sort computed as `(severityRank(worst) + 1) * 1e6 + finding_count`. The `+ 1` shift is why an
+ * unranked/absent severity is 0 here (`severityRank` returns -1 for it), matching SEVERITY_ORDER.
+ */
+const SECURITY_SORT_SQL = `(CASE worst_severity
+      WHEN 'critical' THEN 5 WHEN 'high' THEN 4 WHEN 'medium' THEN 3 WHEN 'low' THEN 2 WHEN 'info' THEN 1
+      ELSE 0 END) * 1000000 + finding_count`;
+
+/**
+ * Cost for one session, in SQL — a transcription of `costForUsage` (rate per 1M tokens, per class)
+ * that lets the session list ORDER BY cost without costing every matching session in JS first.
+ *
+ * The rates it joins come from {@link ratesCte}, never from a literal table: pricing is
+ * config-overridable (ADR-028), so the active table is the only correct source. The join reproduces
+ * `rateForModel`'s **longest-prefix** match — an equality join would price a dated id like
+ * `claude-haiku-4-5-20251001` at zero, which is precisely the silent-$0 failure ADR-028 was cut to
+ * fix. `substr` rather than `LIKE` because `_` is a LIKE wildcard and model ids may contain one.
+ *
+ * This duplicates the cost formula (the other copy is `costForUsage`); `pricing-sql.test.ts` asserts
+ * the two agree, including under an override.
+ */
+const COST_SORT_SQL = `(SELECT COALESCE(SUM((tu.input_tokens * mr.i_rate + tu.output_tokens * mr.o_rate
+      + tu.cache_creation_input_tokens * mr.cw_rate + tu.cache_read_input_tokens * mr.cr_rate) / 1000000.0), 0)
+    FROM token_usage tu LEFT JOIN model_rate mr ON mr.model IS tu.model
+    WHERE tu.session_id = s.id)`;
+
+/**
+ * A `WITH rates(…)` clause carrying the *active* price table (built-in defaults merged with any
+ * config overrides) as bound parameters. Built per query, never cached at module scope — `usePricing`
+ * can swap the table at startup and tests install their own.
+ */
+export function ratesCte(): { sql: string; params: unknown[] } {
+  const entries = Object.entries(activePricing()) as Array<[string, Rate]>;
+  return {
+    // `model_rate` resolves the prefix match ONCE per distinct model id, not once per token_usage row.
+    // Inlining the lookup into the cost expression instead re-ran it for every usage row of every
+    // candidate session — ~35× slower on a real corpus, which would have made this "fix" a regression.
+    sql: `WITH rates(prefix, i_rate, o_rate, cw_rate, cr_rate) AS (VALUES ${entries.map(() => "(?,?,?,?,?)").join(",")}),
+      model_rate AS (
+        SELECT m.model, r.i_rate, r.o_rate, r.cw_rate, r.cr_rate
+        FROM (SELECT DISTINCT model FROM token_usage) m
+        LEFT JOIN rates r ON r.prefix = (
+          SELECT p.prefix FROM rates p WHERE substr(m.model, 1, length(p.prefix)) = p.prefix
+          ORDER BY length(p.prefix) DESC LIMIT 1)) `,
+    params: entries.flatMap(([prefix, r]) => [prefix, r.input, r.output, r.cacheWrite, r.cacheRead]),
+  };
+}
+
 export function listSessions(db: DB, f: SessionFilters): SessionsPage {
   const where: string[] = [];
   const params: unknown[] = [];
@@ -230,54 +284,37 @@ export function listSessions(db: DB, f: SessionFilters): SessionsPage {
        FROM sessions s LEFT JOIN projects p ON p.id = s.project_id
        ${whereSql}`;
 
-  // Columns sortable directly in SQL (stable-paginated with an id tiebreak). tokens/cost aren't stored
-  // — they're derived from token_usage with per-model pricing — so those sort over the whole matching
-  // set in JS below.
-  const NATIVE_ORDER = {
+  // Every sortable column resolves to a SQL expression, so ORDER BY + LIMIT do the paging. Stored
+  // columns are direct; the derived ones (tokens/cost/errors/security) are the subquery or CASE the
+  // projection above already computes, referenced by output alias where one exists. These four used
+  // to sort in JS over the WHOLE matching set — O(corpus) on every request, per the comment this
+  // replaces — which is what made the session list the worst-scaling query in the server.
+  const ORDER = {
     started: "s.started_at",
     title: "COALESCE(s.ai_title, s.slug)",
     turns: "s.turn_count",
     duration: "s.duration_ms",
+    errors: "tool_error_count",
+    tokens: TOKENS_SORT_SQL,
+    cost: COST_SORT_SQL,
+    security: SECURITY_SORT_SQL,
   };
   const sortKey = f.sort ?? "started";
 
-  // Columns sorted in JS over the whole matching set (derived/subquery metrics that the paged SQL
-  // ORDER BY can't reach consistently): tokens/cost (costed below) plus the error/finding roll-ups.
-  const JS_SORT = new Set(["tokens", "cost", "errors", "security"]);
-  let sessions: SessionSummary[];
-  if (JS_SORT.has(sortKey)) {
-    // Whole-list sort by a derived metric: materialize every matching session, cost them all, sort,
-    // then take the page. Heavier than the SQL path but the only way to page a JS-computed column
-    // consistently. Fine at this tool's scale (personal analytics).
-    const all = attachSessionCost(db, queryAll<SessionListRow>(db, baseSelect, ...params));
-    const sign = f.dir === "asc" ? 1 : -1;
-    const metric = (r: SessionSummary): number => {
-      switch (sortKey) {
-        case "tokens": return r.tokens;
-        case "cost": return r.cost;
-        case "errors": return r.tool_error_count ?? 0;
-        // Security: rank by worst severity (info=0 … critical=4; none = -1), finding count as tiebreak.
-        case "security": return (severityRank(r.worst_severity ?? "") + 1) * 1e6 + (r.finding_count ?? 0);
-        default: return 0;
-      }
-    };
-    all.sort((a, b) => {
-      const c = (metric(a) - metric(b)) * sign;
-      return c !== 0 ? c : String(a.id).localeCompare(String(b.id));
-    });
-    sessions = all.slice(f.offset, f.offset + f.limit);
-  } else {
-    sessions = attachSessionCost(
+  // The cost expression joins a rates CTE, so that clause has to lead the statement — and its bound
+  // parameters therefore come before the WHERE's. Only built when actually sorting by cost.
+  const rates = sortKey === "cost" ? ratesCte() : null;
+  const sessions = attachSessionCost(
+    db,
+    queryAll<SessionListRow>(
       db,
-      queryAll<SessionListRow>(
-        db,
-        `${baseSelect} ORDER BY ${orderBy(NATIVE_ORDER, sortKey, "started", f.dir)}, s.id ASC LIMIT ? OFFSET ?`,
-        ...params,
-        f.limit,
-        f.offset,
-      ),
-    );
-  }
+      `${rates?.sql ?? ""}${baseSelect} ORDER BY ${orderBy(ORDER, sortKey, "started", f.dir)}, s.id ASC LIMIT ? OFFSET ?`,
+      ...(rates?.params ?? []),
+      ...params,
+      f.limit,
+      f.offset,
+    ),
+  );
 
   return { total, sessions };
 }

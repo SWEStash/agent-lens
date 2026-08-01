@@ -268,11 +268,6 @@ export interface OverviewCountsRow {
   projects: number | null;
 }
 
-/** A single duration, ordered — the percentile inputs. */
-export interface DurationRow {
-  d: number | null;
-}
-
 /** The started_at span used to choose a bucket width. */
 export interface SpanRow {
   mn: string | null;

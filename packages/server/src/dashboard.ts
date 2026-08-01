@@ -14,7 +14,6 @@ import type {
   BucketErrorRow,
   BucketUsageAggRow,
   CountRow,
-  DurationRow,
   ModelBreakdownRow,
   OverviewCountsRow,
   SpanRow,
@@ -66,10 +65,30 @@ const usageForCost = (u: UsageAggRow) => ({
   cache_read_input_tokens: u.cr ?? 0,
 });
 
-function pct(sorted: number[], p: number): number {
-  if (sorted.length === 0) return 0;
-  const rank = Math.ceil((p / 100) * sorted.length) - 1;
-  return sorted[Math.min(Math.max(rank, 0), sorted.length - 1)]!;
+/**
+ * p50/p95 (nearest-rank) plus the sample size, computed **in SQL**.
+ *
+ * `values` is a `SELECT <expr> v FROM …` returning one row per observation, unordered; this wraps it
+ * in a CTE and picks the ranked element with `LIMIT 1 OFFSET`. It used to pull every duration into JS
+ * and sort there — one row per turn, per request, growing with the corpus forever.
+ *
+ * The offset is `ceil(p/100 × n) - 1` floored at 0, which is exactly the rank the previous JS
+ * `pct()` selected, so stored percentiles do not shift. An empty set yields 0 (the CTE returns NULL,
+ * coalesced), also matching the old behaviour.
+ */
+function percentiles(db: DB, values: string, params: unknown[]): { p50: number; p95: number; count: number } {
+  const at = (p: number) =>
+    `(SELECT COALESCE((SELECT v FROM vals ORDER BY v
+        LIMIT 1 OFFSET MAX(0, CAST(ceil(${p} / 100.0 * (SELECT c FROM n)) AS INTEGER) - 1)), 0))`;
+  const row = queryGet<{ p50: number; p95: number; count: number }>(
+    db,
+    // MATERIALIZED matters: the three selects below each reference `vals`, and without the hint
+    // SQLite inlines the CTE and re-runs the underlying scan once per percentile.
+    `WITH vals AS MATERIALIZED (${values}), n AS (SELECT COUNT(*) c FROM vals)
+     SELECT ${at(50)} AS p50, ${at(95)} AS p95, (SELECT c FROM n) AS count`,
+    ...params,
+  );
+  return row ?? { p50: 0, p95: 0, count: 0 };
 }
 
 /** WHERE over `workflow_results` own columns (its own source_id / started_at, not the sessions alias). */
@@ -160,21 +179,21 @@ export function dashboardOverview(db: DB, f: DashFilters): DashOverview {
   const totalTokens = tokens.input + tokens.output + tokens.cache_creation + tokens.cache_read;
 
   // Turn-duration percentiles (work cadence), excluding null durations.
-  const durs = queryAll<DurationRow>(
+  const turnDur = percentiles(
     db,
-    `SELECT tn.duration_ms d FROM turns tn JOIN sessions s ON s.id = tn.session_id
-     ${w.sql ? w.sql + " AND" : "WHERE"} tn.duration_ms IS NOT NULL ORDER BY tn.duration_ms`,
-    ...w.params,
-  ).map((r) => r.d!); // `IS NOT NULL` in the WHERE is what makes the non-null assertion sound
+    `SELECT tn.duration_ms v FROM turns tn JOIN sessions s ON s.id = tn.session_id
+     ${w.sql ? w.sql + " AND" : "WHERE"} tn.duration_ms IS NOT NULL`,
+    w.params,
+  );
 
   // Session-length percentiles over MAIN sessions only (subagents share the parent's wall clock),
   // excluding null durations. Complements the per-turn cadence with an end-to-end task-length view.
-  const sessDurs = queryAll<DurationRow>(
+  const sessDur = percentiles(
     db,
-    `SELECT s.duration_ms d FROM sessions s
-     ${w.sql ? w.sql + " AND" : "WHERE"} s.is_sidechain = 0 AND s.duration_ms IS NOT NULL ORDER BY s.duration_ms`,
-    ...w.params,
-  ).map((r) => r.d!);
+    `SELECT s.duration_ms v FROM sessions s
+     ${w.sql ? w.sql + " AND" : "WHERE"} s.is_sidechain = 0 AND s.duration_ms IS NOT NULL`,
+    w.params,
+  );
 
   return {
     range: { from: f.from ?? null, to: f.to ?? null, source: f.source ?? null },
@@ -189,8 +208,8 @@ export function dashboardOverview(db: DB, f: DashFilters): DashOverview {
     cache_read_ratio: totalTokens ? tokens.cache_read / totalTokens : 0,
     cost: Number(cost.toFixed(4)),
     unpriced_models: [...new Set(unpriced)].sort(),
-    turn_duration_ms: { p50: pct(durs, 50), p95: pct(durs, 95), count: durs.length },
-    session_duration_ms: { p50: pct(sessDurs, 50), p95: pct(sessDurs, 95), count: sessDurs.length },
+    turn_duration_ms: turnDur,
+    session_duration_ms: sessDur,
     workflows: workflowAgg(db, f),
   };
 }
