@@ -8,7 +8,7 @@
 import { existsSync } from "node:fs";
 import { dirname } from "node:path";
 import { fileURLToPath } from "node:url";
-import { findRepoRoot, resolveDbPath, resolveServerConfig, resolveWebDist, triageDbFor } from "@agent-lens/core";
+import { findRepoRoot, installPricing, resolveDbPath, resolveServerConfig, resolveWebDist, triageDbFor } from "@agent-lens/core";
 import { openReadonly } from "./db.js";
 import { createApp } from "./app.js";
 
@@ -32,6 +32,9 @@ export async function startServer(overrides: StartServerOverrides = {}): Promise
   // db/port/host all resolve with precedence flag > env > file > default (bad port fails fast).
   const { path: dbPath, origin: dbOrigin } = resolveDbPath(overrides.db);
   const { host, port } = resolveServerConfig({ port: overrides.port, host: overrides.host });
+  // Install the effective price table before anything derives a cost (ADR-028). Malformed overrides
+  // warn here and fall back to the built-in rate; the resolved facts go to /api/about.
+  const pricing = installPricing();
   const webDist = resolveWebDist(here, repoRoot);
 
   if (host !== "127.0.0.1" && host !== "localhost" && !process.env.AGENT_LENS_ALLOW_NONLOCAL) {
@@ -60,7 +63,7 @@ export async function startServer(overrides: StartServerOverrides = {}): Promise
     webDist,
     triageDbPath,
     enforceLoopbackHost,
-    about: { db: { path: dbPath, origin: dbOrigin }, host, port, loopbackOnly: enforceLoopbackHost, repoRoot },
+    about: { db: { path: dbPath, origin: dbOrigin }, host, port, loopbackOnly: enforceLoopbackHost, repoRoot, pricing },
   });
 
   try {

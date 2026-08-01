@@ -161,3 +161,4 @@ erDiagram
 | [025](decisions/ADR-025-web-data-fetching-convention.md) | One data-fetching and URL-state convention for the SPA |
 | [026](decisions/ADR-026-api-response-contracts.md) | API response contracts live in the shared package |
 | [027](decisions/ADR-027-runtime-diagnostics-surface.md) | Read-only diagnostics surface; runtime version resolution |
+| [028](decisions/ADR-028-model-pricing.md) | Cost derived at read time; config-overridable price table; unpriced models flagged |

@@ -18,6 +18,7 @@ import {
   resolveConfigFile,
   resolveDataDir,
   resolveDbPath,
+  resolvePricing,
   resolveRetention,
   resolveServerConfig,
   resolveVersion,
@@ -166,6 +167,9 @@ cli
     const archive = resolveArchiveDir(repoRoot);
     const triageDb = triageDbFor(dbPath);
     const { keepDays, origin: keepOrigin } = resolveRetention();
+    // resolvePricing, not installPricing: this command reports the table, and the Pricing block below
+    // already lists what was rejected — the stderr warning would just say it twice.
+    const pricing = resolvePricing();
 
     console.log("agent-lens config (precedence: flag > env > config file > default)\n");
     console.log("Paths");
@@ -180,6 +184,10 @@ cli
     console.log(`  non-local bind   ${process.env.AGENT_LENS_ALLOW_NONLOCAL ? "allowed (AGENT_LENS_ALLOW_NONLOCAL)" : "blocked (loopback only)"}`);
     console.log("\nRetention");
     console.log(`  .versions keep   ${keepDays} day(s)  [${keepOrigin}]`);
+    console.log("\nPricing");
+    console.log(`  models priced    ${Object.keys(pricing.table).length}  [${pricing.origin}]`);
+    if (pricing.applied.length) console.log(`  overrides        ${pricing.applied.join(", ")}`);
+    if (pricing.invalid.length) console.log(`  ignored (bad)    ${pricing.invalid.join(", ")}`);
     console.log("\nSources");
     for (const s of loadSources()) console.log(`  ${s.label.padEnd(14)} ${s.configDir}  (${s.agent})`);
   });

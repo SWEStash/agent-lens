@@ -26,7 +26,9 @@ import {
   resolveRetention,
   resolveVersion,
   triageDbFor,
+  unpricedModels,
   type ConfigOrigin,
+  type ResolvedPricing,
 } from "@agent-lens/core";
 import { CLASSIFIER_VERSION, DETECTOR_VERSION } from "@agent-lens/ingest";
 import { type DB, schemaStatus } from "./db.js";
@@ -39,6 +41,8 @@ export interface AboutContext {
   port: number;
   loopbackOnly: boolean;
   repoRoot: string | null;
+  /** The price table this process installed at startup (ADR-028) — reported, never re-resolved. */
+  pricing: ResolvedPricing;
 }
 
 interface StorageRow {
@@ -74,6 +78,21 @@ function storage(db: DB, dbPath: string): AboutResponse["storage"] {
     archive_files: row?.files ?? 0,
     last_ingested: row?.last ?? null,
   };
+}
+
+/**
+ * Models this store has real token usage for but no rate — the set whose cost silently reads as $0.
+ * Computed from the store rather than from the price table alone, because "which rates are missing"
+ * only means something relative to the models actually ingested.
+ */
+function unpriced(db: DB): string[] {
+  if (!tableExists(db, "token_usage")) return [];
+  const rows = queryAll<{ model: string | null }>(
+    db,
+    `SELECT DISTINCT model FROM token_usage
+      WHERE input_tokens + output_tokens + cache_creation_input_tokens + cache_read_input_tokens > 0`,
+  );
+  return unpricedModels(rows.map((r) => r.model));
 }
 
 /**
@@ -131,6 +150,13 @@ export function about(db: DB, ctx: AboutContext): AboutResponse {
     },
     server: { host: ctx.host, port: ctx.port, loopback_only: ctx.loopbackOnly },
     retention: { versions_keep_days: retention.keepDays, origin: retention.origin },
+    pricing: {
+      origin: ctx.pricing.origin,
+      models: Object.keys(ctx.pricing.table).length,
+      applied: ctx.pricing.applied,
+      invalid: ctx.pricing.invalid,
+      unpriced: unpriced(db),
+    },
     sources: loadSources().map((s) => ({ label: s.label, agent: s.agent, config_dir: s.configDir })),
     // storage() already carries last_ingested from the same MAX(ingested_at) it aggregates over —
     // reusing it avoids a second query AND keeps the tableExists guard that lastIngested() lacks.

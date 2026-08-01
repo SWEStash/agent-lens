@@ -37,6 +37,7 @@ const base: AboutResponse = {
   },
   server: { host: "127.0.0.1", port: 4477, loopback_only: true },
   retention: { versions_keep_days: 90, origin: "default" },
+  pricing: { origin: "default", models: 12, applied: [], invalid: [], unpriced: [] },
   sources: [{ label: "personal", agent: "claude-code", config_dir: "/home/u/.claude" }],
   storage: { db_bytes: 790_000_000, archive_bytes: 903_337_568, archive_files: 7522, last_ingested: "2026-07-30T12:00:00Z" },
 };

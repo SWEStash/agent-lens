@@ -55,7 +55,7 @@ import type {
   WorkflowLaunchRow,
   WorkflowResultRow,
 } from "./rows.js";
-import { sessionUsage, splitOf, tokensOf, costOf, USAGE_SUMS, type UsageRow } from "./usage.js";
+import { sessionUsage, splitOf, tokensOf, costOf, unpricedOf, USAGE_SUMS, type UsageRow } from "./usage.js";
 
 export type DB = Database.Database;
 
@@ -308,7 +308,14 @@ function attachSessionCost(db: DB, rows: SessionListRow[]): SessionSummary[] {
   return rows.map(({ ai_title, slug, ...r }) => {
     const u = usageBySession.get(r.id) ?? [];
     const split = splitOf(u);
-    return { ...r, tokens: tokensOf(split), token_split: split, cost: costOf(u), title: ai_title || slug || null };
+    return {
+      ...r,
+      tokens: tokensOf(split),
+      token_split: split,
+      cost: costOf(u),
+      unpriced_models: unpricedOf(u),
+      title: ai_title || slug || null,
+    };
   });
 }
 
@@ -544,6 +551,7 @@ function withSessionTotals(
     tokens: tokensOf(split),
     token_split: split,
     cost: costOf(usage),
+    unpriced_models: unpricedOf(usage),
     title: session.ai_title || session.slug || null,
     tool_call_count: toolRows.length,
     tool_error_count,

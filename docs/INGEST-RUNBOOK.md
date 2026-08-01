@@ -23,7 +23,9 @@ A run prints: `files / skipped / new_events / malformed` (plus `excluded_pruned=
 project's sessions were removed — see *Excluding projects* in USAGE.md), then `sessions / turns /
 events / tool_calls / classified`, then one line per sidecar stage — `workflow_results`,
 `session_meta`, and `tool_results` (each with its own `upserted/skipped/malformed`) — and finally
-`tokens / est_cost / db`.
+`tokens / est_cost / db`. One more line follows only when some model has token usage but no price
+(`unpriced=N model(s): …`) — `est_cost` excludes those, so treat it as a floor until you add a rate
+(see *Adjust model pricing* in USAGE.md).
 
 ## Incremental vs. `--full`
 

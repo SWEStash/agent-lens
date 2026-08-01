@@ -5,7 +5,7 @@ import { useFetch, useLookup } from "./useFetch";
 import { useQueryState } from "./useQueryState";
 import { ErrorAlert, Loading } from "./AsyncBoundary";
 import { useDetailsAutoClose } from "./useOutsideClick";
-import { fmtCost, fmtDate, fmtDuration, fmtTokens, shortModel, tokenSplitTitle } from "./format";
+import { costTitle, fmtCost, fmtDate, fmtDuration, fmtTokens, shortModel, tokenSplitTitle } from "./format";
 import { FilterSelect } from "./FilterSelect";
 import { Pager } from "./Pager";
 import { SortHeader, type SortDir } from "./sort";
@@ -126,7 +126,12 @@ const COLUMNS: ColumnDef[] = [
     defaultVisible: false, // opt-in: cost lives on the session detail page; ccusage owns the cost story
     sortKey: "cost",
     thClassName: "num",
-    cell: (s) => <td className="num" title="Estimated at API list prices (cache-aware)">{fmtCost(s.cost)}</td>,
+    cell: (s) => (
+      <td className="num" title={costTitle(s.unpriced_models)}>
+        {fmtCost(s.cost)}
+        {s.unpriced_models?.length ? <span className="warn-tag"> ⚠</span> : null}
+      </td>
+    ),
   },
   { id: "started", label: "Started", toggleable: true, defaultVisible: true, sortKey: "started", cell: (s) => <td>{fmtDate(s.started_at)}</td> },
 ];

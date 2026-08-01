@@ -110,11 +110,15 @@ anywhere and `ingest --full` rebuilds it — but the archive and the triage stor
 their data, so an independent override risks stranding it. They stay pinned to the layout; relocate
 `AGENT_LENS_DATA` instead. See [ADR-021](decisions/ADR-021-fixed-data-layout.md).
 
-> **Note:** neither `db` nor `server` appears in `agent-lens.config.example.json`. That example is the
-> last-resort fallback when no real config file exists, so anything set in it is *live* config for
-> everyone who hasn't written their own — a `db` there would silently redirect the store, and a
+The file also takes an optional `pricing` block for model rates — see
+[*Adjust model pricing*](#adjust-model-pricing-optional) below.
+
+> **Note:** none of `db`, `server` or `pricing` appears in `agent-lens.config.example.json`. That
+> example is the last-resort fallback when no real config file exists, so anything set in it is *live*
+> config for everyone who hasn't written their own — a `db` there would silently redirect the store, a
 > `server` block would count as an explicitly-set port/host (freezing today's defaults into installed
-> service units). Copy the file, then add these keys to your own copy.
+> service units), and a `pricing` entry would report as a user override on a machine whose owner never
+> wrote one. Copy the file, then add these keys to your own copy.
 >
 > The **data dir** stays env-only (`AGENT_LENS_DATA`) by construction: it is where the config file is
 > looked up, so it cannot be read back out of that file.
@@ -156,6 +160,42 @@ anything under it, including its subagent transcripts. Paths accept `~` and `$HO
 node scripts/sources.mjs --excludes     # prints the resolved exclude paths, one per line
 AGENT_LENS_EXCLUDE="$HOME/scratch" agent-lens ingest    # one-off, additive to the config list
 ```
+
+## Adjust model pricing (optional)
+
+Cost is **derived**, never stored: transcripts record token counts and a model id, so every figure
+Agent Lens shows is an estimate of what those tokens would have cost at API list prices. A model with
+no rate in the built-in table contributes **$0**, which is why an unrecognized model would otherwise
+make sessions look free.
+
+Nothing is silent about that any more: the ingest report lists unpriced models, `agent-lens config`
+and the About page report them, and a per-session cost that is missing a rate renders as `$0.79 ⚠`
+with a tooltip naming the model. If you see one, either upgrade for an updated table or add the rate
+yourself:
+
+```jsonc
+// agent-lens.config.json
+{
+  "sources": [ /* … */ ],
+  "pricing": {
+    // USD per 1M tokens, keyed by model-id prefix (longest prefix wins).
+    "claude-opus-5": { "input": 5, "output": 25 },
+    // cacheWrite / cacheRead are optional — they default to 1.25x and 0.1x of input.
+    "claude-opus-5-internal": { "input": 0, "output": 0, "cacheWrite": 0, "cacheRead": 0 }
+  }
+}
+```
+
+Your entries overlay the built-in table, so you only list what you want to change or add. An entry
+missing a numeric `input`/`output` is reported and ignored (the built-in rate stays in force) rather
+than stopping the tool — check `agent-lens config`:
+
+```bash
+agent-lens config      # Pricing block: models priced, overrides in force, and any ignored keys
+```
+
+Prices are list price only — no introductory or effective-dated rates, and no visibility into
+subscription quota. See [ADR-028](decisions/ADR-028-model-pricing.md).
 
 ## Stage 1 — Collect
 
@@ -211,7 +251,8 @@ Use `--full` after changing parser/classifier logic, after a `SCHEMA_VERSION` bu
 truth, so rebuilding the DB is always safe.
 
 It prints a summary: `files / skipped / new_events / malformed`, then
-`sessions / turns / events / tool_calls / classified`, then `tokens / est_cost`.
+`sessions / turns / events / tool_calls / classified`, then `tokens / est_cost` — plus an
+`unpriced=N model(s)` line when some model has usage but no price (see *Adjust model pricing* above).
 
 > **How it works:** see [ARCHITECTURE.md → Ingest runtime](ARCHITECTURE.md#3-ingest-runtime-stage-2).
 > **Running / migrating / troubleshooting:** see the [Ingest Runbook](INGEST-RUNBOOK.md) — including the
@@ -452,7 +493,7 @@ than independently relocatable (ADR-021). Move `AGENT_LENS_DATA` to move the arc
 | `GET /api/files` | filtered, paginated (project, file) change aggregate (ADR-022) |
 | `GET /api/file` | one file's provenance timeline, grouped by session (`path`, optional `project`) |
 | `GET /api/prefs/:key` | a stored UI preference (`{ value }`; `null` when unset or no writable store) |
-| `GET /api/about` | diagnostics: versions (app, schema, detector, classifier), resolved paths + their origin, binding, retention, sources, storage ([ADR-027](decisions/ADR-027-runtime-diagnostics-surface.md)). Read-only, and **not** in the static snapshot — it carries filesystem paths |
+| `GET /api/about` | diagnostics: versions (app, schema, detector, classifier), resolved paths + their origin, binding, retention, pricing (table origin, overrides, unpriced models — [ADR-028](decisions/ADR-028-model-pricing.md)), sources, storage ([ADR-027](decisions/ADR-027-runtime-diagnostics-surface.md)). Read-only, and **not** in the static snapshot — it carries filesystem paths |
 
 `/api/sessions` query params: `source`, `project`, `model`, `kind` (`main`\|`subagent`),
 `q` (full-text), `from`, `to` (date-inclusive), `severity` (comma-separated; sessions with a finding of

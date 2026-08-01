@@ -19,6 +19,19 @@ export function fmtCost(n: number): string {
   return n >= 0.01 ? "$" + n.toFixed(2) : n > 0 ? "<$0.01" : "$0";
 }
 
+const COST_BASIS = "Estimated at API list prices (cache-aware)";
+
+/**
+ * Hover text for a cost figure. A model with no rate contributes $0 silently (ADR-028) — say so on
+ * the number itself, because "$0" next to real usage otherwise reads as "this was free".
+ */
+export function costTitle(unpriced?: string[] | null): string {
+  return unpriced?.length
+    ? `No list price for ${unpriced.join(", ")} — this total is incomplete. ` +
+      `Add rates under "pricing" in agent-lens.config.json, or upgrade for an updated table.`
+    : COST_BASIS;
+}
+
 /** Hover breakdown of a token total into its four categories (cache kept, not hidden). */
 export function tokenSplitTitle(s?: { input: number; output: number; cache_creation: number; cache_read: number } | null): string {
   if (!s) return "";

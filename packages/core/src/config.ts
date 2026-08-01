@@ -14,6 +14,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { expandPath, findRepoRoot, resolveConfigFile, resolveDataDir } from "./paths.js";
+import { mergePricing, PRICE_TABLE, usePricing, type Rate } from "./pricing.js";
 
 /** Shape of agent-lens.config.json (only the fields this module and sources.ts read). */
 export interface AgentLensConfigFile {
@@ -22,6 +23,8 @@ export interface AgentLensConfigFile {
   /** SQLite store path. Top-level, not under `server`: ingest and export read it too. */
   db?: string;
   server?: { port?: number; host?: string };
+  /** Model-price overrides, keyed by model-id prefix (ADR-028). Validated by mergePricing, not here. */
+  pricing?: unknown;
 }
 
 export const DEFAULT_PORT = 4477;
@@ -40,6 +43,50 @@ export function resolveRetention(): { keepDays: number; origin: "env" | "default
   return Number.isFinite(parsed) && parsed >= 0
     ? { keepDays: parsed, origin: "env" }
     : { keepDays: DEFAULT_VERSIONS_KEEP_DAYS, origin: "default" };
+}
+
+export interface ResolvedPricing {
+  /** Built-in PRICE_TABLE with any valid config overrides applied. */
+  table: Record<string, Rate>;
+  /** "file" once any override is in force, else "default". No flag or env layer exists (see below). */
+  origin: Extract<ConfigOrigin, "file" | "default">;
+  /** Override keys applied, and those rejected as malformed — both surfaced by the diagnostics. */
+  applied: string[];
+  invalid: string[];
+}
+
+/**
+ * Resolve the effective model-price table: built-in defaults overlaid with the config file's
+ * `pricing` block (ADR-028). Same shape as the other resolvers here — pure over an injected config,
+ * tagged with where the value came from.
+ *
+ * Narrower than ConfigOrigin on purpose, like resolveRetention: prices are a table, not a scalar, so
+ * there is no sensible flag or env layer — "file" and "default" are the only reachable origins.
+ *
+ * Malformed entries are reported in `invalid` and dropped, leaving the built-in rate in place. That
+ * is deliberately unlike validatePort, which throws: cost is a labelled estimate, so a typo in an
+ * optional block should degrade the estimate, not stop the tool from starting.
+ */
+export function resolvePricing(cfg: AgentLensConfigFile | null = readConfigFile()): ResolvedPricing {
+  const { table, invalid, applied } = mergePricing(PRICE_TABLE, cfg?.pricing);
+  return { table, origin: applied.length ? "file" : "default", applied, invalid };
+}
+
+/**
+ * Resolve the price table, install it process-wide, and warn about anything rejected. Called once at
+ * startup by each entry point that derives cost (ingest, server) — the returned facts are what the
+ * diagnostics report, so they describe the table actually in force rather than a fresh resolution.
+ */
+export function installPricing(cfg?: AgentLensConfigFile | null): ResolvedPricing {
+  const resolved = cfg === undefined ? resolvePricing() : resolvePricing(cfg);
+  usePricing(resolved.table);
+  if (resolved.invalid.length) {
+    console.error(
+      `agent-lens: ignoring ${resolved.invalid.length} malformed pricing override(s): ` +
+        `${resolved.invalid.join(", ")} (each entry needs numeric input + output; built-in rates kept)`,
+    );
+  }
+  return resolved;
 }
 
 /**

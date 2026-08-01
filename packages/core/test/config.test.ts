@@ -9,6 +9,7 @@ import { join } from "node:path";
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import {
   resolveDbPath,
+  resolvePricing,
   resolveServerConfig,
   validatePort,
   DEFAULT_DB_NAME,
@@ -148,5 +149,33 @@ describe("port validation (fail fast)", () => {
     expect(() => validatePort(0, "t")).toThrow();
     expect(() => validatePort(65536, "t")).toThrow();
     expect(() => validatePort(1.5, "t")).toThrow();
+  });
+});
+
+/** Prices have no flag or env layer (see resolvePricing) — "file" and "default" are the only origins,
+ *  and unlike the port, a bad value degrades the estimate instead of failing startup. */
+describe("resolvePricing", () => {
+  it("no config file, or no pricing block → the built-in table, origin 'default'", () => {
+    for (const cfg of [null, {}, { db: "/tmp/x.db" }]) {
+      const p = resolvePricing(cfg);
+      expect(p.origin).toBe("default");
+      expect(p.applied).toEqual([]);
+      expect(p.table["claude-opus-5"].input).toBe(5);
+    }
+  });
+
+  it("a valid override flips the origin to 'file' and lands in the table", () => {
+    const p = resolvePricing({ pricing: { "claude-opus-5": { input: 4, output: 20 } } });
+    expect(p.origin).toBe("file");
+    expect(p.applied).toEqual(["claude-opus-5"]);
+    expect(p.table["claude-opus-5"]).toEqual({ input: 4, output: 20, cacheWrite: 5, cacheRead: 0.4 });
+  });
+
+  it("a malformed override is reported, dropped, and does NOT count as a file-origin override", () => {
+    const p = resolvePricing({ pricing: { "claude-opus-5": { output: 25 } } });
+    expect(p.invalid).toEqual(["claude-opus-5"]);
+    expect(p.applied).toEqual([]);
+    expect(p.origin).toBe("default"); // nothing took effect, so don't claim the file layer is in force
+    expect(p.table["claude-opus-5"].input).toBe(5);
   });
 });

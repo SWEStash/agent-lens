@@ -219,6 +219,69 @@ export default function AboutView() {
             </section>
 
             <section>
+              <h2>Pricing</h2>
+              <table className="kv">
+                <tbody>
+                  <Row label="Models priced">
+                    {a.pricing.models}{" "}
+                    <span className="origin-tag" title={originHelp(a.pricing.origin)}>
+                      {a.pricing.origin}
+                    </span>
+                    <div className="muted">
+                      Cost is estimated from token counts at API list prices — never read from the
+                      transcripts, which do not record it. Override or add rates with a{" "}
+                      <code>pricing</code> block in the config file.
+                    </div>
+                  </Row>
+                  {a.pricing.applied.length > 0 && (
+                    <Row label="Overrides">
+                      {a.pricing.applied.map((m) => (
+                        <code key={m} className="path">
+                          {m}
+                        </code>
+                      ))}
+                    </Row>
+                  )}
+                  {a.pricing.invalid.length > 0 && (
+                    <Row label="Ignored">
+                      <span className="warn-tag">malformed</span>{" "}
+                      {a.pricing.invalid.map((m) => (
+                        <code key={m} className="path">
+                          {m}
+                        </code>
+                      ))}
+                      <div className="muted">
+                        Each entry needs numeric <code>input</code> and <code>output</code> rates. These
+                        kept their built-in rate.
+                      </div>
+                    </Row>
+                  )}
+                  <Row label="Unpriced models">
+                    {a.pricing.unpriced.length === 0 ? (
+                      <span className="muted">None — every model in this store has a rate</span>
+                    ) : (
+                      <>
+                        <span className="warn-tag" role="status">
+                          cost understated
+                        </span>{" "}
+                        {a.pricing.unpriced.map((m) => (
+                          <code key={m} className="path">
+                            {m}
+                          </code>
+                        ))}
+                        <div className="muted">
+                          These have token usage but no rate, so they contribute $0 to every cost shown.
+                          Upgrade for an updated table, or add rates under <code>pricing</code> in the
+                          config file.
+                        </div>
+                      </>
+                    )}
+                  </Row>
+                </tbody>
+              </table>
+            </section>
+
+            <section>
               <h2>Sources</h2>
               {a.sources.length === 0 ? (
                 <p className="muted">No sources configured.</p>
