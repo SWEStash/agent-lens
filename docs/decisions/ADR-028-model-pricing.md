@@ -52,6 +52,18 @@ ingested later. Point-in-time accuracy would need effective-dated rates, which i
 
 There is no performance case either: the aggregate is a `GROUP BY model` over ~37k rows.
 
+> **Amended (2026-08).** Deriving cost at read time means the session list cannot `ORDER BY` a stored
+> column, so sorting by cost now happens in SQL against a **rates CTE** built from
+> `activePricing()` — `COST_SORT_SQL` / `ratesCte()` in `packages/server/src/db.ts`. Two consequences
+> for anyone changing pricing:
+>
+> 1. The cost formula now has **two implementations** — `costForUsage()` and its SQL transcription.
+>    `packages/server/test/pricing-sql.test.ts` pins them together and must keep passing.
+> 2. The CTE is built from the **active** table, never `PRICE_TABLE`, so config overrides (Decision 2)
+>    reach the ordering as well as the displayed figure. The join reproduces the longest-prefix match
+>    of `rateForModel`; an equality join would reintroduce exactly the silent-$0 failure above for any
+>    dated model id. Both properties are covered by that test, including an override case.
+
 ### 2. The built-in table is a default, not the only source
 
 `PRICE_TABLE` remains the shipped default. A `pricing` block in `agent-lens.config.json` overlays it,
