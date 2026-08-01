@@ -1,5 +1,9 @@
 /** Shared read-only SQL helpers for the server. */
+import type { SQLInputValue } from "node:sqlite";
 import type { DB } from "./db.js";
+
+/** Bound parameters, as `node:sqlite` wants them. Call sites pass `unknown` and cast through here. */
+const bind = (params: unknown[]): SQLInputValue[] => params as SQLInputValue[];
 
 /** Whether a table exists — the server opens the DB read-only, so a not-yet-ingested schema (e.g. no
  * workflow_results table) must degrade gracefully rather than throw. */
@@ -11,16 +15,16 @@ export function tableExists(db: DB, name: string): boolean {
  * Typed `prepare(sql).all(...params)`. The caller names the row shape `T` once (a `@agent-lens/contracts`
  * row, a server-local derived shape from `rows.ts`, or an inline shape) and the cast lives here instead
  * of at every call site — so a column the query doesn't actually select is a compile error, not a silent
- * `undefined` at runtime. better-sqlite3 has no static knowledge of a query's columns, so the single
- * `as T[]` here is the unavoidable boundary; keep it the only one.
+ * `undefined` at runtime. SQLite has no static knowledge of a query's columns, so the single cast
+ * here is the unavoidable boundary; keep it the only one.
  */
 export function queryAll<T>(db: DB, sql: string, ...params: unknown[]): T[] {
-  return db.prepare(sql).all(...params) as T[];
+  return db.prepare(sql).all(...bind(params)) as unknown as T[];
 }
 
 /** Typed `prepare(sql).get(...params)` — returns the row or `undefined`. See {@link queryAll}. */
 export function queryGet<T>(db: DB, sql: string, ...params: unknown[]): T | undefined {
-  return db.prepare(sql).get(...params) as T | undefined;
+  return db.prepare(sql).get(...bind(params)) as T | undefined;
 }
 
 /**
@@ -88,7 +92,7 @@ export function pageLimit(raw: unknown, fallback: number, max: number): number {
  * Resolve a request's `?offset=` into a non-negative integer.
  *
  * `Number(q.offset) || 0` passes a non-integer straight through — `?offset=1.5` is truthy, reaches
- * better-sqlite3, and throws (a 500) because it will not bind a float to an integer parameter.
+ * SQLite, and throws (a 500) because it will not bind a float to an integer parameter.
  */
 export function pageOffset(raw: unknown): number {
   const n = Math.floor(Number(raw));

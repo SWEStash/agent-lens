@@ -11,6 +11,7 @@
  */
 import { createHash } from "node:crypto";
 import { posix as path } from "node:path";
+import { transaction } from "@agent-lens/core";
 import type { DB } from "./db.js";
 
 export const FILECHANGES_VERSION = 1;
@@ -66,7 +67,7 @@ export function deriveFileChanges(db: DB, dirty?: Set<string> | null): { count: 
     db.exec("DROP TABLE IF EXISTS _dirty_fc");
     db.exec("CREATE TEMP TABLE _dirty_fc (id TEXT PRIMARY KEY)");
     const ins = db.prepare("INSERT OR IGNORE INTO _dirty_fc (id) VALUES (?)");
-    db.transaction((ids: Iterable<string>) => {
+    transaction(db, (ids: Iterable<string>) => {
       for (const id of ids) ins.run(id);
     })(dirty);
   }
@@ -90,7 +91,7 @@ export function deriveFileChanges(db: DB, dirty?: Set<string> | null): { count: 
        FROM tool_calls tc LEFT JOIN events e ON e.uuid = tc.event_uuid
        WHERE tc.tool_name IN (${FILE_TOOLS.map(() => "?").join(",")})${scope}`,
     )
-    .all(...FILE_TOOLS) as ToolRow[];
+    .all(...FILE_TOOLS) as unknown as ToolRow[];
 
   const insert = db.prepare(
     `INSERT INTO file_changes (id, tool_call_id, session_id, turn_id, event_uuid, project_id, file_path, tool_name, lines_added, lines_removed, timestamp, derive_version)
@@ -101,7 +102,7 @@ export function deriveFileChanges(db: DB, dirty?: Set<string> | null): { count: 
     ? "DELETE FROM file_changes WHERE session_id IN (SELECT id FROM _dirty_fc)"
     : "DELETE FROM file_changes";
 
-  const tx = db.transaction(() => {
+  const tx = transaction(db, () => {
     db.exec(delScope);
     for (const row of rows) {
       if (row.status === "error") continue; // a failed call did not change the file

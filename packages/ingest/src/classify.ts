@@ -10,6 +10,7 @@
  */
 import type { DB } from "./db.js";
 import { createDirtySet } from "./dirtyset.js";
+import { transaction } from "@agent-lens/core";
 import { parseStored } from "./storedjson.js";
 
 // v2 (ADR-004): realistic complexity ceilings so real (long, substantial) main sessions spread
@@ -214,7 +215,7 @@ export function classify(db: DB, dirty?: Set<string> | null): { count: number; v
 
   const sessions = db
     .prepare(`SELECT id, is_sidechain, turn_count, event_count, duration_ms FROM sessions${incremental ? " WHERE id IN (SELECT id FROM _dirty)" : ""}`)
-    .all() as SessionAgg[];
+    .all() as unknown as SessionAgg[];
 
   // Bulk-load per-session signals once, then assemble in JS (scales to many sessions).
   const toolMix = new Map<string, Record<string, number>>();
@@ -274,7 +275,7 @@ export function classify(db: DB, dirty?: Set<string> | null): { count: number; v
        classifier_version=excluded.classifier_version`,
   );
 
-  const tx = db.transaction(() => {
+  const tx = transaction(db, () => {
     for (const sess of sessions) {
       const toolCounts = toolMix.get(sess.id) ?? {};
       const skills = skillMix.get(sess.id) ?? {};

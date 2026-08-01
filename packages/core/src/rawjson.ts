@@ -16,13 +16,18 @@ export function packRaw(json: string): Buffer {
   return gzipSync(Buffer.from(json, "utf8"));
 }
 
-/** Decompress a stored `raw_json` value. Accepts gzip BLOBs and legacy plain text/strings. */
-export function unpackRaw(value: string | Buffer): string {
-  if (Buffer.isBuffer(value)) {
-    if (value.length >= 2 && value[0] === 0x1f && value[1] === 0x8b) {
-      return gunzipSync(value).toString("utf8");
-    }
-    return value.toString("utf8");
+/**
+ * Decompress a stored `raw_json` value. Accepts gzip BLOBs and legacy plain text/strings.
+ *
+ * Takes `Uint8Array`, not `Buffer`: `node:sqlite` hands BLOBs back as plain `Uint8Array` (ADR-029),
+ * and `Buffer.isBuffer` is false for those. Gating on `Buffer` here would silently skip the gunzip
+ * and return the compressed bytes as if they were legacy plain text. `Buffer` still satisfies this —
+ * it is a `Uint8Array` subclass — so the write path is unchanged.
+ */
+export function unpackRaw(value: string | Uint8Array): string {
+  if (typeof value === "string") return value;
+  if (value.length >= 2 && value[0] === 0x1f && value[1] === 0x8b) {
+    return gunzipSync(value).toString("utf8");
   }
-  return value;
+  return Buffer.from(value).toString("utf8");
 }

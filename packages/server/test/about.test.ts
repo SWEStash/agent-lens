@@ -12,7 +12,7 @@
  * Imports the BUILT dist (matches the other server suites).
  */
 import { describe, it, expect } from "vitest";
-import Database from "better-sqlite3";
+import { DatabaseSync } from "node:sqlite";
 import { PRICE_TABLE, resolvePricing, SCHEMA_SQL, usePricing } from "@agent-lens/core";
 import { addEvent, addTokens, appFor, freshDb, seedBasic } from "./helpers/seed";
 
@@ -27,7 +27,7 @@ const CTX = {
   pricing: resolvePricing(null),
 };
 
-const getAbout = async (db: Database.Database, ctx = CTX) => {
+const getAbout = async (db: DatabaseSync, ctx = CTX) => {
   const app = await appFor(db, { about: ctx });
   const res = await app.inject({ method: "GET", url: "/api/about" });
   await app.close();
@@ -79,7 +79,7 @@ describe("about: versions", () => {
 
   // SCHEMA_SQL creates the `meta` table but does not populate it — ingest stamps schema_version. So
   // these set it explicitly rather than assuming a seeded DB carries one.
-  const stampSchema = (db: Database.Database, v: number) =>
+  const stampSchema = (db: DatabaseSync, v: number) =>
     db.prepare("INSERT INTO meta (key, value) VALUES ('schema_version', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value").run(String(v));
 
   it("reports a current schema as not stale", async () => {
@@ -258,7 +258,7 @@ describe("about: pricing", () => {
   });
 
   it("survives a DB with no token_usage table", async () => {
-    const db = new Database(":memory:");
+    const db = new DatabaseSync(":memory:");
     db.exec(SCHEMA_SQL);
     db.exec("DROP TABLE token_usage");
     const res = await getAbout(db);
@@ -292,7 +292,7 @@ describe("about: storage", () => {
   });
 
   it("survives a pre-ingest DB with no ingest_state table at all", async () => {
-    const db = new Database(":memory:");
+    const db = new DatabaseSync(":memory:");
     db.exec(SCHEMA_SQL);
     db.exec("DROP TABLE ingest_state");
     const res = await getAbout(db);

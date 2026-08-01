@@ -14,21 +14,19 @@
  * Exit code: non-zero if any HARD invariant fails. SOFT findings (orphans, unpriced models,
  * unattributed rows) are reported but never fail the run — they feed docs/VALIDATION.md.
  */
-import { createRequire } from "node:module";
+import { DatabaseSync } from "node:sqlite";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { costForUsage, rateForModel } from "../packages/core/dist/pricing.js";
 import { dashboardOverview } from "../packages/server/dist/dashboard.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-// better-sqlite3 lives in the packages' node_modules (pnpm), not the repo root — resolve it there.
-const Database = createRequire(join(__dirname, "../packages/ingest/package.json"))("better-sqlite3");
 const argv = process.argv.slice(2);
 const dbIdx = argv.indexOf("--db");
 const dbPath = dbIdx >= 0 ? argv[dbIdx + 1] : join(__dirname, "..", "data", "agent-lens.db");
 
-const db = new Database(dbPath, { readonly: true, fileMustExist: true });
-db.pragma("query_only = ON");
+const db = new DatabaseSync(dbPath, { readOnly: true });
+db.exec("PRAGMA query_only = ON");
 
 let hardFail = 0;
 const line = (s) => process.stdout.write(s + "\n");

@@ -8,7 +8,7 @@
  * Imports the BUILT dist so it exercises exactly what ships.
  */
 import { describe, it, expect, beforeAll } from "vitest";
-import Database from "better-sqlite3";
+import { DatabaseSync } from "node:sqlite";
 import { SCHEMA_SQL } from "@agent-lens/core";
 import { classify, locDelta } from "../dist/classify.js";
 
@@ -35,34 +35,34 @@ describe("locDelta — LoC parsed from a tool call's verbatim input", () => {
 
 // ---- Complexity formula (weighted, with v2 ceilings) ----
 
-function freshDb(): Database.Database {
-  const db = new Database(":memory:");
+function freshDb(): DatabaseSync {
+  const db = new DatabaseSync(":memory:");
   db.exec(SCHEMA_SQL);
-  db.pragma("foreign_keys = OFF"); // seed only what the classifier reads, not the full FK graph
+  db.exec("PRAGMA foreign_keys = OFF"); // seed only what the classifier reads, not the full FK graph
   return db;
 }
 
-function addSession(db: Database.Database, id: string, opts: { sidechain?: number; turns?: number; durationMs?: number } = {}) {
+function addSession(db: DatabaseSync, id: string, opts: { sidechain?: number; turns?: number; durationMs?: number } = {}) {
   db.prepare(
     `INSERT INTO sessions (id, agent_id, is_sidechain, duration_ms, event_count, turn_count) VALUES (?, 'claude-code', ?, ?, 0, ?)`,
   ).run(id, opts.sidechain ?? 0, opts.durationMs ?? null, opts.turns ?? 0);
 }
-function addTool(db: Database.Database, id: string, session: string, tool: string, extra: { input?: any; agentType?: string; spawned?: string } = {}) {
+function addTool(db: DatabaseSync, id: string, session: string, tool: string, extra: { input?: any; agentType?: string; spawned?: string } = {}) {
   db.prepare(
     `INSERT INTO tool_calls (id, session_id, tool_name, agent_type, spawned_session_id, input_json) VALUES (?, ?, ?, ?, ?, ?)`,
   ).run(id, session, tool, extra.agentType ?? null, extra.spawned ?? null, extra.input != null ? JSON.stringify(extra.input) : null);
 }
-function addTokens(db: Database.Database, session: string, ev: string, u: { i?: number; o?: number; cw?: number; cr?: number }) {
+function addTokens(db: DatabaseSync, session: string, ev: string, u: { i?: number; o?: number; cw?: number; cr?: number }) {
   db.prepare(
     `INSERT INTO token_usage (event_uuid, session_id, input_tokens, output_tokens, cache_creation_input_tokens, cache_read_input_tokens) VALUES (?, ?, ?, ?, ?, ?)`,
   ).run(ev, session, u.i ?? 0, u.o ?? 0, u.cw ?? 0, u.cr ?? 0);
 }
-function addTurn(db: Database.Database, session: string, seq: number, prompt: string) {
+function addTurn(db: DatabaseSync, session: string, seq: number, prompt: string) {
   db.prepare(`INSERT INTO turns (id, session_id, seq, prompt_preview) VALUES (?, ?, ?, ?)`).run(`${session}:${seq}`, session, seq, prompt);
 }
-const signalsOf = (db: Database.Database, id: string) =>
+const signalsOf = (db: DatabaseSync, id: string) =>
   JSON.parse((db.prepare("SELECT signals_json FROM classifications WHERE target_id = ?").get(id) as any).signals_json);
-const classOf = (db: Database.Database, id: string) =>
+const classOf = (db: DatabaseSync, id: string) =>
   db.prepare("SELECT category, complexity_score, complexity_band FROM classifications WHERE target_id = ?").get(id) as any;
 
 describe("complexity — weighted sub-scores with v2 ceilings", () => {
@@ -120,7 +120,7 @@ describe("complexity — weighted sub-scores with v2 ceilings", () => {
 });
 
 describe("category — keyword + structural evidence, with subagent-role override", () => {
-  let db: Database.Database;
+  let db: DatabaseSync;
   beforeAll(() => {
     db = freshDb();
     const cases: Array<[string, string]> = [

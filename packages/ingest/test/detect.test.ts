@@ -5,19 +5,19 @@
  * referential integrity (the ingest golden + determinism suites cover that). Imports the BUILT dist.
  */
 import { describe, it, expect } from "vitest";
-import Database from "better-sqlite3";
+import { DatabaseSync } from "node:sqlite";
 import { SCHEMA_SQL } from "@agent-lens/core";
 import { detect, bumpSeverity } from "../dist/detect.js";
 
-function freshDb(): Database.Database {
-  const db = new Database(":memory:");
+function freshDb(): DatabaseSync {
+  const db = new DatabaseSync(":memory:");
   db.exec(SCHEMA_SQL);
-  db.pragma("foreign_keys = OFF");
+  db.exec("PRAGMA foreign_keys = OFF");
   return db;
 }
 
 /** Seed a session (optionally with a project path for outside-project checks). */
-function addSession(db: Database.Database, id: string, projectPath?: string) {
+function addSession(db: DatabaseSync, id: string, projectPath?: string) {
   if (projectPath) {
     const pid = `p-${id}`;
     db.prepare(`INSERT INTO projects (id, agent_id, path) VALUES (?, 'claude-code', ?)`).run(pid, projectPath);
@@ -30,7 +30,7 @@ function addSession(db: Database.Database, id: string, projectPath?: string) {
 let seq = 0;
 /** Seed a tool call; returns its id. */
 function addTool(
-  db: Database.Database,
+  db: DatabaseSync,
   session: string,
   tool: string,
   opts: { input?: any; result?: string; status?: string } = {},
@@ -43,7 +43,7 @@ function addTool(
   return id;
 }
 
-const findingsFor = (db: Database.Database, toolCallId: string) =>
+const findingsFor = (db: DatabaseSync, toolCallId: string) =>
   db.prepare("SELECT * FROM findings WHERE tool_call_id = ? ORDER BY rule_id").all(toolCallId) as any[];
 
 /** Convenience: seed one Bash command in its own session, detect, return that call's findings. */

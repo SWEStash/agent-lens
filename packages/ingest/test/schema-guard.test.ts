@@ -9,7 +9,7 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import Database from "better-sqlite3";
+import { DatabaseSync } from "node:sqlite";
 import { SCHEMA_VERSION } from "@agent-lens/core";
 import { openDb, openRaw, resetSchema, readSchemaVersion } from "../dist/db.js";
 
@@ -25,7 +25,7 @@ afterEach(() => rmSync(root, { recursive: true, force: true }));
 describe("schema-version guard", () => {
   it("keeps a stale stamp — an incremental open never overwrites an older version", () => {
     // Simulate a DB last written by an older build: minimal meta table stamped one version back.
-    const seed = new Database(dbPath);
+    const seed = new DatabaseSync(dbPath);
     seed.exec("CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT)");
     seed.prepare("INSERT INTO meta(key, value) VALUES ('schema_version', ?)").run(String(SCHEMA_VERSION - 1));
     seed.close();
@@ -43,7 +43,7 @@ describe("schema-version guard", () => {
   });
 
   it("resetSchema advances a stale stamp to the current version", () => {
-    const seed = new Database(dbPath);
+    const seed = new DatabaseSync(dbPath);
     seed.exec("CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT)");
     seed.prepare("INSERT INTO meta(key, value) VALUES ('schema_version', ?)").run(String(SCHEMA_VERSION - 1));
     seed.close();

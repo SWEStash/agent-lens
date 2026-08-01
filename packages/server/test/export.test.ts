@@ -4,15 +4,15 @@
  * names the download to signal whether it was sanitized.
  */
 import { describe, it, expect, beforeAll } from "vitest";
-import Database from "better-sqlite3";
+import { DatabaseSync } from "node:sqlite";
 import { SCHEMA_SQL } from "@agent-lens/core";
 import { createApp } from "../dist/app.js";
 
 const AKIA = "AKIAIOSFODNN7EXAMPLE";
 
-function seed(): Database.Database {
-  const db = new Database(":memory:");
-  db.pragma("foreign_keys = ON");
+function seed(): DatabaseSync {
+  const db = new DatabaseSync(":memory:");
+  db.exec("PRAGMA foreign_keys = ON");
   db.exec(SCHEMA_SQL);
   db.exec(`
     INSERT INTO agents (id, name, kind) VALUES ('claude-code', 'Claude Code CLI', 'cli');

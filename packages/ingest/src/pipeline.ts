@@ -4,12 +4,12 @@
  * the disk walk, and the incremental-skip check; everything here operates on an open DB + file content.
  */
 import { createHash } from "node:crypto";
-import type Database from "better-sqlite3";
-import { packRaw, type SourceAdapter, type SourceFile, type TurnRow } from "@agent-lens/core";
+import type { StatementSync } from "node:sqlite";
+import { packRaw, runNamed, transaction, type SourceAdapter, type SourceFile, type TurnRow } from "@agent-lens/core";
 import { type DB } from "./db.js";
 import { createDirtySet } from "./dirtyset.js";
 
-type Stmt = Database.Statement<any[]>;
+type Stmt = StatementSync;
 
 export interface IngestStats {
   files: number;
@@ -106,19 +106,25 @@ export function pruneExcluded(db: DB, excludedPaths: string[]): number {
   }
   const files = (db.prepare("SELECT DISTINCT source_file f FROM events WHERE session_id IN (SELECT id FROM _prune) AND source_file IS NOT NULL").all() as Array<{ f: string }>).map((r) => r.f);
 
-  db.pragma("foreign_keys = OFF");
-  db.transaction(() => {
-    db.exec("DELETE FROM findings WHERE session_id IN (SELECT id FROM _prune)");
-    db.exec("DELETE FROM file_changes WHERE session_id IN (SELECT id FROM _prune)");
-    for (const t of ["token_usage", "tool_calls", "turns", "events"]) db.exec(`DELETE FROM ${t} WHERE session_id IN (SELECT id FROM _prune)`);
-    db.exec("DELETE FROM classifications WHERE scope = 'session' AND target_id IN (SELECT id FROM _prune)");
-    db.exec("DELETE FROM sessions WHERE id IN (SELECT id FROM _prune)");
-    const delState = db.prepare("DELETE FROM ingest_state WHERE file_path = ?");
-    for (const f of files) delState.run(f);
-    // Drop now-empty projects (an excluded project leaves no sessions behind).
-    db.exec("DELETE FROM projects WHERE id NOT IN (SELECT DISTINCT project_id FROM sessions WHERE project_id IS NOT NULL)");
-  })();
-  db.pragma("foreign_keys = ON");
+  // The toggle must stay OUTSIDE the transaction: `PRAGMA foreign_keys` is a silent no-op inside one,
+  // so moving it in would disable nothing and raise no error. `finally` so a failed delete can't leave
+  // the connection unguarded for every later pass in the process.
+  db.exec("PRAGMA foreign_keys = OFF");
+  try {
+    transaction(db, () => {
+      db.exec("DELETE FROM findings WHERE session_id IN (SELECT id FROM _prune)");
+      db.exec("DELETE FROM file_changes WHERE session_id IN (SELECT id FROM _prune)");
+      for (const t of ["token_usage", "tool_calls", "turns", "events"]) db.exec(`DELETE FROM ${t} WHERE session_id IN (SELECT id FROM _prune)`);
+      db.exec("DELETE FROM classifications WHERE scope = 'session' AND target_id IN (SELECT id FROM _prune)");
+      db.exec("DELETE FROM sessions WHERE id IN (SELECT id FROM _prune)");
+      const delState = db.prepare("DELETE FROM ingest_state WHERE file_path = ?");
+      for (const f of files) delState.run(f);
+      // Drop now-empty projects (an excluded project leaves no sessions behind).
+      db.exec("DELETE FROM projects WHERE id NOT IN (SELECT DISTINCT project_id FROM sessions WHERE project_id IS NOT NULL)");
+    })();
+  } finally {
+    db.exec("PRAGMA foreign_keys = ON");
+  }
   db.exec("DROP TABLE IF EXISTS _prune");
   return total;
 }
@@ -239,11 +245,11 @@ function rebuildTurns(db: DB, scope: Scope, sessionIds: Array<{ id: string }>): 
   );
   const updEventTurn = db.prepare("UPDATE events SET turn_id = ? WHERE uuid = ?");
 
-  const tx = db.transaction(() => {
+  const tx = transaction(db, () => {
     for (const { id } of sessionIds) {
       const rows = selEvents.all(id) as any[];
       const { turns, eventTurn } = buildTurns(id, rows);
-      for (const t of turns) insTurn.run(t);
+      for (const t of turns) runNamed(insTurn, t);
       for (const [uuid, turnId] of eventTurn) updEventTurn.run(turnId, uuid);
     }
   });
@@ -275,7 +281,7 @@ function linkSkillVersions(db: DB, sessionIds: Array<{ id: string }>): void {
   );
   const linkCall = db.prepare("UPDATE tool_calls SET skill_id = ? WHERE id = ?");
 
-  const linkTx = db.transaction(() => {
+  const linkTx = transaction(db, () => {
     for (const { id: sid } of sessionIds) {
       const calls = selSkillCalls.all(sid) as Array<{ id: string; event_uuid: string | null; skill_name: string | null; input_json: string | null }>;
       if (!calls.length) continue;
@@ -555,7 +561,7 @@ export function ingestFile(
   const sessionMeta: Record<string, any> = {};
   let eventsInFile = 0;
 
-  const tx = db.transaction(() => {
+  const tx = transaction(db, () => {
     // Ensure the session row exists before any event references it (FK).
     stmts.insSessionStub.run(file.sessionId, adapter.agentId, file.sourceId);
     let seq = 0;
@@ -579,8 +585,8 @@ export function ingestFile(
           eventsInFile++;
         }
       }
-      if (parsed.tokenUsage) stmts.insTokens.run(parsed.tokenUsage);
-      if (parsed.toolCalls) for (const tc of parsed.toolCalls) stmts.insTool.run(tc);
+      if (parsed.tokenUsage) runNamed(stmts.insTokens, parsed.tokenUsage);
+      if (parsed.toolCalls) for (const tc of parsed.toolCalls) runNamed(stmts.insTool, tc);
       if (parsed.toolResults)
         for (const tr of parsed.toolResults)
           stmts.patchTool.run({

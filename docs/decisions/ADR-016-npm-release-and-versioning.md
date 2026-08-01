@@ -28,6 +28,12 @@ Two facts shaped the decision:
    win32 across x64/arm64 — full coverage for our `engines.node >=24`. It must stay **external** in
    the tsup bundle so npm resolves the right binary at install time.
 
+   > **Superseded by [ADR-029](ADR-029-node-sqlite-driver.md) (2026-08).** There is no native module
+   > any more — SQLite is `node:sqlite`, a Node builtin — so this consideration no longer constrains
+   > the release. `better-sqlite3` is gone from the bundle's `external` list, npm installs run no
+   > lifecycle scripts, and the prebuild/node-gyp fallback described below no longer exists. The
+   > global-install tarball smoke remains a release gate; it just no longer exercises a prebuild.
+
 ## Decision
 
 **Hand-cut the `0.1.0` baseline, let semantic-release govern every release after it.**

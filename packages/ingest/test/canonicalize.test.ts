@@ -7,7 +7,7 @@ import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import Database from "better-sqlite3";
+import { DatabaseSync } from "node:sqlite";
 import { SCHEMA_SQL } from "@agent-lens/core";
 import { canonicalizeProjects } from "../dist/canonicalize.js";
 
@@ -29,16 +29,16 @@ beforeAll(() => {
 });
 afterAll(() => rmSync(root, { recursive: true, force: true }));
 
-function freshDb(): Database.Database {
-  const db = new Database(":memory:");
+function freshDb(): DatabaseSync {
+  const db = new DatabaseSync(":memory:");
   db.exec(SCHEMA_SQL);
-  db.pragma("foreign_keys = OFF");
+  db.exec("PRAGMA foreign_keys = OFF");
   return db;
 }
 
 let n = 0;
 /** Seed a project row + one session in it; returns the project id. */
-function addProject(db: Database.Database, path: string, opts: { sessions?: number; sidechain?: boolean } = {}): string {
+function addProject(db: DatabaseSync, path: string, opts: { sessions?: number; sidechain?: boolean } = {}): string {
   const pid = `p${n++}`;
   db.prepare("INSERT INTO projects (id, agent_id, path) VALUES (?, 'claude-code', ?)").run(pid, path);
   for (let i = 0; i < (opts.sessions ?? 1); i++) {
@@ -52,7 +52,7 @@ function addProject(db: Database.Database, path: string, opts: { sessions?: numb
   return pid;
 }
 
-const paths = (db: Database.Database) =>
+const paths = (db: DatabaseSync) =>
   (db.prepare("SELECT p.path FROM projects p ORDER BY p.path").all() as Array<{ path: string }>).map((r) => r.path);
 
 describe("canonicalizeProjects", () => {

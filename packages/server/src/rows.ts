@@ -10,7 +10,7 @@
  * - a **response** (`@agent-lens/contracts` `api.ts`) is what an endpoint returns.
  *
  * Name each projection for the loader that issues it. They exist so `queryAll<T>` has something
- * honest to be parameterized with: the cast still isn't checked against the SQL (better-sqlite3 has
+ * honest to be parameterized with: the cast still isn't checked against the SQL (SQLite has
  * no static knowledge of a query's columns), but it is written down once, next to a name, instead of
  * being an `any` that silently absorbs whatever the response assembly then claims about it.
  */
@@ -82,7 +82,7 @@ export interface FindingProjectionRow {
 }
 
 /** The `events` projection for a transcript: display columns plus the packed `raw_json` that
- *  `extractParts` flattens into text/thinking. `raw_json` is a gzip Buffer post-ADR-011, but may be a
+ *  `extractParts` flattens into text/thinking. `raw_json` is a gzip BLOB post-ADR-011, but may be a
  *  legacy plain string — `unpackRaw` normalizes both, so the type admits both. */
 export interface EventProjectionRow {
   uuid: string;
@@ -92,12 +92,12 @@ export interface EventProjectionRow {
   model: string | null;
   is_sidechain: number;
   turn_id: string | null;
-  raw_json: string | Buffer;
+  raw_json: string | Uint8Array;
 }
 
 /** Just the packed transcript line — for the completion-notification lookup, which needs nothing else. */
 export interface RawJsonRow {
-  raw_json: string | Buffer;
+  raw_json: string | Uint8Array;
 }
 
 /** The `classifications` projection, with `signals_json` still unparsed. */

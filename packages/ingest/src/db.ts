@@ -1,13 +1,13 @@
-import Database from "better-sqlite3";
+import { DatabaseSync } from "node:sqlite";
 import { SCHEMA_SQL, SCHEMA_VERSION } from "@agent-lens/core";
 
-export type DB = Database.Database;
+export type DB = DatabaseSync;
 
 /** Open (creating if needed) the DB and set pragmas, WITHOUT applying the schema. */
 export function openRaw(file: string): DB {
-  const db = new Database(file);
-  db.pragma("journal_mode = WAL");
-  db.pragma("foreign_keys = ON");
+  const db = new DatabaseSync(file);
+  db.exec("PRAGMA journal_mode = WAL");
+  db.exec("PRAGMA foreign_keys = ON");
   return db;
 }
 
@@ -58,30 +58,34 @@ export function resetSchema(db: DB): void {
   // Disable FK enforcement during teardown: the v3 schema has cross/self references
   // (sessions.parent_turn_id → turns, parent_session_id → sessions) that otherwise make DROP order
   // matter and trip "FOREIGN KEY constraint failed". applySchema re-enables FKs (PRAGMA in SCHEMA_SQL).
-  db.pragma("foreign_keys = OFF");
-  db.exec(`
-    DROP TRIGGER IF EXISTS events_au;
-    DROP TRIGGER IF EXISTS events_ad;
-    DROP TRIGGER IF EXISTS events_ai;
-    DROP TABLE IF EXISTS events_fts;
-    DROP TABLE IF EXISTS file_changes;
-    DROP TABLE IF EXISTS findings;
-    DROP TABLE IF EXISTS classifications;
-    DROP TABLE IF EXISTS token_usage;
-    DROP TABLE IF EXISTS tool_calls;
-    DROP TABLE IF EXISTS skills;
-    DROP TABLE IF EXISTS events;
-    DROP TABLE IF EXISTS turns;
-    DROP TABLE IF EXISTS sessions;
-    DROP TABLE IF EXISTS projects;
-    DROP TABLE IF EXISTS sources;
-    DROP TABLE IF EXISTS agents;
-    DROP TABLE IF EXISTS workflow_results;
-    DROP TABLE IF EXISTS session_meta;
-    DROP TABLE IF EXISTS tool_results;
-    DROP TABLE IF EXISTS ingest_state;
-    DROP TABLE IF EXISTS meta;
-  `);
-  applySchema(db);
-  db.pragma("foreign_keys = ON");
+  // `finally` so a failed drop/apply can't leave the connection unguarded for the rest of the process.
+  db.exec("PRAGMA foreign_keys = OFF");
+  try {
+    db.exec(`
+      DROP TRIGGER IF EXISTS events_au;
+      DROP TRIGGER IF EXISTS events_ad;
+      DROP TRIGGER IF EXISTS events_ai;
+      DROP TABLE IF EXISTS events_fts;
+      DROP TABLE IF EXISTS file_changes;
+      DROP TABLE IF EXISTS findings;
+      DROP TABLE IF EXISTS classifications;
+      DROP TABLE IF EXISTS token_usage;
+      DROP TABLE IF EXISTS tool_calls;
+      DROP TABLE IF EXISTS skills;
+      DROP TABLE IF EXISTS events;
+      DROP TABLE IF EXISTS turns;
+      DROP TABLE IF EXISTS sessions;
+      DROP TABLE IF EXISTS projects;
+      DROP TABLE IF EXISTS sources;
+      DROP TABLE IF EXISTS agents;
+      DROP TABLE IF EXISTS workflow_results;
+      DROP TABLE IF EXISTS session_meta;
+      DROP TABLE IF EXISTS tool_results;
+      DROP TABLE IF EXISTS ingest_state;
+      DROP TABLE IF EXISTS meta;
+    `);
+    applySchema(db);
+  } finally {
+    db.exec("PRAGMA foreign_keys = ON");
+  }
 }

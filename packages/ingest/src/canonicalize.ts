@@ -27,6 +27,7 @@ import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { createHash } from "node:crypto";
 import { dirname, join } from "node:path";
+import { transaction } from "@agent-lens/core";
 import type { DB } from "./db.js";
 
 /** Same derivation ingestFile uses (pipeline.ts), so a created canonical row is identical to one
@@ -117,7 +118,7 @@ export function canonicalizeProjects(db: DB, opts: { homeDir?: string } = {}): C
   const repointFileChanges = db.prepare("UPDATE file_changes SET project_id = ? WHERE project_id = ?");
   const touched = new Set<string>();
 
-  db.transaction(() => {
+  transaction(db, () => {
     for (const r of rows) {
       const target = canon(r.path);
       if (target === strip(r.path)) continue;
@@ -146,9 +147,11 @@ export function canonicalizeProjects(db: DB, opts: { homeDir?: string } = {}): C
 
   // Session-less rows — both the just-merged sources and any pre-existing orphans — leave the
   // filter dropdowns for good.
-  const removed = db
-    .prepare("DELETE FROM projects WHERE id NOT IN (SELECT DISTINCT project_id FROM sessions WHERE project_id IS NOT NULL)")
-    .run().changes;
+  const removed = Number(
+    db
+      .prepare("DELETE FROM projects WHERE id NOT IN (SELECT DISTINCT project_id FROM sessions WHERE project_id IS NOT NULL)")
+      .run().changes,
+  );
 
   return { merged, removed };
 }

@@ -3,14 +3,14 @@
  * top of the Origin allowlist) and LOW-002 (baseline security headers on every response).
  */
 import { describe, it, expect, beforeAll } from "vitest";
-import Database from "better-sqlite3";
+import { DatabaseSync } from "node:sqlite";
 import { SCHEMA_SQL } from "@agent-lens/core";
 import { createApp } from "../dist/app.js";
 import { writeBlocked, originAllowed } from "../dist/refresh.js";
 
-function db(): Database.Database {
-  const d = new Database(":memory:");
-  d.pragma("foreign_keys = ON");
+function db(): DatabaseSync {
+  const d = new DatabaseSync(":memory:");
+  d.exec("PRAGMA foreign_keys = ON");
   d.exec(SCHEMA_SQL);
   return d;
 }
