@@ -72,6 +72,17 @@ The blocking question was whether it is a like-for-like replacement. Measured ag
   breaking transcript rendering for every event. It now takes `Uint8Array` (which `Buffer` satisfies,
   being a subclass). The ADR-011 round-trip test caught this; it now asserts the BLOB type rather
   than `Buffer` so the trap cannot reappear.
+- **The bundle must keep the `node:` prefix.** tsup 8 rewrites `node:foo` imports to bare `foo` by
+  default (`removeNodeProtocol`), which is harmless for `fs`/`zlib`/`crypto` — they resolve either
+  way — but fatal for `node:sqlite`, which is **prefix-only**. Stripped to `"sqlite"` it resolves to
+  nothing and the published CLI dies on startup with `ERR_MODULE_NOT_FOUND`. `removeNodeProtocol` is
+  therefore `false` in `packages/cli/tsup.config.ts`.
+
+  esbuild itself preserves the prefix at every target, so this is tsup's rewrite, not a bundler
+  limitation. It matters beyond this one flag: the **test suite cannot catch it**, because every
+  suite imports each package's `tsc` output, which keeps the prefix. Only the global from-tarball
+  smoke (`scripts/smoke-tarball.mjs --global`) exercises the bundle, which is the reason that gate
+  stays in the release workflow now that there is no prebuild for it to test.
 - **`.changes` is `number | bigint`** and needs coercion where a count is returned (`reopen`,
   `unmute`, `canonicalize`).
 - **Rows are null-prototype objects.** Spread, `Object.keys`, `JSON.stringify` and vitest's `toEqual`

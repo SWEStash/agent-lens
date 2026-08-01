@@ -56,7 +56,9 @@ jobs:
       # --- Gate: nothing publishes unless the build, tests, and the from-tarball smoke all pass ---
       - run: pnpm build
       - run: pnpm test # builds all packages + vitest (corpus-scenarios, determinism, redaction)
-      - name: Global-install tarball smoke (real npm i -g, exercises better-sqlite3 prebuild)
+      # The only check that exercises the tsup BUNDLE rather than per-package tsc output — where a
+      # rewritten `node:sqlite` specifier would break the shipped CLI invisibly to the test suite.
+      - name: Global-install tarball smoke (real npm i -g, exercises the published bundle)
         run: node scripts/smoke-tarball.mjs --global
 
       # Detect whether the publish token is configured WITHOUT exposing it to the build/test steps

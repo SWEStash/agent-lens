@@ -29,7 +29,9 @@ On every push to `main`, `.github/workflows/release.yml`:
 
 1. **Gates** (nothing publishes unless all pass): `pnpm build`, `pnpm test`, and a real
    global-install tarball smoke — `node scripts/smoke-tarball.mjs --global` (does `npm install -g`
-   of the packed tarball, so `better-sqlite3`'s prebuilt-binary fetch is exercised end to end).
+   of the packed tarball, resolving deps from the registry exactly as a user would). This is the
+   only gate that exercises the tsup **bundle** rather than per-package `tsc` output; the test
+   suite cannot see bundle-only breakage.
 2. **Releases** via `semantic-release` (config in `.releaserc.json`, run from the repo root with
    `pkgRoot: packages/cli`): computes the next version, updates `CHANGELOG.md` and
    `packages/cli/package.json`, publishes to npm (with provenance), creates the `vX.Y.Z` git tag,
@@ -76,10 +78,15 @@ git tag -a vX.Y.Z -m "vX.Y.Z" && git push origin vX.Y.Z
 Keep the git tag and the npm version **in sync** — semantic-release uses the latest `vX.Y.Z` tag as
 its baseline. A tag with no matching npm publish (or vice versa) will desync future automated bumps.
 
-## Native dependency (`better-sqlite3`)
+## No native dependencies
 
-`better-sqlite3` is kept **external** in the tsup bundle (never inlined) so npm resolves the
-platform-correct binary at install time. It ships prebuilt binaries for Node 24 (ABI `node-v137`)
-across Linux (glibc + musl), macOS, and Windows on x64/arm64. If a platform/ABI has no prebuild,
-`npm install` compiles it from source via node-gyp (requires a C++ toolchain + Python) — this is the
-documented fallback, not an error.
+agent-lens ships **no compiled dependencies** ([ADR-029](decisions/ADR-029-node-sqlite-driver.md)).
+SQLite is Node's built-in `node:sqlite`, so `npm install` runs no lifecycle scripts, fetches no
+prebuilt binaries, and never needs a C++ toolchain. Nothing about the release is platform- or
+Node-ABI-specific beyond the `engines.node >= 24` floor.
+
+One bundling caveat this imposes: `packages/cli/tsup.config.ts` sets `removeNodeProtocol: false`.
+tsup otherwise rewrites `node:foo` imports to bare `foo`, which is harmless for `fs`/`zlib`/`crypto`
+but fatal for `node:sqlite` — it is prefix-only, so the stripped bundle dies on startup with
+`ERR_MODULE_NOT_FOUND`. The per-package `tsc` output keeps the prefix, so **only** the global tarball
+smoke catches a regression here. Do not remove that gate.

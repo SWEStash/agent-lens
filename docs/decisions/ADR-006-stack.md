@@ -17,6 +17,8 @@ one language end-to-end where practical and low operational burden.
 
 - **Language:** TypeScript on Node (>= 24) across ingest, server, and web.
 - **Store:** SQLite via `better-sqlite3` + FTS5 (see ADR-003).
+  **Superseded by [ADR-029](ADR-029-node-sqlite-driver.md):** the driver is now the built-in
+  `node:sqlite`. Same SQLite, same FTS5 — no third-party dependency.
 - **Server:** a small HTTP API (Fastify or Express) bound to `127.0.0.1` (see ADR-005).
 - **Web:** Vite + React SPA; charting library **Recharts** (resolved at Phase 4; the ECharts
   alternative was dropped).
@@ -29,7 +31,8 @@ one language end-to-end where practical and low operational burden.
 
 - One language for the application tier; strong JSONL/data ergonomics; great webapp DX.
 - Weaker OLAP than a dedicated analytics DB, accepted at this scale (ADR-003).
-- `better-sqlite3` is a native module (needs build toolchain on install).
+- ~~`better-sqlite3` is a native module (needs build toolchain on install).~~ No longer true as of
+  [ADR-029](ADR-029-node-sqlite-driver.md): there is no native module, so no toolchain is ever needed.
 
 ## Alternatives considered
 

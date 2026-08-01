@@ -40,8 +40,10 @@ unchanged (drop + re-read archive), so it remains the correctness backstop and m
 
 2. **Dirty-session derived rebuild (impacts 2, 3).** The ingest loop collects the set of session ids
    whose files were actually (re)ingested this run. `rebuildDerived(db, dirty)` and `classify(db, …)`
-   restrict every statement to that set (materialized as a `temp._dirty` table; better-sqlite3 cannot
-   bind arrays, and a temp table keeps the joins index-friendly at any set size).
+   restrict every statement to that set (materialized as a `temp._dirty` table; no SQLite driver can
+   bind an array to a single parameter — verified still true of `node:sqlite` in
+   [ADR-029](ADR-029-node-sqlite-driver.md) — and a temp table keeps the joins index-friendly at any
+   set size).
 
    Because subagent linkage is **cross-session** — a parent session's `Task`/`Agent` `tool_call` links
    to a child sidechain session that lives in a *separate* file — the dirty set is first **fixpoint-
