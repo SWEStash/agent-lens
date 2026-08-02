@@ -2,16 +2,18 @@
 /**
  * From-tarball smoke test (checkpoint 3/5 verification): pack the `agent-lens` CLI, install it
  * OUTSIDE the repo, and run collect → ingest → serve against the committed corpus. Proves the bundle
- * needs no repo layout (findRepoRoot → null → per-user/overridden dirs), that native better-sqlite3 +
- * fastify load, and that the web SPA is served from the bundled `web/`.
+ * needs no repo layout (findRepoRoot → null → per-user/overridden dirs), that the runtime deps load
+ * (fastify, chokidar — SQLite is the `node:sqlite` builtin, ADR-029), and that the web SPA is served
+ * from the bundled `web/`.
  *
  * Two modes:
  *   (default)   fast + offline — extract the tarball and symlink the CLI package's already-resolved
  *               node_modules (the same dependency trees a real install provides). For local dev loops.
  *   --global    real `npm install -g --prefix <tmp>` of the packed tarball, so npm resolves deps from
- *               the registry and better-sqlite3's prebuild-install fetches the platform's Node-ABI
- *               prebuilt binary — the exact path a `npm i -g agent-lens` user hits. This is the
- *               release gate; it needs network access.
+ *               the registry — the exact path a `npm i -g agent-lens` user hits. This is also the only
+ *               check that exercises the BUNDLE rather than per-package tsc output, which is what
+ *               caught tsup rewriting `node:sqlite` to a bare, unresolvable `sqlite` (ADR-029). This
+ *               is the release gate; it needs network access.
  */
 import { execFileSync, spawn } from "node:child_process";
 import { mkdtempSync, mkdirSync, writeFileSync, readdirSync, rmSync, symlinkSync } from "node:fs";
@@ -49,7 +51,7 @@ let runCli;
 if (GLOBAL) {
   const prefix = join(TMP, "gprefix");
   mkdirSync(prefix);
-  console.log("smoke (global): npm install -g the tarball (fetches better-sqlite3 prebuild)…");
+  console.log("smoke (global): npm install -g the tarball (real registry resolution)…");
   run("npm", ["install", "-g", "--prefix", prefix, join(TMP, tgz)], { stdio: "inherit" });
   const bin = join(prefix, "bin", "agent-lens");
   ok(`installed bin at ${bin}`);

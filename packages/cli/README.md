@@ -20,9 +20,11 @@ npm install -g @swestash/agent-lens    # or run ad-hoc:  npx @swestash/agent-len
 ```
 
 The installed command is **`agent-lens`** (the package is published under the `@swestash` scope).
-Requires **Node.js ≥ 24**. The only native dependency, `better-sqlite3`, installs a prebuilt binary
-for Node 24 across Linux (glibc + musl), macOS, and Windows; if no prebuild matches your platform it
-is compiled from source (needs a C++ toolchain).
+Requires **Node.js ≥ 24**.
+
+There are **no compiled dependencies** — SQLite comes from Node's built-in `node:sqlite`. Nothing is
+built at install time, so there is no compiler toolchain to set up, no platform-specific prebuilt
+binary to match, and no install script for npm to prompt about.
 
 ## Quick start
 
