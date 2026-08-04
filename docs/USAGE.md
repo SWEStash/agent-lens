@@ -347,10 +347,15 @@ date range):
   failure-vs-rejection split are a heuristic over the tool result text — see [ADR-019](decisions/ADR-019-tool-error-observability.md).
 - **Unpriced models** (e.g. `claude-fable-5`) are surfaced explicitly, not silently zeroed, so cost
   reads as a lower bound rather than a wrong number.
+- **Views** — a switcher above the strips picks a curated layout: **All** (everything), **Cost**,
+  **Reliability**, **Activity**. Presets are defined in code, so they never grow silently when a new
+  chart ships — `All` always has everything.
 - **Customizable layout** — the **Metrics** and **Charts** strips each have a ⚙ control to show/hide
-  their tiles and cards and to **reorder** them (↑/↓, keyboard-friendly — no drag required); the
-  metrics strip also collapses. The layout persists like the Sessions column choice: cached in
-  localStorage and written through to the server's writable sidecar, so it survives a cache clear.
+  their tiles and cards and to **reorder** them (↑/↓, keyboard-friendly — no drag required), plus a
+  **reset**; the metrics strip also collapses. Customizing while a preset is active **forks** into a
+  **Custom** view seeded from it, so a preset is never overwritten and your own layout is never lost.
+  The layout persists like the Sessions column choice: cached in localStorage and written through to
+  the server's writable sidecar, so it survives a cache clear.
 
 **Security** (`/security`) — risky operations the agent performed, flagged after the fact by
 deterministic rules over each tool call (ADR-017), classified by severity and anchored to OWASP

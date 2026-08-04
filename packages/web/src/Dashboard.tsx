@@ -7,8 +7,14 @@ import { useDrilldown } from "./dashboard/useDrilldown";
 import { KPI_REGISTRY, KpiRow } from "./dashboard/Kpis";
 import { CHART_REGISTRY } from "./dashboard/registry";
 import { StripCustomizer } from "./dashboard/StripCustomizer";
+import { PresetPills } from "./dashboard/PresetPills";
 import { useDashLayout } from "./dashboard/useDashLayout";
 import { arrange } from "./dashboard/layout";
+
+// Registry id lists are identity-stable module constants: useDashLayout memoizes the resolved body on
+// them, so rebuilding them per render would recompute it every time.
+const KPI_IDS = KPI_REGISTRY.map((k) => k.id);
+const CHART_IDS = CHART_REGISTRY.map((c) => c.id);
 
 /** Identity-stable "first load hasn't landed yet" tuple for the three range-filtered payloads. */
 const NOT_LOADED: [DashOverview | null, DashTimeseries | null, DashBreakdowns | null] = [null, null, null];
@@ -20,11 +26,9 @@ export default function Dashboard() {
   const security = useLookup<SecuritySummary | null>("/security/summary", null);
   const expand = useExpanded();
   const drill = useDrilldown();
-  // Which tiles/charts are shown, in what order, and whether the metrics strip is collapsed.
-  const { layout, toggle, move, setKpisCollapsed } = useDashLayout();
-  const kpiIds = KPI_REGISTRY.map((k) => k.id);
-  const chartIds = CHART_REGISTRY.map((c) => c.id);
-  const hiddenCharts = new Set(layout.charts.hidden);
+  // Which view is active, and which tiles/charts it shows, in what order.
+  const { layout, active, body, setActive, toggle, move, reset, setKpisCollapsed } = useDashLayout(KPI_IDS, CHART_IDS);
+  const hiddenCharts = new Set(body.charts.hidden);
 
   // The three range-filtered payloads load as one unit: a partial dashboard would mix ranges.
   const qs = pick(["source", "from", "to", "bucket"]);
@@ -71,6 +75,8 @@ export default function Dashboard() {
 
       {overview && !loading && (
         <>
+          <PresetPills active={active} hasCustom={layout.custom != null} onSelect={setActive} />
+
           <section className="dash-strip">
             <div className="strip-head">
               <h2>Metrics</h2>
@@ -85,14 +91,15 @@ export default function Dashboard() {
                 </button>
                 <StripCustomizer
                   label="Metrics"
-                  items={arrange(KPI_REGISTRY, layout.kpis.order)}
-                  hidden={new Set(layout.kpis.hidden)}
+                  items={arrange(KPI_REGISTRY, body.kpis.order)}
+                  hidden={new Set(body.kpis.hidden)}
                   onToggle={(id, visible) => toggle("kpis", id, visible)}
-                  onMove={(id, dir) => move("kpis", kpiIds, id, dir)}
+                  onMove={(id, dir) => move("kpis", KPI_IDS, id, dir)}
+                  onReset={() => reset("kpis")}
                 />
               </div>
             </div>
-            {!layout.kpisCollapsed && <KpiRow ctx={{ overview, bd, security }} layout={layout.kpis} />}
+            {!layout.kpisCollapsed && <KpiRow ctx={{ overview, bd, security }} layout={body.kpis} />}
           </section>
 
           <section className="dash-strip">
@@ -101,10 +108,11 @@ export default function Dashboard() {
               <div className="strip-actions">
                 <StripCustomizer
                   label="Charts"
-                  items={arrange(CHART_REGISTRY, layout.charts.order)}
+                  items={arrange(CHART_REGISTRY, body.charts.order)}
                   hidden={hiddenCharts}
                   onToggle={(id, visible) => toggle("charts", id, visible)}
-                  onMove={(id, dir) => move("charts", chartIds, id, dir)}
+                  onMove={(id, dir) => move("charts", CHART_IDS, id, dir)}
+                  onReset={() => reset("charts")}
                 />
               </div>
             </div>
@@ -112,7 +120,7 @@ export default function Dashboard() {
             {/* Every card renders (each one applies its own `hidden` via ChartCard) rather than being
                 filtered out here, so a hidden card keeps its local view state — see ChartProps. */}
             <div className="cards">
-              {arrange(CHART_REGISTRY, layout.charts.order).map(({ id, Component }) => (
+              {arrange(CHART_REGISTRY, body.charts.order).map(({ id, Component }) => (
                 <Component key={id} hidden={hiddenCharts.has(id)} ts={ts} bd={bd} expand={expand} drill={drill} />
               ))}
             </div>

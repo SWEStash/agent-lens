@@ -22,12 +22,14 @@ export function StripCustomizer({
   hidden,
   onToggle,
   onMove,
+  onReset,
 }: {
   label: string;
   items: readonly StripItem[];
   hidden: ReadonlySet<string>;
   onToggle: (id: string, visible: boolean) => void;
   onMove: (id: string, dir: -1 | 1) => void;
+  onReset: () => void;
 }) {
   const ref = useDetailsAutoClose();
   return (
@@ -56,6 +58,11 @@ export function StripCustomizer({
             </button>
           </div>
         ))}
+        {/* Same position and idiom as MultiSelect's "clear" (SessionsView) — without it, undoing a
+            heavily-customized strip means unchecking every box by hand. */}
+        <button type="button" className="ghost small ms-clear" onClick={onReset}>
+          reset
+        </button>
       </div>
     </details>
   );

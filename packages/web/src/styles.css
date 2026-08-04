@@ -478,12 +478,21 @@ table.sessions { width: 100%; border-collapse: collapse; }
 }
 .show-more { margin-top: 6px; position: relative; }
 
-/* Message format segmented control (Markdown / Raw). Sits at the right of the transcript tools. */
+/* Segmented controls: the transcript's Markdown/Raw switch and the dashboard's view switcher. Same
+   widget, so they share the styling rather than each inventing a pill. */
 .transcript-tools .format-toggle { margin-left: auto; display: flex; gap: 0; }
-.format-toggle button { border-radius: 0; }
-.format-toggle button:first-child { border-radius: 6px 0 0 6px; }
-.format-toggle button:last-child { border-radius: 0 6px 6px 0; margin-left: -1px; }
-.format-toggle button.is-active {
+.format-toggle button,
+.view-toggle button { border-radius: 0; }
+.format-toggle button:first-child,
+.view-toggle button:first-child { border-radius: 6px 0 0 6px; }
+.format-toggle button:last-child,
+.view-toggle button:last-child { border-radius: 0 6px 6px 0; }
+/* Collapse the shared border between every adjacent pair (the 2-button format toggle only ever needed
+   it on the last one; the view switcher has five). */
+.format-toggle button:not(:first-child),
+.view-toggle button:not(:first-child) { margin-left: -1px; }
+.format-toggle button.is-active,
+.view-toggle button.is-active {
   background: var(--panel2);
   color: var(--text);
   border-color: var(--accent);
@@ -629,6 +638,9 @@ table.sessions { width: 100%; border-collapse: collapse; }
 .seg button + button { border-left: 1px solid var(--border); }
 .seg button.on { background: var(--panel2); color: var(--text); }
 /* Dashboard toolbar row (right-aligned controls like the chart-visibility gear). */
+/* Dashboard view switcher: sits between the filters (which data) and the strips (how it's laid out),
+   and stays visible so a curated view never reads as "the charts are gone". */
+.views { display: flex; margin-bottom: 14px; }
 /* Dashboard strips (metrics, charts): a labeled section header carrying that strip's own controls, so
    each gear sits next to what it customizes rather than in one ambiguous toolbar. */
 .dash-strip { margin-bottom: 18px; }
