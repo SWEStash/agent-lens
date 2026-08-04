@@ -1,13 +1,20 @@
-import { useEffect, useState } from "react";
 import { api, type DashOverview, type DashTimeseries, type DashBreakdowns, type SecuritySummary, type Source } from "./api";
 import { useAsync, useLookup } from "./useFetch";
 import { useQueryState } from "./useQueryState";
 import { ErrorAlert, Loading } from "./AsyncBoundary";
-import { loadPrefLocal, fetchPref, savePref } from "./prefs";
 import { useExpanded } from "./dashboard/useExpanded";
 import { useDrilldown } from "./dashboard/useDrilldown";
-import { KpiRow } from "./dashboard/Kpis";
-import { CHART_REGISTRY, CHARTS_PREF_KEY, ChartCustomizer } from "./dashboard/registry";
+import { KPI_REGISTRY, KpiRow } from "./dashboard/Kpis";
+import { CHART_REGISTRY } from "./dashboard/registry";
+import { StripCustomizer } from "./dashboard/StripCustomizer";
+import { PresetPills } from "./dashboard/PresetPills";
+import { useDashLayout } from "./dashboard/useDashLayout";
+import { arrange } from "./dashboard/layout";
+
+// Registry id lists are identity-stable module constants: useDashLayout memoizes the resolved body on
+// them, so rebuilding them per render would recompute it every time.
+const KPI_IDS = KPI_REGISTRY.map((k) => k.id);
+const CHART_IDS = CHART_REGISTRY.map((c) => c.id);
 
 /** Identity-stable "first load hasn't landed yet" tuple for the three range-filtered payloads. */
 const NOT_LOADED: [DashOverview | null, DashTimeseries | null, DashBreakdowns | null] = [null, null, null];
@@ -19,19 +26,9 @@ export default function Dashboard() {
   const security = useLookup<SecuritySummary | null>("/security/summary", null);
   const expand = useExpanded();
   const drill = useDrilldown();
-  // Hidden chart ids (persisted). Paint from localStorage, then reconcile with the server pref.
-  const [hiddenCharts, setHiddenCharts] = useState<Set<string>>(() => new Set(loadPrefLocal<string[]>(CHARTS_PREF_KEY, [])));
-  useEffect(() => {
-    fetchPref<string[]>(CHARTS_PREF_KEY).then((v) => v && setHiddenCharts(new Set(v)));
-  }, []);
-  const toggleChart = (id: string, visible: boolean) =>
-    setHiddenCharts((prev) => {
-      const next = new Set(prev);
-      if (visible) next.delete(id);
-      else next.add(id);
-      savePref(CHARTS_PREF_KEY, [...next]);
-      return next;
-    });
+  // Which view is active, and which tiles/charts it shows, in what order.
+  const { layout, active, body, setActive, toggle, move, reset, setKpisCollapsed } = useDashLayout(KPI_IDS, CHART_IDS);
+  const hiddenCharts = new Set(body.charts.hidden);
 
   // The three range-filtered payloads load as one unit: a partial dashboard would mix ranges.
   const qs = pick(["source", "from", "to", "bucket"]);
@@ -78,19 +75,56 @@ export default function Dashboard() {
 
       {overview && !loading && (
         <>
-          <KpiRow overview={overview} bd={bd} security={security} />
+          <PresetPills active={active} hasCustom={layout.custom != null} onSelect={setActive} />
 
-          <div className="dash-toolbar">
-            <ChartCustomizer hidden={hiddenCharts} onToggle={toggleChart} />
-          </div>
+          <section className="dash-strip">
+            <div className="strip-head">
+              <h2>Metrics</h2>
+              <div className="strip-actions">
+                <button
+                  type="button"
+                  className="link-btn"
+                  aria-expanded={!layout.kpisCollapsed}
+                  onClick={() => setKpisCollapsed(!layout.kpisCollapsed)}
+                >
+                  {layout.kpisCollapsed ? "▸ show" : "▾ hide"}
+                </button>
+                <StripCustomizer
+                  label="Metrics"
+                  items={arrange(KPI_REGISTRY, body.kpis.order)}
+                  hidden={new Set(body.kpis.hidden)}
+                  onToggle={(id, visible) => toggle("kpis", id, visible)}
+                  onMove={(id, dir) => move("kpis", KPI_IDS, id, dir)}
+                  onReset={() => reset("kpis")}
+                />
+              </div>
+            </div>
+            {!layout.kpisCollapsed && <KpiRow ctx={{ overview, bd, security }} layout={body.kpis} />}
+          </section>
 
-          {/* Every card renders (each one applies its own `hidden` via ChartCard) rather than being
-              filtered out here, so a hidden card keeps its local view state — see ChartProps. */}
-          <div className="cards">
-            {CHART_REGISTRY.map(({ id, Component }) => (
-              <Component key={id} hidden={hiddenCharts.has(id)} ts={ts} bd={bd} expand={expand} drill={drill} />
-            ))}
-          </div>
+          <section className="dash-strip">
+            <div className="strip-head">
+              <h2>Charts</h2>
+              <div className="strip-actions">
+                <StripCustomizer
+                  label="Charts"
+                  items={arrange(CHART_REGISTRY, body.charts.order)}
+                  hidden={hiddenCharts}
+                  onToggle={(id, visible) => toggle("charts", id, visible)}
+                  onMove={(id, dir) => move("charts", CHART_IDS, id, dir)}
+                  onReset={() => reset("charts")}
+                />
+              </div>
+            </div>
+
+            {/* Every card renders (each one applies its own `hidden` via ChartCard) rather than being
+                filtered out here, so a hidden card keeps its local view state — see ChartProps. */}
+            <div className="cards">
+              {arrange(CHART_REGISTRY, body.charts.order).map(({ id, Component }) => (
+                <Component key={id} hidden={hiddenCharts.has(id)} ts={ts} bd={bd} expand={expand} drill={drill} />
+              ))}
+            </div>
+          </section>
         </>
       )}
     </div>
