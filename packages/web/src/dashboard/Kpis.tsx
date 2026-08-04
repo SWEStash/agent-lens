@@ -1,7 +1,9 @@
+import { Fragment, type ReactNode } from "react";
 import { Link } from "react-router-dom";
 import type { DashBreakdowns, DashOverview, SecuritySummary, TokenSplit } from "../api";
 import { fmtCost, fmtDuration, fmtTokens, shortModel } from "../format";
 import { Kpi, useChartTokens } from "../charts/theme";
+import { arrange, type StripLayout } from "./layout";
 
 /** Dashboard security tile: OPEN critical/high counts (global; dismissed + muted excluded), linking to
  * the /security page. A muted, all-clear tile when nothing open remains. */
@@ -53,42 +55,75 @@ function TokenBreakdownKpi({ t }: { t: TokenSplit }) {
   );
 }
 
-/** The dashboard's KPI strip. `security` is fetched separately from the range-filtered payloads (it is
- * global), so it renders only once it lands. */
-export function KpiRow({
-  overview,
-  bd,
-  security,
-}: {
+/** What every KPI tile can draw on. `security` is fetched separately from the range-filtered payloads
+ * (it is global), so a tile that needs it renders only once it lands. */
+export interface KpiCtx {
   overview: DashOverview;
   bd: DashBreakdowns | null;
   security: SecuritySummary | null;
-}) {
-  // Error-rate KPIs: failures/rejections as a share of all tool calls (the raw counts already exist;
-  // the *rate* is the missing headline). Both come from the breakdowns payload, tool_calls from overview.
-  const errFailures = bd?.error_types?.failures ?? 0;
-  const errRejections = bd?.error_types?.rejections ?? 0;
-  const toolCalls = overview.tool_calls ?? 0;
-  const errRate = toolCalls ? (errFailures / toolCalls) * 100 : 0;
-  const rejRate = toolCalls ? (errRejections / toolCalls) * 100 : 0;
+}
 
-  return (
-    <div className="kpis">
-      <Kpi label="Sessions" value={overview.sessions_main} sub={`+${overview.sessions_subagent.toLocaleString()} subagent runs`} />
-      <Kpi label="Projects" value={overview.projects} sub="distinct project paths" />
-      <Kpi label="Turns" value={overview.turns} sub={`${overview.tool_calls.toLocaleString()} tool calls`} />
-      <Kpi
-        label="Tool error rate"
-        value={toolCalls ? errRate.toFixed(1) + "%" : "—"}
-        title="Genuine tool failures as a share of all tool calls (rejections/blocks excluded — see the rejection rate)."
-        sub={`${errFailures.toLocaleString()} failed of ${toolCalls.toLocaleString()} calls`}
-      />
-      <Kpi
-        label="Rejection rate"
-        value={toolCalls ? rejRate.toFixed(1) + "%" : "—"}
-        title="User-rejected + guardrail-blocked tool calls as a share of all tool calls. Not agent failures."
-        sub={`${errRejections.toLocaleString()} rejected/blocked`}
-      />
+/** Failures/rejections as a share of all tool calls — the raw counts already exist elsewhere; the
+ * *rate* is the headline. Counts come from the breakdowns payload, tool_calls from overview. */
+function errorRates({ overview, bd }: KpiCtx) {
+  const failures = bd?.error_types?.failures ?? 0;
+  const rejections = bd?.error_types?.rejections ?? 0;
+  const toolCalls = overview.tool_calls ?? 0;
+  return { failures, rejections, toolCalls, errRate: toolCalls ? (failures / toolCalls) * 100 : 0, rejRate: toolCalls ? (rejections / toolCalls) * 100 : 0 };
+}
+
+/**
+ * Every KPI tile, in default order — the single source of truth for both the render loop and the
+ * show/hide/reorder customizer, so adding a tile is one entry here and nothing else. Mirrors
+ * CHART_REGISTRY.
+ *
+ * Ids are stable persisted keys (they appear in the saved `dashboard.layout`). NEVER rename an id — a
+ * user who hid or moved that tile would silently get it back in its default place.
+ *
+ * `render` may return null for a tile whose data hasn't arrived; the strip then simply omits it.
+ */
+export const KPI_REGISTRY: Array<{ id: string; label: string; render: (ctx: KpiCtx) => ReactNode }> = [
+  {
+    id: "sessions",
+    label: "Sessions",
+    render: ({ overview }) => <Kpi label="Sessions" value={overview.sessions_main} sub={`+${overview.sessions_subagent.toLocaleString()} subagent runs`} />,
+  },
+  { id: "projects", label: "Projects", render: ({ overview }) => <Kpi label="Projects" value={overview.projects} sub="distinct project paths" /> },
+  { id: "turns", label: "Turns", render: ({ overview }) => <Kpi label="Turns" value={overview.turns} sub={`${overview.tool_calls.toLocaleString()} tool calls`} /> },
+  {
+    id: "tool-error-rate",
+    label: "Tool error rate",
+    render: (ctx) => {
+      const { failures, toolCalls, errRate } = errorRates(ctx);
+      return (
+        <Kpi
+          label="Tool error rate"
+          value={toolCalls ? errRate.toFixed(1) + "%" : "—"}
+          title="Genuine tool failures as a share of all tool calls (rejections/blocks excluded — see the rejection rate)."
+          sub={`${failures.toLocaleString()} failed of ${toolCalls.toLocaleString()} calls`}
+        />
+      );
+    },
+  },
+  {
+    id: "rejection-rate",
+    label: "Rejection rate",
+    render: (ctx) => {
+      const { rejections, toolCalls, rejRate } = errorRates(ctx);
+      return (
+        <Kpi
+          label="Rejection rate"
+          value={toolCalls ? rejRate.toFixed(1) + "%" : "—"}
+          title="User-rejected + guardrail-blocked tool calls as a share of all tool calls. Not agent failures."
+          sub={`${rejections.toLocaleString()} rejected/blocked`}
+        />
+      );
+    },
+  },
+  {
+    id: "workflow-runs",
+    label: "Workflow runs",
+    render: ({ overview }) => (
       <Kpi
         label="Workflow runs"
         value={overview.workflows.total || "—"}
@@ -99,37 +134,87 @@ export function KpiRow({
             : "no workflow runs"
         }
       />
+    ),
+  },
+  {
+    id: "cost",
+    label: "Est. cost",
+    render: ({ overview }) => (
       <Kpi
         label="Est. cost (API-equiv.)"
         value={fmtCost(overview.cost)}
         title="Estimated at API list prices for this usage (cache reads/writes included at their discounted cache rates)."
         sub={overview.unpriced_models.length ? `⚠ unpriced: ${overview.unpriced_models.map(shortModel).join(", ")}` : "API list price estimate"}
       />
+    ),
+  },
+  {
+    id: "cost-per-session",
+    label: "Cost / session",
+    render: ({ overview }) => (
       <Kpi
         label="Cost / session"
         value={overview.sessions_main ? fmtCost(overview.cost / overview.sessions_main) : "—"}
         title="Estimated API-equivalent cost divided by main sessions in range."
         sub="API-equiv. per main session"
       />
+    ),
+  },
+  {
+    id: "cache-read-ratio",
+    label: "Cache-read ratio",
+    render: ({ overview }) => (
       <Kpi
         label="Cache-read ratio"
         value={(overview.cache_read_ratio * 100).toFixed(1) + "%"}
         sub="of all tokens are cached replays — excluded from “work”"
       />
+    ),
+  },
+  {
+    id: "turn-duration",
+    label: "Turn duration",
+    render: ({ overview }) => (
       <Kpi
         label="Turn duration p50 / p95"
         value={`${fmtDuration(overview.turn_duration_ms.p50)} / ${fmtDuration(overview.turn_duration_ms.p95)}`}
         sub={`${overview.turn_duration_ms.count} turns`}
       />
+    ),
+  },
+  {
+    id: "session-duration",
+    label: "Session duration",
+    render: ({ overview }) => (
       <Kpi
         label="Session duration p50 / p95"
         value={`${fmtDuration(overview.session_duration_ms.p50)} / ${fmtDuration(overview.session_duration_ms.p95)}`}
         title="End-to-end wall-clock length of main sessions (subagents excluded)."
         sub={`${overview.session_duration_ms.count} sessions`}
       />
+    ),
+  },
+  {
+    id: "total-tokens",
+    label: "Total tokens",
+    render: ({ overview }) => (
       <Kpi label="Total tokens" value={fmtTokens(overview.total_tokens)} sub={`${fmtTokens(overview.tokens.input + overview.tokens.output)} non-cache`} />
-      <TokenBreakdownKpi t={overview.tokens} />
-      {security && <SecurityKpi s={security} />}
+    ),
+  },
+  { id: "token-breakdown", label: "Token breakdown", render: ({ overview }) => <TokenBreakdownKpi t={overview.tokens} /> },
+  { id: "security", label: "Security findings", render: ({ security }) => (security ? <SecurityKpi s={security} /> : null) },
+];
+
+/** The dashboard's KPI strip, in the user's order and minus the tiles they hid. */
+export function KpiRow({ ctx, layout }: { ctx: KpiCtx; layout: StripLayout }) {
+  const hidden = new Set(layout.hidden);
+  return (
+    <div className="kpis">
+      {arrange(KPI_REGISTRY, layout.order)
+        .filter((k) => !hidden.has(k.id))
+        .map((k) => (
+          <Fragment key={k.id}>{k.render(ctx)}</Fragment>
+        ))}
     </div>
   );
 }
