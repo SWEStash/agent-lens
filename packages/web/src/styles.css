@@ -725,8 +725,13 @@ button.small { padding: 2px 8px; font-size: 12px; }
 .skill-version-bar select { max-width: 460px; }
 /* Body panel + sessions side by side on wide screens, stacked when narrow. */
 .skill-cards { display: grid; grid-template-columns: minmax(0, 3fr) minmax(0, 2fr); gap: 14px; align-items: start; }
-@media (max-width: 900px) { .skill-cards { grid-template-columns: 1fr; } }
+/* Stack below 1080px, not 900: the sessions card holds a five-column table, and in the 2fr slice of a
+   sub-1080 viewport it squeezes to ~400px and wraps badly. It reads far better full-width. */
+@media (max-width: 1080px) { .skill-cards { grid-template-columns: 1fr; } }
 .skill-body { max-height: 70vh; overflow: auto; }
+/* The file timeline stacks one card per session as plain siblings (no .cards grid to supply a gap), so
+   they carry their own spacing — which also separates the first one from the KPI row above it. */
+.file-view .card { margin-top: 14px; }
 .skill-body-card, .skill-sessions-card { min-width: 0; }
 .skill-sessions-card table { width: 100%; }
 
