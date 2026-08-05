@@ -21,9 +21,8 @@ of the same machinery:
   (empty value deletes; on paged views also drop `offset`, unless the patch is *setting* offset), and
   "collect the active filters into the request's query string".
 
-The slop audit flagged these as SLOP-015 and SLOP-045. Both were deferred out of phase 2 for the same
-reason: `packages/web` had no test harness, so there was no way to prove a shared hook behaved like
-the nine hand-rolled copies it replaced.
+Both were deferred earlier for the same reason: `packages/web` had no test harness, so there was no
+way to prove a shared hook behaved like the nine hand-rolled copies it replaced.
 
 ## Decision
 

@@ -104,7 +104,7 @@ function unpriced(db: DB): string[] {
  * wrote — and are deliberately not flagged `stale`: re-running would *downgrade* them.
  */
 function engineVersion(db: DB, table: string, sql: string, expected: number): EngineVersion {
-  // `sql` is a literal at each call site — no identifier is ever interpolated here (SLOP-071).
+  // `sql` is a literal at each call site — no identifier is ever interpolated here.
   const in_data = tableExists(db, table)
     ? queryAll<{ v: number }>(db, sql)
         .map((r) => r.v)

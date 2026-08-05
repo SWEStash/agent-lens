@@ -1,6 +1,6 @@
 /** Filters, sort and paging live in the URL on every list page, so a view is shareable and the back
  * button works. Each page had grown its own copy of "read a param", "patch the query", and "collect
- * the active filters into a query string" — SLOP-045. This is that trio, once. */
+ * the active filters into a query string". This is that trio, once. */
 import { useCallback } from "react";
 import { useSearchParams } from "react-router-dom";
 

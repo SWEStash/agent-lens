@@ -2,7 +2,7 @@
  * Command sanitizer (detect.ts) — the regex stages that turn a verbatim Bash command into the two
  * views the rules match against. detect.test.ts covers these only indirectly, through whole rules;
  * this suite pins each stage on its own, because the sanitizer is where the detector's false
- * positives and false negatives are actually decided (SLOP-018) and every rule inherits its holes.
+ * positives and false negatives are actually decided, and every rule inherits its holes.
  *
  * Cases marked KNOWN HOLE document behaviour we accept, not behaviour we want — they exist so a
  * future change to the pipeline is a conscious decision rather than a surprise. Imports the BUILT dist.

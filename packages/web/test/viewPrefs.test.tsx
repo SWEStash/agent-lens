@@ -1,5 +1,5 @@
 /**
- * Transcript view prefs (SLOP-017). These were the only prefs stored by hand, unencoded, with no
+ * Transcript view prefs. These were the only prefs stored by hand, unencoded, with no
  * server write-through. Moving them onto prefs.ts changes the on-disk format, so the legacy shape
  * must keep loading — otherwise every existing user silently loses both choices on upgrade.
  */
@@ -28,7 +28,7 @@ describe("defaults", () => {
   });
 });
 
-describe("legacy (pre-SLOP-017) values still load", () => {
+describe("legacy values still load", () => {
   it("reads the unencoded format string", () => {
     localStorage.setItem("agentlens.msgFormat", "raw");
     expect(loadFormat()).toBe("raw");

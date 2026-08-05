@@ -38,7 +38,7 @@ describe("Host-header allowlist (DNS-rebinding guard)", () => {
     expect((await health(app, "attacker.example")).statusCode).toBe(403);
   });
 
-  it("allows a loopback Host in any case — Host is case-insensitive (SLOP-073)", async () => {
+  it("allows a loopback Host in any case — Host is case-insensitive", async () => {
     for (const h of ["LOCALHOST", "LocalHost:4477"]) {
       expect((await health(app, h)).statusCode).toBe(200);
     }

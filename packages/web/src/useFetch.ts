@@ -1,6 +1,6 @@
-/** The one data-loading hook every view uses. Before this, each view hand-rolled the same
- * `useState` × 3 + `useEffect` block (set loading, clear error, fetch, set data / set error, clear
- * loading), which is where SLOP-015 came from. */
+/** The one data-loading hook every view uses, in place of the `useState` × 3 + `useEffect` block
+ * (set loading, clear error, fetch, set data / set error, clear loading) each view used to
+ * hand-roll. */
 import { useEffect, useState } from "react";
 import { api } from "./api";
 

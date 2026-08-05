@@ -2,9 +2,9 @@
  * Seed factories for the server tests.
  *
  * Every suite here needs a valid-enough slice of the session graph, and hand-written `db.exec` string
- * blobs made that ~60 near-identical INSERTs (SLOP-042) — impossible to see what a given test actually
- * depends on. These are prepared statements with defaults instead, so a test states only the columns
- * its assertion rests on. Same pattern as packages/ingest/test/detect.test.ts.
+ * blobs made that ~60 near-identical INSERTs — impossible to see what a given test actually depends
+ * on. These are prepared statements with defaults instead, so a test states only the columns its
+ * assertion rests on. Same pattern as packages/ingest/test/detect.test.ts.
  *
  * Foreign keys are ON by default (the API reads across the graph and a broken join should fail loudly);
  * pass `{ foreignKeys: false }` to seed a partial graph deliberately.

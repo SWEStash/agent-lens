@@ -65,7 +65,7 @@ export default function SessionView() {
 
   // Scroll + flash once the target is actually in the DOM, which the effect above may have just caused.
   // This one only READS `collapsed` — previously a single effect wrote to it to re-trigger itself, and
-  // the ref existed to absorb the extra passes that caused (SLOP-062). It is now a plain once-per-hash
+  // the ref existed to absorb the extra passes that caused. It is now a plain once-per-hash
   // guard: re-navigating to the same hash should not re-scroll, but a later expansion should still be
   // able to complete a scroll that had no element to find yet.
   const scrolledFor = useRef<string | null>(null);

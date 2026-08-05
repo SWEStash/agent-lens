@@ -1,6 +1,6 @@
 /* Recharts hands its render-prop callbacks (tooltip `content`, axis `tick`, bar/legend `onClick`)
  * shapes its own exported types don't usefully narrow, which is how `any` had spread through this
- * file — SLOP-047. Declared here instead are the shapes the dashboard actually reads. The inline
+ * file. Declared here instead are the shapes the dashboard actually reads. The inline
  * `formatter` props keep their annotations narrow for the same reason; note every field a formatter
  * reads off `payload` must stay OPTIONAL, or the function is no longer assignable to Recharts'
  * `Formatter` and the chart stops compiling. */

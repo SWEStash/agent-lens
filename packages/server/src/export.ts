@@ -51,7 +51,7 @@ export function renderSessionExport(
  * ours today (uuids and slugs), which makes this defence-in-depth rather than a live hole, but the id
  * is a path segment the caller supplies and nothing else validates it before it reaches the header.
  * Sanitizing at the point the filename is BUILT keeps the guarantee with the naming convention
- * instead of leaving it to every future caller of this function (SLOP-077).
+ * instead of leaving it to every future caller of this function.
  *
  * Anything outside `[A-Za-z0-9._-]` collapses to `_`, including the CR/LF that would otherwise permit
  * header injection. An id that is entirely unsafe still yields a usable name rather than an empty one.

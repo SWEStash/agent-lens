@@ -1,6 +1,6 @@
-/** One spawned-agent row, linking to its full transcript. The session page (subagents fanned out by a
- * turn) and the workflow page (agents fanned out by a run) list the same thing and had grown their
- * own near-identical copies of this markup — SLOP-061. */
+/** One spawned-agent row, linking to its full transcript. Shared by the session page (subagents
+ * fanned out by a turn) and the workflow page (agents fanned out by a run), which list the same
+ * thing. */
 import { Link } from "react-router-dom";
 import { fmtCost, fmtDuration, fmtTokens, shortModel } from "./format";
 

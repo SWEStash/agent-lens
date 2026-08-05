@@ -64,7 +64,7 @@ export function metaProjection(hasMeta: boolean): string {
  * reach the SQL text. It can't: the expression is always a value from the caller's literal `columns`
  * map (an unknown key falls back to `fallback`, which must itself be a key of that map), and the
  * direction collapses to one of two literals. Route the interpolation through here, never build it
- * inline, and the invariant stays next to the string it protects (SLOP-071).
+ * inline, and the invariant stays next to the string it protects.
  */
 export function orderBy<K extends string>(columns: Record<K, string>, sort: string | undefined, fallback: K, dir?: string): string {
   // Object.hasOwn, not `in` / `map[key] ?? fallback`: both walk the prototype chain, so `?sort=toString`

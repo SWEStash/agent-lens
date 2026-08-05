@@ -1163,9 +1163,8 @@ tr.is-dismissed { opacity: 0.6; }
 :root[data-theme="light"] .sev-kpi.sev-medium .kpi-value { color: #8a6d1f; }
 :root[data-theme="light"] .sev-kpi.sev-low .kpi-value { color: #1a5fa8; }
 
-/* Security page one-offs — these replaced equivalent inline style={{…}} props (SLOP-064). Values are
-   unchanged; they live here so the page's spacing is editable from the stylesheet like everything else. */
-.page-intro { margin: 4px 0 0; max-width: 760px; }
+/* Security page one-offs */
+.page-intro { margin: 4px 0 0; }
 .filter-chip { align-self: center; }
 .tag.dismissed { margin-left: 4px; }
 .tag.framework { margin-left: 6px; }
