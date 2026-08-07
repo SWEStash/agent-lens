@@ -1,8 +1,12 @@
-/** The transcript's control strip: collapse/expand all turns, the hide-tools toggle, and the
- * markdown/raw format switch. The collapse control only appears once there is more than one turn. */
+/** The transcript's control strip: find-in-session, collapse/expand all turns, the hide-tools toggle,
+ * and the markdown/raw format switch. The collapse control only appears once there is more than one
+ * turn. Search sits on its own row above the toggles — it's the widest control and the one most often
+ * reached for, and pairing it with the toggles on one line wraps badly on narrow screens. */
+import type { ReactNode } from "react";
 import type { MsgFormat } from "./contexts";
 
 export function TranscriptToolbar({
+  search,
   turnCount,
   anyOpen,
   onToggleAll,
@@ -11,6 +15,7 @@ export function TranscriptToolbar({
   format,
   onChooseFormat,
 }: {
+  search: ReactNode;
   turnCount: number;
   anyOpen: boolean;
   onToggleAll: () => void;
@@ -20,6 +25,8 @@ export function TranscriptToolbar({
   onChooseFormat: (f: MsgFormat) => void;
 }) {
   return (
+    <>
+    {search}
     <div className="transcript-tools">
       {turnCount > 1 && (
         <>
@@ -54,5 +61,6 @@ export function TranscriptToolbar({
         </button>
       </div>
     </div>
+    </>
   );
 }

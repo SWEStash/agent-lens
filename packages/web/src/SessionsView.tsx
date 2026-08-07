@@ -26,7 +26,8 @@ interface ColumnDef {
   sortKey?: SessionSortKey;
   sortDefaultDir?: SortDir;
   thClassName?: string;
-  cell: (s: SessionSummary) => React.ReactNode;
+  /** `q` is the list's active search term, so a cell can hand it on to the page it links to. */
+  cell: (s: SessionSummary, q: string) => React.ReactNode;
 }
 
 const COLUMNS: ColumnDef[] = [
@@ -37,9 +38,12 @@ const COLUMNS: ColumnDef[] = [
     defaultVisible: true,
     sortKey: "title",
     sortDefaultDir: "asc",
-    cell: (s) => (
+    // Carry the list's search term into the session, where find-in-session picks it up from `?q=` and
+    // points at the matches inside. The two matchers differ (FTS tokens here, literal substring there),
+    // so a row that matched on its title or project can legitimately show no in-session matches.
+    cell: (s, q) => (
       <td>
-        <Link to={`/session/${s.id}`} className="title">
+        <Link to={`/session/${s.id}${q ? `?q=${encodeURIComponent(q)}` : ""}`} className="title">
           {s.title || <span className="muted">{s.id.slice(0, 12)}</span>}
         </Link>
         <div className="sub">
@@ -394,7 +398,7 @@ export default function SessionsView() {
             {sessions.map((s) => (
               <tr key={s.id}>
                 {shownCols.map((c) => (
-                  <Fragment key={c.id}>{c.cell(s)}</Fragment>
+                  <Fragment key={c.id}>{c.cell(s, get("q"))}</Fragment>
                 ))}
                 <td className="col-td" />
               </tr>

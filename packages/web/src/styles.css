@@ -402,6 +402,36 @@ table.sessions { width: 100%; border-collapse: collapse; }
 .transcript-tools { display: flex; align-items: center; gap: 12px; margin-bottom: 2px; }
 .unturned { display: flex; flex-direction: column; gap: 10px; }
 
+/* Find in session. `min-width: 0` on the input lets it shrink instead of pushing ◂/▸ off a narrow
+   viewport, and the counter is width-reserved so stepping through matches doesn't shift the buttons. */
+.transcript-search { display: flex; align-items: center; gap: 6px; margin-bottom: 6px; }
+.transcript-search input { flex: 1; min-width: 0; max-width: 420px; }
+.transcript-search .ts-icon { flex: none; opacity: 0.7; }
+.transcript-search .ts-count { flex: none; min-width: 116px; }
+/* Matched text, tinted in place via the CSS Custom Highlight API (transcript/useHighlightPaint.ts).
+   Gold is already this app's "look here" colour — the deep-link flash below uses it — so a found term
+   and a flagged message read as one idea. `--gold` itself can't be reused directly: it's mid-tone, and
+   a fixed text colour over it fails contrast in one theme or the other. These two carry an explicit
+   AA-safe pair instead — saturated gold under dark text, pale amber under dark text. Only
+   background-color and color are honoured inside ::highlight(). */
+:root { --hl-bg: #e0b85a; --hl-fg: #0f1115; }
+:root[data-theme="light"] { --hl-bg: #ffe08a; --hl-fg: #1b1f27; }
+::highlight(al-search) {
+  background-color: var(--hl-bg);
+  color: var(--hl-fg);
+}
+/* Matches inside a collapsed turn are invisible by definition — the body doesn't render — so the
+   header carries the count. This badge is the only cue that collapsed content matched. */
+.turn-matches {
+  flex: none;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--hl-fg);
+  background: var(--hl-bg);
+  border-radius: 999px;
+  padding: 1px 7px;
+}
+
 /* Collapsible turn: header bar (always visible) + body that renders only while expanded. */
 .turn { display: flex; flex-direction: column; gap: 10px; }
 .turn-head {

@@ -93,6 +93,9 @@ agent-lens-ingest: files=312 skipped=298 new_events=1840 malformed=0
   rendering per tool: Bash as a shell console, `Edit`/`MultiEdit`/`Write` as colored diffs, plans and
   `AskUserQuestion` as cards, workflow runs with a phase graph. One-click **Markdown export** and a
   **light/dark theme toggle** (dark by default).
+- **Find in session** (`/`) — searches message bodies, thinking and tool inputs/results, highlights
+  every hit and steps through them, reaching what the browser's own find can't: matches inside
+  collapsed turns (counted on the turn header) and below a long message's fold.
 - **Freshness + one-click refresh** — the header shows when data was last ingested and a **Refresh**
   button runs collect+ingest on the host on demand (loopback-only, CSRF-guarded; ADR-015).
 - **Analytics dashboards** — tokens / cost / activity over time (adaptive day/week/month bucketing)
