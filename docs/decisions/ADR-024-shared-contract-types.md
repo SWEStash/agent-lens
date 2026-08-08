@@ -16,8 +16,8 @@ web bundle would drag Node code into the browser.
 So `web` re-declares the entire API/data contract by hand in `packages/web/src/api.ts` (33 interfaces),
 a mirror of what the server emits with **no compile-time link** to the source shapes. A column rename
 in `schema.ts` → `db.ts` type-checks clean and only breaks the UI at runtime; this drift is the
-mechanism behind the schema→db→api→web co-churn (those four are among the highest-churn files). The
-slop audit flagged it as the top type-safety issue (P2/P3, SLOP-016/048).
+mechanism behind the schema→db→api→web co-churn (those four are among the highest-churn files), and
+the codebase's top type-safety issue.
 
 A related bug lives in the source-of-truth types themselves: `SessionRow` had drifted stale — it was
 missing `spawn_parent_id` and `workflow_run_id`, two columns added to the `sessions` DDL (schema v6+).

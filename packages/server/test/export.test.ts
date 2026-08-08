@@ -73,7 +73,7 @@ describe("GET /api/sessions/:id/export.md", () => {
 
 // The download name is interpolated into `attachment; filename="<name>"`, so a session id carrying a
 // quote, CRLF or a path separator must not be able to break out of the quoted string and inject
-// further header parameters. Ids are ours today, which makes this defence-in-depth (SLOP-077).
+// further header parameters. Ids are ours today, which makes this defence-in-depth.
 describe("content-disposition filename is sanitized", () => {
   const hostile = [
     { id: 'a"b;x=y', label: "double quote closing the quoted string" },

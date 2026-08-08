@@ -56,7 +56,7 @@ export default function SecurityView() {
 
   // Paging and selection belong to a particular filter+sort, and the error slot additionally belongs to
   // a particular page load — so all three reset by key rather than by an effect that fires after the
-  // stale value has already been committed (SLOP-063).
+  // stale value has already been committed.
   const viewKey = `${filterQs.toString()}|${sort.key}|${sort.dir}`;
   const [pageNum, setPageNum] = useResetOn(viewKey, 1);
   const [selected, setSelected] = useResetOn<Set<string>>(`${viewKey}|${pageNum}|${reloadKey}`, EMPTY_SELECTION);

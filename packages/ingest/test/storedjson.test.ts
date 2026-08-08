@@ -1,5 +1,5 @@
 /**
- * Stored-JSON parsing (SLOP-068). A corrupt `tool_calls.input_json` row must not abort a derivation
+ * Stored-JSON parsing. A corrupt `tool_calls.input_json` row must not abort a derivation
  * pass, but it must not vanish silently either — the affected tool call simply stops producing
  * findings/LoC, which is indistinguishable from "nothing to report" without a counter.
  * Imports the BUILT dist.

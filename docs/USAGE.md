@@ -304,7 +304,9 @@ corpus by `node scripts/screenshots.mjs`.
 - **Filter** by source, project, model, and kind (main vs subagent), plus multi-select **Security**
   (sessions with a finding of a given severity) and **Errors** (sessions with a failed tool call of a
   given error type — e.g. `command-failed`, `user-rejected`).
-- **Full-text search** across all transcripts.
+- **Full-text search** across all transcripts (FTS5 — whitespace-separated tokens, all of which must
+  appear). Opening a result carries the term into the session, where *find in session* (below) picks
+  it up.
 - **Sort** by any column, and **customize columns** via the "Columns" control in the table header
   (show/hide, persisted per browser). Sortable **Security** (worst-severity + finding count) and
   **Errors** (failed-tool-call count) columns are shown by default; **Cost** is hidden by default
@@ -313,6 +315,23 @@ corpus by `node scripts/screenshots.mjs`.
   tool calls, model/subagent tags, a **classification badge** (category + complexity) with a
   collapsible signals panel, and an **error summary** in the header — *"X failed · Y declined/blocked
   of N tool calls"* (the failed-vs-declined split is a heuristic; see [ADR-019](decisions/ADR-019-tool-error-observability.md)).
+- **Find in session** (`/` to focus, or the box above the transcript) — searches the open session
+  ([ADR-030](decisions/ADR-030-in-session-search.md)). Unlike the list's FTS above, this is a literal
+  case-insensitive **substring** match, so it hits mid-word (`AWS_SECRET` inside
+  `export AWS_SECRET=`); minimum two characters. It covers **message bodies, thinking blocks, and tool
+  inputs and results**. (Turn prompt previews are highlighted too, but not counted — a preview is
+  almost always a copy of the user message already counted below it.)
+
+  Every hit is highlighted, and `Enter` / `Shift+Enter` (or ◂ / ▸) step through matching messages —
+  from the search box, from the floating navigator that appears once the box scrolls out of view, or
+  with nothing focused at all. Because the view hides text in several ways, stepping to a match
+  **reveals** it: its turn expands, a clamped body unclamps, a thinking block opens.
+
+  **Tool calls are searched and counted even while "Hide tool messages" is on** — that toggle is about
+  reading the conversation, not about narrowing an audit, and tool inputs/results are where paths and
+  commands live. The match count and the per-turn badges include them, and stepping to one shows the
+  suppressed tool card for as long as it is the active match. Since the term is in the URL (`?q=`), a
+  search is shareable.
 - **Export** any session to Markdown (⬇ button, or `GET /api/sessions/:id/export.md`).
 
 **Files** (`/files`) — file-modification provenance ([ADR-022](decisions/ADR-022-file-modification-provenance.md)):

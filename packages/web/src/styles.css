@@ -402,6 +402,71 @@ table.sessions { width: 100%; border-collapse: collapse; }
 .transcript-tools { display: flex; align-items: center; gap: 12px; margin-bottom: 2px; }
 .unturned { display: flex; flex-direction: column; gap: 10px; }
 
+/* Find in session. `min-width: 0` on the input lets it shrink instead of pushing ◂/▸ off a narrow
+   viewport, and the counter is width-reserved so stepping through matches doesn't shift the buttons. */
+.transcript-search { display: flex; align-items: center; gap: 6px; margin-bottom: 6px; }
+.transcript-search input { flex: 1; min-width: 0; max-width: 420px; }
+.transcript-search .ts-icon { flex: none; opacity: 0.7; }
+.transcript-search .ts-count { flex: none; min-width: 116px; }
+/* The floating match navigator, shown only once the toolbar's search box has scrolled away. Bottom
+   right keeps it clear of the sticky turn headers at the top and out of the reading column. No entry
+   animation, so there is nothing for prefers-reduced-motion to suppress. */
+.search-nav {
+  position: fixed;
+  right: 18px;
+  bottom: 18px;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  max-width: calc(100vw - 36px);
+  padding: 6px 8px;
+  background: var(--panel2);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  box-shadow: 0 4px 16px rgb(0 0 0 / 28%);
+}
+.search-nav .sn-term {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  padding: 2px 2px 2px 0;
+  font-size: 12px;
+}
+.search-nav .sn-q {
+  color: var(--muted);
+  max-width: 22ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.search-nav .sn-pos { color: var(--text); font-weight: 600; font-variant-numeric: tabular-nums; }
+
+/* Matched text, tinted in place via the CSS Custom Highlight API (transcript/useHighlightPaint.ts).
+   Gold is already this app's "look here" colour — the deep-link flash below uses it — so a found term
+   and a flagged message read as one idea. `--gold` itself can't be reused directly: it's mid-tone, and
+   a fixed text colour over it fails contrast in one theme or the other. These two carry an explicit
+   AA-safe pair instead — saturated gold under dark text, pale amber under dark text. Only
+   background-color and color are honoured inside ::highlight(). */
+:root { --hl-bg: #e0b85a; --hl-fg: #0f1115; }
+:root[data-theme="light"] { --hl-bg: #ffe08a; --hl-fg: #1b1f27; }
+::highlight(al-search) {
+  background-color: var(--hl-bg);
+  color: var(--hl-fg);
+}
+/* Matches inside a collapsed turn are invisible by definition — the body doesn't render — so the
+   header carries the count. This badge is the only cue that collapsed content matched. */
+.turn-matches {
+  flex: none;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--hl-fg);
+  background: var(--hl-bg);
+  border-radius: 999px;
+  padding: 1px 7px;
+}
+
 /* Collapsible turn: header bar (always visible) + body that renders only while expanded. */
 .turn { display: flex; flex-direction: column; gap: 10px; }
 .turn-head {
@@ -1163,9 +1228,8 @@ tr.is-dismissed { opacity: 0.6; }
 :root[data-theme="light"] .sev-kpi.sev-medium .kpi-value { color: #8a6d1f; }
 :root[data-theme="light"] .sev-kpi.sev-low .kpi-value { color: #1a5fa8; }
 
-/* Security page one-offs — these replaced equivalent inline style={{…}} props (SLOP-064). Values are
-   unchanged; they live here so the page's spacing is editable from the stylesheet like everything else. */
-.page-intro { margin: 4px 0 0; max-width: 760px; }
+/* Security page one-offs */
+.page-intro { margin: 4px 0 0; }
 .filter-chip { align-self: center; }
 .tag.dismissed { margin-left: 4px; }
 .tag.framework { margin-left: 6px; }

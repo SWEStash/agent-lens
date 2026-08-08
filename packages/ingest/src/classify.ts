@@ -16,7 +16,7 @@ import { parseStored } from "./storedjson.js";
 // v2 (ADR-004): realistic complexity ceilings so real (long, substantial) main sessions spread
 // across bands instead of pegging in "large"; subagent sessions categorized by their spawner role
 // rather than keyword heuristics on a read-only exploration transcript.
-// v3: keyword scoring matches whole words instead of substrings (SLOP-069) — "review" no longer
+// v3: keyword scoring matches whole words instead of substrings — "review" no longer
 // fires inside "preview", nor "fix" inside "prefix" — so stored categories from v2 are superseded.
 export const CLASSIFIER_VERSION = 3;
 
@@ -107,7 +107,7 @@ function wordRe(phrase: string): RegExp {
  * "fix" inside "prefix", "add" inside "address". Four keywords compensated by carrying a trailing
  * space in the list (`"add "`, `"build "`, `"create "`, `"ci "`), which only worked when the next
  * character happened to be a space — a line-ending "add", or "add." mid-sentence, still missed.
- * Real word boundaries do the job properly, so those four are now written bare (SLOP-069).
+ * Real word boundaries do the job properly, so those four are now written bare.
  */
 function hits(text: string, words: string[]): number {
   let n = 0;

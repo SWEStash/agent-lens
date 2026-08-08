@@ -1,10 +1,9 @@
 /**
- * Deep-link behaviour of the session transcript (SLOP-062).
+ * Deep-link behaviour of the session transcript.
  *
  * A security finding links to `/session/<id>#ev-<event_uuid>`. Landing there must scroll the flagged
  * message into view and flash it — even when that message sits inside a turn the reader has collapsed,
- * which has to be expanded first. This is the fiddly interaction the SLOP-062 refactor touches, so it
- * is pinned here BEFORE that change and left unmodified across it.
+ * which has to be expanded first.
  */
 import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";

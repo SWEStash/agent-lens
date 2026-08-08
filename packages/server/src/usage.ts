@@ -1,8 +1,8 @@
 /**
  * Per-model token-usage aggregation + cost, shared by the session detail, workflow detail, session
- * list, and dashboard queries — the `SELECT model, SUM(...) …` shape and its cache-aware cost roll-up
- * were copy-pasted at 6+ sites (SLOP-036). Keep the column aliases (`i/o/cw/cr`) and the pricing call
- * in one place so a pricing or column change is a single edit.
+ * list, and dashboard queries. Keeping the `SELECT model, SUM(...) …` shape, the column aliases
+ * (`i/o/cw/cr`) and the cache-aware cost roll-up in one place makes a pricing or column change a
+ * single edit rather than one per call site.
  */
 import { costForUsage, unpricedModels } from "@agent-lens/core";
 import { type DB } from "./db.js";

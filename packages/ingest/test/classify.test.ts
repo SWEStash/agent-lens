@@ -165,7 +165,7 @@ describe("category — keyword + structural evidence, with subagent-role overrid
 });
 
 /**
- * Whole-word keyword matching (SLOP-069, CLASSIFIER_VERSION 3). Scoring used `indexOf`, so a keyword
+ * Whole-word keyword matching (CLASSIFIER_VERSION 3). Scoring used `indexOf`, so a keyword
  * fired anywhere inside a longer word — "review" inside "preview", "fix" inside "prefix". These pin
  * that a word only counts when it IS a word, and that the fix did not cost real matches: four
  * keywords used to carry a trailing space to fake a boundary, and that hack missed a keyword at the

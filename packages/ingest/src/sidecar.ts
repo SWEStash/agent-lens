@@ -5,8 +5,8 @@
  * skeleton: recursively find files that live directly inside a named subdir (mirror first, then each
  * `.versions/<ts>/` snapshot), sort so the mirror wins on UPSERT, and run an incremental stat→hash
  * skip against `ingest_state` before handing each *changed* file to a per-sidecar handler. That
- * skeleton was copy-pasted three times (SLOP-011); it lives here once. Each sidecar keeps only its own
- * config: the subdir name, the filename predicate, and the handler that parses + upserts one file.
+ * skeleton lives here once; each sidecar keeps only its own config: the subdir name, the filename
+ * predicate, and the handler that parses + upserts one file.
  */
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";

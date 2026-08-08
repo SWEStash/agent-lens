@@ -1,5 +1,6 @@
-/** The four contexts the transcript tree reads: message format, the Workflow tool-use -> run-id map,
- * the hide-tools toggle, and the deep-link flash target. Provided once by SessionView. */
+/** The five contexts the transcript tree reads: message format, the Workflow tool-use -> run-id map,
+ * the hide-tools toggle, the deep-link flash target, and the active search. Provided once by
+ * SessionView. */
 import { createContext } from "react";
 
 /** How message bodies render: "markdown" (formatted, the default) or "raw" (verbatim text).
@@ -22,3 +23,12 @@ export const HideToolsContext = createContext<boolean>(false);
 // event uuid of a deep-linked message to flash (from #ev-<uuid>); null = none. Owned by SessionView so
 // the highlight survives re-renders (e.g. expanding the target's turn).
 export const FlashContext = createContext<string | null>(null);
+
+/** The live find-in-session term and the message ◂/▸ currently sit on. Read by the two components
+ * that hide text a match could be buried in — the thinking toggle and the long-body clamp — so they
+ * can open themselves when the reader navigates to them. `query` alone isn't enough: opening every
+ * clamped body that happens to contain the term would expand half the transcript at once. */
+export const SearchContext = createContext<{ query: string; activeUuid: string | null }>({
+  query: "",
+  activeUuid: null,
+});

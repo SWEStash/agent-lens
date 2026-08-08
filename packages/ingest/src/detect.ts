@@ -126,7 +126,7 @@ const SQL_CLIENT = /\b(psql|pgcli|mysql|mysqladmin|mariadb|sqlite3?|sqlcmd|usql|
 // Each stage below is one regex pass; `commandViews` is the only place their ORDER is decided, and
 // the order matters (see the stage comments). packages/ingest/test/sanitize.test.ts pins every stage
 // individually, including the holes we knowingly accept — this is regex-as-tokenizer and a real
-// parser is out of scope (SLOP-018), so the tests are the contract.
+// parser is out of scope, so the tests are the contract.
 
 /** `# …` never runs. (Hole: a `#` inside a quoted string reads as a comment.) */
 export const stripComments = (c: string): string => c.replace(/(^|\s)#[^\n]*/g, "$1");
@@ -262,7 +262,7 @@ function netTargetScope(rawCommand: string): NetScope {
 }
 
 /**
- * The commonest rule shape, as a factory (SLOP-035): match ONE regex against the command-word view
+ * The commonest rule shape, as a factory: match ONE regex against the command-word view
  * (`bare` — quoted arguments blanked, comments/heredocs/echo output neutralized) and, on a hit, report
  * the VERBATIM command as evidence at the rule's base severity. Nothing context-dependent: a rule that
  * escalates on its target, inspects `input`, or splits the command into segments stays a full `test`.

@@ -2,8 +2,9 @@ import { useContext, useId, useState } from "react";
 import { Link } from "react-router-dom";
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { FormatContext, WorkflowMapContext } from "./contexts";
+import { FormatContext, SearchContext, WorkflowMapContext } from "./contexts";
 import type { ParsedCommand, ParsedTaskNotification } from "./parse";
+import { fieldMatches } from "./search";
 
 /** Render a slash command as an outlined, monospace chip (the invocation) with its local output as a
  * muted result block — instead of the raw `<command-*>` markup. */
@@ -73,22 +74,29 @@ const MD_COMPONENTS = {
 };
 
 /** Long message bodies are clamped to a preview height with a show-more toggle so a single big
- * message doesn't force endless scrolling; short messages render in full untouched. */
-export function CollapsibleText({ text }: { text: string }) {
+ * message doesn't force endless scrolling; short messages render in full untouched.
+ *
+ * The clamp hides text, so a search match can land below the fold. When find-in-session navigates to
+ * *this* message and the term is in the clamped body, unclamp it — otherwise ▸ scrolls to a card whose
+ * match isn't visible. Only the active message opens: unclamping every body containing the term would
+ * expand half the transcript at once. `uuid` is what ties the message to the active hit. */
+export function CollapsibleText({ text, uuid }: { text: string; uuid?: string }) {
   const long = text.length > 1400 || text.split("\n").length > 18;
   const [expanded, setExpanded] = useState(false);
+  const search = useContext(SearchContext);
   const bodyId = useId();
   if (!long) return <MessageBody text={text} />;
+  const revealed = expanded || (!!uuid && search.activeUuid === uuid && fieldMatches(text, search.query));
   return (
-    <div className={"text-wrap" + (expanded ? "" : " is-clamped")}>
+    <div className={"text-wrap" + (revealed ? "" : " is-clamped")}>
       <MessageBody text={text} id={bodyId} />
       <button
         className="ghost small show-more"
-        aria-expanded={expanded}
+        aria-expanded={revealed}
         aria-controls={bodyId}
-        onClick={() => setExpanded((e) => !e)}
+        onClick={() => setExpanded(!revealed)}
       >
-        {expanded ? "Show less ▴" : "Show more ▾"}
+        {revealed ? "Show less ▴" : "Show more ▾"}
       </button>
     </div>
   );

@@ -2,7 +2,7 @@
  * Reading back JSON that ingest itself wrote (`tool_calls.input_json`). A parse failure here is not a
  * malformed-input case — the transcript reader already counts those — it means a row in our own DB is
  * corrupt or truncated, which the derivation passes used to swallow silently: they returned "no data"
- * and the affected tool call quietly stopped being classified or scanned for findings (SLOP-068).
+ * and the affected tool call quietly stopped being classified or scanned for findings.
  *
  * Swallowing is still right (one bad row must not abort a rescan of thousands), but it is now
  * counted, and the first failure per site is reported so a corrupt DB is visible rather than showing

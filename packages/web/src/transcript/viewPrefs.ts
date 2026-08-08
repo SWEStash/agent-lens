@@ -1,7 +1,7 @@
 /** Transcript view preferences (message format, hide-tools). These go through the shared prefs module
  * like every other UI pref: localStorage for instant first paint, written through to the server's
  * writable sidecar so a choice survives a cache-clear and follows the same server across browsers.
- * They used to hand-roll `localStorage` and were the only prefs that silently did NOT sync (SLOP-017). */
+ * They used to hand-roll `localStorage` and were the only prefs that silently did NOT sync. */
 import { fetchPref, loadPrefLocal, savePref } from "../prefs";
 import type { MsgFormat } from "./contexts";
 

@@ -1,5 +1,5 @@
-/** How a view renders a `useFetch` state. Every page had its own copy of these two elements (and
- * their ARIA roles), which is where SLOP-015 came from — they live here once now. */
+/** How a view renders a `useFetch` state. These two elements (and their ARIA roles) live here once,
+ * rather than being copied into every page. */
 import type { ReactNode } from "react";
 import type { AsyncState } from "./useFetch";
 
