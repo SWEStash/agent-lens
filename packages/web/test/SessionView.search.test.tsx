@@ -251,6 +251,57 @@ describe("find in session", () => {
     await waitFor(() => expect(nav()).toBeNull());
   });
 
+  it("steps with Enter / Shift+Enter from anywhere in the search UI, and from nothing focused", async () => {
+    renderAt();
+    await waitFor(() => expect(screen.getByText("a needle in plain sight")).toBeTruthy());
+    type("needle");
+    await waitFor(() => expect(count()).toBe("1 of 3 messages"));
+
+    // From the box.
+    fireEvent.keyDown(box(), { key: "Enter" });
+    await waitFor(() => expect(count()).toBe("2 of 3 messages"));
+    fireEvent.keyDown(box(), { key: "Enter", shiftKey: true });
+    await waitFor(() => expect(count()).toBe("1 of 3 messages"));
+
+    // From a button inside the pill — where focus lands after clicking ▸ once, and the reason plain
+    // Enter is left to the button itself there.
+    scrollBoxOffScreen();
+    await waitFor(() => expect(nav()).toBeTruthy());
+    fireEvent.keyDown(within(nav()!).getByRole("button", { name: /next match/i }), { key: "Enter", shiftKey: true });
+    await waitFor(() => expect(nav()!.textContent).toContain("3/3"));
+
+    // With nothing focused — the state you're in after scrolling with the wheel.
+    (document.activeElement as HTMLElement | null)?.blur();
+    fireEvent.keyDown(document, { key: "Enter" });
+    await waitFor(() => expect(count()).toBe("1 of 3 messages"));
+    fireEvent.keyDown(document, { key: "Enter", shiftKey: true });
+    await waitFor(() => expect(count()).toBe("3 of 3 messages"));
+  });
+
+  it("leaves Enter to the control that has it, and Escape clears from either place", async () => {
+    renderAt();
+    await waitFor(() => expect(screen.getByText("a needle in plain sight")).toBeTruthy());
+    type("needle");
+    await waitFor(() => expect(count()).toBe("1 of 3 messages"));
+    scrollBoxOffScreen();
+    await waitFor(() => expect(nav()).toBeTruthy());
+
+    // Enter on ✕ must clear, not navigate — hijacking it would make the button lie about what it does.
+    const clear = within(nav()!).getByRole("button", { name: /clear search/i });
+    clear.focus();
+    fireEvent.keyDown(clear, { key: "Enter" });
+    fireEvent.click(clear); // the browser's own activation, which our handler must not have suppressed
+    await waitFor(() => expect((box() as HTMLInputElement).value).toBe(""));
+
+    // Escape works from the pill too, not just the box.
+    type("needle");
+    await waitFor(() => expect(count()).toBe("1 of 3 messages"));
+    scrollBoxOffScreen();
+    await waitFor(() => expect(nav()).toBeTruthy());
+    fireEvent.keyDown(within(nav()!).getByRole("button", { name: /next match/i }), { key: "Escape" });
+    await waitFor(() => expect((box() as HTMLInputElement).value).toBe(""));
+  });
+
   it("picks up a term handed over from the sessions list in ?q=", async () => {
     renderAt("/session/s1?q=needle");
     await waitFor(() => expect(screen.getByText("a needle in plain sight")).toBeTruthy());

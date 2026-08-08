@@ -7,6 +7,7 @@
 import { useEffect, useRef, useState, type MutableRefObject } from "react";
 import { MIN_QUERY } from "./search";
 import { SearchNav } from "./SearchNav";
+import { searchNavKeys } from "./searchKeys";
 
 /** Quiet period before a keystroke reaches the URL, so find-as-you-type doesn't fill the history. */
 const DEBOUNCE_MS = 150;
@@ -71,7 +72,13 @@ export function SearchBar({
 
   return (
     <>
-    <form ref={formRef} className="transcript-search" role="search" onSubmit={(e) => e.preventDefault()}>
+    <form
+      ref={formRef}
+      className="transcript-search"
+      role="search"
+      onSubmit={(e) => e.preventDefault()}
+      onKeyDown={searchNavKeys(onPrev, onNext, clear)}
+    >
       <span className="ts-icon" aria-hidden="true">
         🔍
       </span>
@@ -82,16 +89,6 @@ export function SearchBar({
         placeholder="Find in session…"
         value={value}
         onChange={(e) => type(e.target.value)}
-        onKeyDown={(e) => {
-          if (e.key === "Enter") {
-            e.preventDefault();
-            if (e.shiftKey) onPrev();
-            else onNext();
-          } else if (e.key === "Escape") {
-            e.preventDefault();
-            clear();
-          }
-        }}
       />
       {/* One live region for both outcomes, so a screen reader hears the count change or "no matches"
           without the surrounding controls being re-announced. */}

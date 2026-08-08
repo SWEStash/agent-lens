@@ -89,19 +89,42 @@ export default function SessionView() {
     setPos((p) => ({ idx: (p.idx + delta + model.total) % model.total, seq: p.seq + 1 }));
   };
 
+  // The document listener below is bound once on mount, so it reads the current stepper through a ref
+  // rather than closing over a render's copy.
+  const stepRef = useRef({ step, total: model.total });
+  stepRef.current = { step, total: model.total };
+
   const searchInput = useRef<HTMLInputElement | null>(null);
   const transcriptRef = useRef<HTMLDivElement>(null);
   useHighlightPaint(transcriptRef, query);
 
   // `/` opens find-in-session, the convention in transcript and log readers. Ctrl+F is deliberately
   // left to the browser. Scoped to this view — the app has no global shortcut registry.
+  //
+  // Enter / Shift+Enter also step here, but only while nothing at all has focus: scrolling with the
+  // wheel leaves focus on <body>, where Enter means nothing, and requiring a click on the pill first
+  // is the friction this is here to remove. Anything focusable keeps its own Enter — the search UI's
+  // own containers handle their case (transcript/searchKeys.ts).
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      // React's handlers are bound inside document and so have already run and, if they acted, called
+      // preventDefault. Without this, a key handled by the search UI would step a second time here.
+      if (e.defaultPrevented || e.metaKey || e.ctrlKey || e.altKey) return;
       const el = e.target as HTMLElement | null;
-      if (e.key !== "/" || e.metaKey || e.ctrlKey || e.altKey) return;
-      if (el && (el.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName))) return;
-      e.preventDefault();
-      searchInput.current?.focus();
+      const typing = !!el && (el.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName));
+      if (e.key === "/" && !typing) {
+        e.preventDefault();
+        searchInput.current?.focus();
+        return;
+      }
+      // Asked of `activeElement`, not the event target: the two agree in a browser, but only the
+      // former actually answers "does anything hold focus right now".
+      const active = document.activeElement;
+      const unfocused = !active || active === document.body || active === document.documentElement;
+      if (e.key === "Enter" && unfocused && stepRef.current.total) {
+        e.preventDefault();
+        stepRef.current.step(e.shiftKey ? -1 : 1);
+      }
     };
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);

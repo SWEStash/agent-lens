@@ -11,6 +11,7 @@
  * Deliberately NOT a live region: the toolbar counter is the one `role="status"`, and it announces
  * whether or not it's in the viewport. Two would double every announcement.
  */
+import { searchNavKeys } from "./searchKeys";
 export function SearchNav({
   query,
   total,
@@ -30,7 +31,15 @@ export function SearchNav({
   onBackToBox: () => void;
 }) {
   return (
-    <div className="search-nav" role="group" aria-label="Search matches">
+    // `tabIndex={-1}` keeps it out of the tab order but lets a click on the pill's own surface land
+    // focus here, which is what arms Enter / Shift+Enter without having to hit one of the buttons.
+    <div
+      className="search-nav"
+      role="group"
+      aria-label="Search matches"
+      tabIndex={-1}
+      onKeyDown={searchNavKeys(onPrev, onNext, onClear)}
+    >
       {/* The term and position are plain text, not the button's label: an aria-label describing the
           action ("back to the search box") wouldn't contain the visible text, which is what speech
           input users say to activate it (WCAG 2.5.3). The icon carries the action instead. */}
