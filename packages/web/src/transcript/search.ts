@@ -5,7 +5,7 @@
  * the sessions list's token-AND FTS (packages/server/src/db.ts:toFtsQuery): in-page find is expected
  * to behave like the browser's, hitting mid-word so `AWS_SECRET` is found inside `export AWS_SECRET=`.
  */
-import type { EventNode } from "../api";
+import type { EventNode, ToolCall } from "../api";
 
 /** Below this a query matches nearly every message, which paints the whole transcript for nothing. */
 export const MIN_QUERY = 2;
@@ -32,15 +32,15 @@ export const EMPTY_MODEL: SearchModel = { hits: [], byTurn: new Map(), total: 0 
 /** The searchable text of one message, flattened: the body, the thinking block, and every tool call's
  * input and result. Mirrors what the event renders — tool payloads are where paths and secrets live,
  * which is the whole point of searching an audit transcript. */
+function toolText(t: ToolCall): string {
+  return [t.input_json, t.result_summary, t.full_result?.text].filter(Boolean).join("\n");
+}
+
 function haystack(e: EventNode): string {
   const parts: string[] = [];
   if (e.text) parts.push(e.text);
   if (e.thinking) parts.push(e.thinking);
-  for (const t of e.toolCalls) {
-    if (t.input_json) parts.push(t.input_json);
-    if (t.result_summary) parts.push(t.result_summary);
-    if (t.full_result?.text) parts.push(t.full_result.text);
-  }
+  for (const t of e.toolCalls) parts.push(toolText(t));
   return parts.join("\n").toLowerCase();
 }
 
@@ -71,6 +71,13 @@ export function searchSession(events: EventNode[], haystacks: Map<string, string
     if (e.turn_id) byTurn.set(e.turn_id, (byTurn.get(e.turn_id) ?? 0) + 1);
   }
   return { hits, byTurn, total: hits.length };
+}
+
+/** Whether this tool call's input or result holds the query. Tool payloads are searched whether or not
+ * "hide tool messages" is on — that toggle is about reading the conversation, not about narrowing an
+ * audit — so this is what lets a suppressed tool card show itself when navigated to. */
+export function toolMatches(t: ToolCall, query: string): boolean {
+  return fieldMatches(toolText(t), query);
 }
 
 /** Whether one specific field holds the query — used to decide whether to force open the thing hiding

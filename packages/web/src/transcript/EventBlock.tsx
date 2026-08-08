@@ -1,11 +1,11 @@
 import { useContext, useId, useState } from "react";
-import type { EventNode } from "../api";
+import type { EventNode, ToolCall } from "../api";
 import { fmtDate, shortModel } from "../format";
 import CopyButton from "../CopyButton";
 import { FlashContext, HideToolsContext, SearchContext } from "./contexts";
 import { parseCommand, parseTaskNotification } from "./parse";
 import { CollapsibleText, CommandBlock, TaskNotificationBlock } from "./Message";
-import { fieldMatches } from "./search";
+import { fieldMatches, toolMatches } from "./search";
 import { ToolRender, toolVisible } from "./tools";
 
 export function EventBlock({ e }: { e: EventNode }) {
@@ -20,7 +20,12 @@ export function EventBlock({ e }: { e: EventNode }) {
   const thinkingRevealed = showThinking || (search.activeUuid === e.uuid && fieldMatches(e.thinking, search.query));
   const who = e.role || e.type;
   const icon = who === "user" ? "👤" : who === "assistant" ? "🤖" : "⚙️";
-  const visibleTools = e.toolCalls.filter((t) => toolVisible(t, hideTools));
+  // Search covers tool payloads whether or not they're hidden, so "hide tool messages" would otherwise
+  // let ▸ land on a message with nothing to show — or, when a tool call is its only content, on a card
+  // that doesn't render at all. A tool holding the active match overrides the toggle, the same way a
+  // flagged one does; the toggle is about reading the conversation, not about narrowing a search.
+  const revealed = (t: ToolCall) => search.activeUuid === e.uuid && toolMatches(t, search.query);
+  const visibleTools = e.toolCalls.filter((t) => toolVisible(t, hideTools) || revealed(t));
   const hasBody = e.text || e.thinking || visibleTools.length;
   if (!hasBody) return null;
   const cmd = e.text ? parseCommand(e.text) : null;
@@ -54,7 +59,7 @@ export function EventBlock({ e }: { e: EventNode }) {
       )}
       {e.text && (cmd ? <CommandBlock cmd={cmd} /> : notif ? <TaskNotificationBlock n={notif} /> : <CollapsibleText text={e.text} uuid={e.uuid} />)}
       {visibleTools.map((t, i) => (
-        <ToolRender key={i} t={t} hideTools={hideTools} />
+        <ToolRender key={i} t={t} hideTools={hideTools && !revealed(t)} />
       ))}
     </div>
   );

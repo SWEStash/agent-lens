@@ -71,6 +71,9 @@ function detail(): SessionDetail {
       // The match lives only in a tool result — invisible to a body-only search.
       event("u3", "s1:1", { text: "ran a command", toolCalls: [{ tool_name: "Bash", result_summary: "found a NEEDLE here" }] }),
       event("u4", "s1:2", { text: LONG_BODY }),
+      // Nothing but a Bash call — the message "hide tool messages" erases entirely. Its own term, so
+      // it stays out of the "needle" counts the rest of the suite asserts on.
+      event("u5", "s1:2", { text: null, toolCalls: [{ tool_name: "Bash", input_json: '{"command":"grep buriedterm src"}' }] }),
     ],
     children: [],
     workflow_runs: [],
@@ -300,6 +303,30 @@ describe("find in session", () => {
     await waitFor(() => expect(nav()).toBeTruthy());
     fireEvent.keyDown(within(nav()!).getByRole("button", { name: /next match/i }), { key: "Escape" });
     await waitFor(() => expect((box() as HTMLInputElement).value).toBe(""));
+  });
+
+  it("finds and reaches a match inside a tool call that 'hide tool messages' suppresses", async () => {
+    renderAt();
+    await waitFor(() => expect(screen.getByText("a needle in plain sight")).toBeTruthy());
+
+    // u5's only content is a Bash call, so hiding tool messages erases the whole card.
+    fireEvent.click(screen.getByRole("button", { name: /hide tool messages/i }));
+    await waitFor(() => expect(document.getElementById("ev-u5")).toBeNull());
+
+    // The toggle is about reading the conversation, not about narrowing an audit: the match is still
+    // counted...
+    type("buriedterm");
+    await waitFor(() => expect(count()).toBe("1 of 1 message"));
+
+    // ...and navigating to it brings the suppressed card back rather than stopping on nothing.
+    await waitFor(() => expect(document.getElementById("ev-u5")).toBeTruthy());
+    await waitFor(() => expect(document.querySelector("#ev-u5.ev-flagged")).toBeTruthy());
+    expect(screen.getByText(/grep buriedterm src/)).toBeTruthy();
+
+    // Leaving the match re-hides it — the toggle is only overridden where the search needs it.
+    type("needle");
+    await waitFor(() => expect(count()).toBe("1 of 3 messages"));
+    await waitFor(() => expect(document.getElementById("ev-u5")).toBeNull());
   });
 
   it("picks up a term handed over from the sessions list in ?q=", async () => {

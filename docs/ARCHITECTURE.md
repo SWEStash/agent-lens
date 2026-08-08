@@ -163,3 +163,4 @@ erDiagram
 | [027](decisions/ADR-027-runtime-diagnostics-surface.md) | Read-only diagnostics surface; runtime version resolution |
 | [028](decisions/ADR-028-model-pricing.md) | Cost derived at read time; config-overridable price table; unpriced models flagged |
 | [029](decisions/ADR-029-node-sqlite-driver.md) | SQLite via Node's built-in `node:sqlite`; no compiled dependencies |
+| [030](decisions/ADR-030-in-session-search.md) | Find-in-session: client-side, highlight-and-navigate, reveals what the view hides |
