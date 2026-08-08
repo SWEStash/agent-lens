@@ -10,7 +10,7 @@
  * doesn't implement. That is by design — the counter, badges, expansion and flash all work without it,
  * and this suite pins exactly that.
  */
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { SessionDetail } from "../src/api";
@@ -90,6 +90,20 @@ function renderAt(url = "/session/s1") {
   );
 }
 
+// jsdom has no IntersectionObserver. The floating navigator appears when the toolbar's search box
+// scrolls out of view, so the suite drives that signal directly via `scrollBoxOffScreen`.
+let observerCbs: ((entries: { isIntersecting: boolean }[]) => void)[] = [];
+class FakeIO {
+  constructor(cb: (entries: { isIntersecting: boolean }[]) => void) {
+    observerCbs.push(cb);
+  }
+  observe() {}
+  disconnect() {}
+}
+const scrollBoxOffScreen = (off = true) =>
+  act(() => observerCbs.forEach((cb) => cb([{ isIntersecting: !off }])));
+
+const nav = () => screen.queryByRole("group", { name: /search matches/i });
 const box = () => screen.getByRole("searchbox", { name: /find in this session/i });
 const type = (q: string) => fireEvent.change(box(), { target: { value: q } });
 const count = () => screen.getByRole("status").textContent;
@@ -99,6 +113,8 @@ beforeEach(() => {
   scrollIntoView.mockReset();
   api.mockResolvedValue(detail());
   Element.prototype.scrollIntoView = scrollIntoView; // jsdom doesn't implement it
+  observerCbs = [];
+  (globalThis as { IntersectionObserver?: unknown }).IntersectionObserver = FakeIO;
 });
 afterEach(cleanup);
 
@@ -183,6 +199,56 @@ describe("find in session", () => {
     fireEvent.click(next);
     await waitFor(() => expect(count()).toBe("3 of 3 messages"));
     await waitFor(() => expect(clamped()?.className).not.toContain("is-clamped"));
+  });
+
+  it("floats a navigator once the search box scrolls out of view, and steps from it", async () => {
+    renderAt();
+    await waitFor(() => expect(screen.getByText("a needle in plain sight")).toBeTruthy());
+    type("needle");
+    await waitFor(() => expect(count()).toBe("1 of 3 messages"));
+    expect(nav()).toBeNull(); // the box is still on screen — no redundant duplicate
+
+    scrollBoxOffScreen();
+    await waitFor(() => expect(nav()).toBeTruthy());
+    expect(nav()!.textContent).toContain("needle");
+    expect(nav()!.textContent).toContain("1/3");
+
+    // ▸ inside the floating navigator drives the same ring as the toolbar's.
+    fireEvent.click(within(nav()!).getByRole("button", { name: /next match/i }));
+    await waitFor(() => expect(nav()!.textContent).toContain("2/3"));
+    expect(count()).toBe("2 of 3 messages");
+
+    // Scrolling back to the box retires it again.
+    scrollBoxOffScreen(false);
+    await waitFor(() => expect(nav()).toBeNull());
+  });
+
+  it("keeps the floating navigator away when there is nothing to navigate", async () => {
+    renderAt();
+    await waitFor(() => expect(screen.getByText("a needle in plain sight")).toBeTruthy());
+    scrollBoxOffScreen();
+    expect(nav()).toBeNull(); // no query at all
+
+    type("absent");
+    await waitFor(() => expect(count()).toBe("No matches"));
+    expect(nav()).toBeNull(); // a query, but no matches to step through
+  });
+
+  it("clears from the floating navigator and returns focus to the box", async () => {
+    renderAt();
+    await waitFor(() => expect(screen.getByText("a needle in plain sight")).toBeTruthy());
+    type("needle");
+    await waitFor(() => expect(count()).toBe("1 of 3 messages"));
+    scrollBoxOffScreen();
+    await waitFor(() => expect(nav()).toBeTruthy());
+
+    // The term doubles as the way back to the box — the only way to edit it without hunting for it.
+    fireEvent.click(within(nav()!).getByRole("button", { name: /back to the search box/i }));
+    expect(document.activeElement).toBe(box());
+
+    fireEvent.click(within(nav()!).getByRole("button", { name: /clear search/i }));
+    await waitFor(() => expect((box() as HTMLInputElement).value).toBe(""));
+    await waitFor(() => expect(nav()).toBeNull());
   });
 
   it("picks up a term handed over from the sessions list in ?q=", async () => {

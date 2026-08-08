@@ -6,6 +6,7 @@
  */
 import { useEffect, useRef, useState, type MutableRefObject } from "react";
 import { MIN_QUERY } from "./search";
+import { SearchNav } from "./SearchNav";
 
 /** Quiet period before a keystroke reaches the URL, so find-as-you-type doesn't fill the history. */
 const DEBOUNCE_MS = 150;
@@ -30,6 +31,18 @@ export function SearchBar({
 }) {
   const [value, setValue] = useState(query);
   const timer = useRef(0);
+
+  // Navigating scrolls this box out of view, and the floating navigator takes over from there. Tracked
+  // by observing the box itself rather than a scroll offset, so it holds up however the page reflows.
+  const formRef = useRef<HTMLFormElement>(null);
+  const [boxOnScreen, setBoxOnScreen] = useState(true);
+  useEffect(() => {
+    const el = formRef.current;
+    if (!el || typeof IntersectionObserver === "undefined") return;
+    const io = new IntersectionObserver(([e]) => setBoxOnScreen(e.isIntersecting));
+    io.observe(el);
+    return () => io.disconnect();
+  }, []);
 
   // Adopt a query that changed elsewhere — landing on `?q=…`, or the clear button. Debounced pushes
   // always carry the newest value, so this only ever echoes back what the box already holds.
@@ -57,7 +70,8 @@ export function SearchBar({
   const searching = value.trim().length >= MIN_QUERY;
 
   return (
-    <form className="transcript-search" role="search" onSubmit={(e) => e.preventDefault()}>
+    <>
+    <form ref={formRef} className="transcript-search" role="search" onSubmit={(e) => e.preventDefault()}>
       <span className="ts-icon" aria-hidden="true">
         🔍
       </span>
@@ -96,5 +110,17 @@ export function SearchBar({
         </button>
       )}
     </form>
+    {total > 0 && !boxOnScreen && (
+      <SearchNav
+        query={query}
+        total={total}
+        index={index}
+        onPrev={onPrev}
+        onNext={onNext}
+        onClear={clear}
+        onBackToBox={() => inputRef.current?.focus()}
+      />
+    )}
+    </>
   );
 }
