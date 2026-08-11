@@ -144,7 +144,7 @@ export async function createApp(db: DB, opts: CreateAppOpts = {}): Promise<Fasti
   app.get("/api/projects", async () => listProjects(db));
   app.get("/api/models", async () => listModels(db));
 
-  // Dashboard aggregates (Phase 4). All read-only; filters: source, from, to.
+  // Dashboard aggregates. All read-only; filters: source, from, to.
   const dashFilters = (req: any): DashFilters => {
     const q = req.query as Record<string, string>;
     return { source: q.source, from: q.from, to: q.to };

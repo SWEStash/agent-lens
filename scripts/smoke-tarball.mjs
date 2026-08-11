@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * From-tarball smoke test (checkpoint 3/5 verification): pack the `agent-lens` CLI, install it
+ * From-tarball smoke test: pack the `agent-lens` CLI, install it
  * OUTSIDE the repo, and run collect → ingest → serve against the committed corpus. Proves the bundle
  * needs no repo layout (findRepoRoot → null → per-user/overridden dirs), that the runtime deps load
  * (fastify, chokidar — SQLite is the `node:sqlite` builtin, ADR-029), and that the web SPA is served

@@ -83,8 +83,8 @@ that already uses Agent Lens — it installs to an isolated npm prefix, data dir
 systemd units under `agent-lens-sanity-*` names, checksums your existing units before and after, and
 tears everything down on exit (including on abort). It fails the run if anything of yours changed.
 
-Requires Playwright for the browser sweep (`pnpm install` at the repo root); without it that one
-phase is skipped with a notice and the rest still runs.
+Requires Playwright for the browser sweep (`pnpm install` at the repo root); without it that sweep
+is skipped with a notice and the rest still runs.
 
 ## Manual publish (fallback)
 

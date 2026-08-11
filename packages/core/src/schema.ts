@@ -13,8 +13,8 @@
  *   projections for querying/dashboards. It is stored gzip-compressed as a BLOB (ADR-011) — write via
  *   `packRaw`, read via `unpackRaw` (both in `rawjson.ts`).
  *
- * This module only declares the schema. Connection handling and migrations live in `db.ts`
- * (Phase 2). Bump SCHEMA_VERSION on any DDL change.
+ * This module only declares the schema. Connection handling and migrations live in `db.ts`.
+ * Bump SCHEMA_VERSION on any DDL change.
  */
 
 export const SCHEMA_VERSION = 14;

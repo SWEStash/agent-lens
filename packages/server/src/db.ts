@@ -462,7 +462,7 @@ function loadEvents(db: DB, id: string, toolRows: ToolCallProjection[]): EventNo
   });
 }
 
-/** Heuristic classification (Phase 4): category + complexity + the signals that produced them
+/** Heuristic classification: category + complexity + the signals that produced them
  * (tool/skill mix, LoC, files, subagent count) — already captured in signals_json by the classifier. */
 function loadClassification(db: DB, id: string): Classification | null {
   const cls = queryGet<ClassificationProjectionRow>(

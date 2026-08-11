@@ -1,5 +1,5 @@
 /**
- * Dashboard aggregates (Phase 4) — the KPIs/breakdowns are computed at query time via GROUP BY, so
+ * Dashboard aggregates — the KPIs/breakdowns are computed at query time via GROUP BY, so
  * a wrong join or a folded-in cache-read silently corrupts every chart. These tests seed a small DB
  * with a HAND-COMPUTED scenario (two sources, a main+subagent split, a cache-heavy opus session, a
  * priced dated-haiku session, and an unpriced <synthetic> session) and assert exact numbers.

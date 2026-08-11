@@ -1,5 +1,5 @@
 /**
- * Agent Lens — dashboard aggregation queries (Phase 4). Read-only; everything is computed as
+ * Agent Lens — dashboard aggregation queries. Read-only; everything is computed as
  * server-side aggregates (GROUP BY over indexed columns) so the charts plot bounded series, not
  * raw rows — this is what lets the UI scale to years of data. Token series are always kept split
  * (input / output / cache-creation / cache-read); cache-read is never folded into a single
