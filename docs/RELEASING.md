@@ -65,6 +65,27 @@ GITHUB_TOKEN=$(gh auth token) pnpm exec semantic-release --dry-run --no-ci
 pnpm -r build && node scripts/smoke-tarball.mjs --global
 ```
 
+## Pre-announce sanity check
+
+`smoke-tarball.mjs` proves the *tarball* is installable. Before announcing a release, prove the
+*published* package works on a real machine end to end — install → systemd → collect → ingest →
+store → triage writes → web UI:
+
+```bash
+scripts/sanity-e2e.sh                    # against the latest published version
+scripts/sanity-e2e.sh --version 0.13.0   # or a specific one
+scripts/sanity-e2e.sh --keep             # leave it running to poke at
+```
+
+This is a **manual gate, not a CI job**: it needs a live systemd user session and a real Claude
+install with sessions in it, neither of which exists on a runner. It is safe to run on a machine
+that already uses Agent Lens — it installs to an isolated npm prefix, data dir, and port, runs its
+systemd units under `agent-lens-sanity-*` names, checksums your existing units before and after, and
+tears everything down on exit (including on abort). It fails the run if anything of yours changed.
+
+Requires Playwright for the browser sweep (`pnpm install` at the repo root); without it that one
+phase is skipped with a notice and the rest still runs.
+
 ## Manual publish (fallback)
 
 Automation is the norm; publish by hand only to bootstrap or recover:
