@@ -43,6 +43,23 @@ agent-lens service install         # periodic collect+ingest AND the always-on U
 agent-lens watch                   # a resident process that collects+ingests on file change
 ```
 
+No configuration is required to start: with no config file, Agent Lens collects the single default
+source `~/.claude`.
+
+### Where your data lives
+
+Installed from npm, the archive and SQLite store go to a per-user data directory:
+
+| Platform | Data directory |
+| --- | --- |
+| Linux | `$XDG_DATA_HOME/agent-lens`, else `~/.local/share/agent-lens` |
+| macOS | `~/Library/Application Support/agent-lens` |
+| Windows | `%LOCALAPPDATA%\agent-lens` |
+
+Set `AGENT_LENS_DATA` to put it elsewhere — that is the only way to relocate the archive, which the
+SQLite store and triage sidecar follow. `agent-lens config` prints the resolved paths and where each
+value came from.
+
 ### Commands
 
 | Command | What it does |
@@ -51,8 +68,10 @@ agent-lens watch                   # a resident process that collects+ingests on
 | `agent-lens ingest` | Normalize the archive into the SQLite store. |
 | `agent-lens serve` | Serve the web UI + read-only API at `http://127.0.0.1:4477`. |
 | `agent-lens watch` | Foreground resident: collect + ingest on file change. |
-| `agent-lens metrics` | Print store metrics to the terminal. |
+| `agent-lens metrics` | Re-run classification, security detection, error typing, and file-change indexing over an already-ingested store. |
+| `agent-lens export <sessionId>` | Write a session to a shareable Markdown file — redacted by default (`--level secrets\|structure`, `--no-redact` to opt out). |
 | `agent-lens service <install\|uninstall\|status> [collector\|server\|all]` | Install/manage OS services (systemd / launchd / Windows Task Scheduler). |
+| `agent-lens config` | Print the effective configuration — sources, paths, server binding — and where each value came from. |
 
 ## Privacy
 
