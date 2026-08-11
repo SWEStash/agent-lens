@@ -15,6 +15,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { expandPath, findRepoRoot, resolveConfigFile, resolveDataDir } from "./paths.js";
 import { mergePricing, PRICE_TABLE, usePricing, type Rate } from "./pricing.js";
+import { UserError } from "./user-error.js";
 
 /** Shape of agent-lens.config.json (only the fields this module and sources.ts read). */
 export interface AgentLensConfigFile {
@@ -146,7 +147,8 @@ export interface ResolvedServer {
 export function validatePort(value: number | string, source: string): number {
   const n = typeof value === "number" ? value : Number(String(value).trim());
   if (!Number.isInteger(n) || n < 1 || n > 65535) {
-    throw new Error(`agent-lens: invalid port from ${source}: '${value}' (expected an integer 1-65535)`);
+    // No "agent-lens:" prefix — the CLI's error boundary adds it, and both would read twice.
+    throw new UserError(`invalid port from ${source}: '${value}' (expected an integer 1-65535)`);
   }
   return n;
 }

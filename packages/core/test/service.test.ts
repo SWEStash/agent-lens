@@ -17,6 +17,7 @@ import {
   launchdCollectorPlist,
   launchdServerPlist,
   DEFAULT_HOURS,
+  UserError,
 } from "../dist/index.js";
 
 const NODE = "/usr/bin/node";
@@ -29,6 +30,11 @@ describe("parseHours", () => {
     expect(() => parseHours("99")).toThrow(/invalid hours/);
     expect(() => parseHours("nope")).toThrow(/invalid hours/);
   });
+  // UserError is what the CLI boundary keys on to print one line instead of a stack trace, so the
+  // *type* is load-bearing here, not just the message.
+  it("rejects with a UserError, not a bare Error", () => {
+    expect(() => parseHours("nope")).toThrow(UserError);
+  });
 });
 
 describe("parseTargets", () => {
@@ -39,6 +45,7 @@ describe("parseTargets", () => {
     expect(parseTargets("server")).toEqual(["server"]);
   });
   it("rejects unknown targets", () => expect(() => parseTargets("web")).toThrow(/invalid target/));
+  it("rejects with a UserError, not a bare Error", () => expect(() => parseTargets("web")).toThrow(UserError));
 });
 
 describe("onCalendarHours", () => {
@@ -59,6 +66,22 @@ describe("systemd collector units", () => {
     expect(t).toContain("OnCalendar=*-*-* 09,21:00");
     expect(t).toContain("Persistent=true");
     expect(t).toContain("WantedBy=timers.target");
+  });
+  /**
+   * The collector *writes* the archive, so a unit that resolves a different data dir than the shell
+   * that installed it silently mirrors transcripts into the wrong store. Schedulers inherit no
+   * environment, so the path vars have to be baked in (ADR-021 makes env the only way to move it).
+   */
+  it("bakes the path env when given", () => {
+    const s = systemdCollectorService(NODE, CLI, {
+      AGENT_LENS_DATA: "/srv/lens",
+      AGENT_LENS_CONFIG: "/srv/lens.json",
+    });
+    expect(s).toMatch(/^Environment=AGENT_LENS_DATA=\/srv\/lens$/m);
+    expect(s).toMatch(/^Environment=AGENT_LENS_CONFIG=\/srv\/lens\.json$/m);
+  });
+  it("emits no Environment line when there is nothing to bake", () => {
+    expect(systemdCollectorService(NODE, CLI)).not.toMatch(/^Environment=/m);
   });
 });
 
@@ -84,6 +107,11 @@ describe("systemd server unit", () => {
     expect(s).toContain("Environment=AGENT_LENS_PORT=5000");
     expect(s).toContain("Environment=AGENT_LENS_HOST=127.0.0.1");
   });
+  it("carries the path env alongside the server env", () => {
+    const s = systemdServerService(NODE, CLI, { AGENT_LENS_DATA: "/srv/lens", AGENT_LENS_PORT: "5000" });
+    expect(s).toMatch(/^Environment=AGENT_LENS_DATA=\/srv\/lens$/m);
+    expect(s).toMatch(/^Environment=AGENT_LENS_PORT=5000$/m);
+  });
 });
 
 describe("launchd collector plist", () => {
@@ -96,6 +124,12 @@ describe("launchd collector plist", () => {
     expect(p).toContain("<key>Hour</key><integer>9</integer>");
     expect(p).toContain("<key>Hour</key><integer>17</integer>");
     expect(p).toContain("<string>/data/schedule.log</string>");
+  });
+  it("bakes the path env when given, and omits the dict when not", () => {
+    const withEnv = launchdCollectorPlist(NODE, CLI, [9], "/data/schedule.log", { AGENT_LENS_DATA: "/srv/lens" });
+    expect(withEnv).toContain("<key>EnvironmentVariables</key>");
+    expect(withEnv).toContain("<key>AGENT_LENS_DATA</key><string>/srv/lens</string>");
+    expect(launchdCollectorPlist(NODE, CLI, [9], "/data/schedule.log")).not.toContain("EnvironmentVariables");
   });
 });
 

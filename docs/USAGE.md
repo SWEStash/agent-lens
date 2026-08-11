@@ -274,10 +274,19 @@ agent-lens service uninstall server
 ```
 
 It binds `127.0.0.1:4477` by default. Change it per run with `agent-lens serve --port 5599 --host …`,
-or persist it via `AGENT_LENS_PORT` / `AGENT_LENS_HOST` or the config file's `server` block. Any
-explicitly-set port/host (env or config file) is baked into the installed service (Linux/macOS) so it
-matches what you run interactively. On Windows the task starts at logon and, unlike systemd/launchd,
-is **not** auto-restarted on crash — it returns on the next logon.
+or persist it via `AGENT_LENS_PORT` / `AGENT_LENS_HOST` or the config file's `server` block.
+
+**What gets baked in.** A scheduler inherits none of your shell's environment, so `service install`
+writes the settings you explicitly set into the unit itself (Linux/macOS) — an explicitly-set
+port/host (from env or the config file), plus `AGENT_LENS_DATA` and `AGENT_LENS_CONFIG` if you set
+them. That last pair matters most: relocating the data dir is env-only by construction (ADR-021), so
+without baking, the collector would mirror transcripts into a different store than your interactive
+commands read. `service install` prints each value it baked. On **Windows**, Task Scheduler has no
+environment field, so nothing can be baked — if you have any of these set, `service install` prints
+the `setx` commands to set them for your account instead. The Windows task also starts at logon and,
+unlike systemd/launchd, is **not** auto-restarted on crash — it returns on the next logon.
+
+Changing any of them later means re-running `agent-lens service install` to rewrite the units.
 
 > **Tip:** `agent-lens service install` with no target installs the collector **and** the server at
 > once — the one-command "make it work after reboot" setup.

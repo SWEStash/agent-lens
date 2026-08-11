@@ -24,6 +24,7 @@ import {
   resolveVersion,
   runService,
   triageDbFor,
+  UserError,
 } from "@agent-lens/core";
 import { runIngest, runMetrics } from "@agent-lens/ingest";
 import { startServer, openReadonly, renderSessionExport, parseRedactionLevel } from "@agent-lens/server";
@@ -34,6 +35,20 @@ import { runWatch } from "./watch.js";
 // the richer "v0.9.6-3-gabc1234", which is the more useful answer for a dev build.
 function version(): string {
   return resolveVersion().version;
+}
+
+/**
+ * The process's error boundary. A `UserError` is something the user typed or configured, so it
+ * prints as one line and exits 1 — a stack trace there is noise the user can't act on. Anything
+ * else is a bug, and is re-thrown with its stack intact rather than flattened into a message that
+ * would read like their mistake.
+ */
+function die(e: unknown): never {
+  if (e instanceof UserError) {
+    console.error(`agent-lens: ${e.message}`);
+    process.exit(1);
+  }
+  throw e;
 }
 
 /** Run `fn` under the single-instance lock so collect/ingest never overlap another run. */
@@ -86,12 +101,7 @@ cli
   .option("--host <host>", "Bind host (overrides AGENT_LENS_HOST / config server.host; loopback only unless AGENT_LENS_ALLOW_NONLOCAL=1)")
   .option("--db <path>", "SQLite DB path (overrides AGENT_LENS_DB / config db)")
   .action(async (opts: { port?: string; host?: string; db?: string }) => {
-    try {
-      await startServer({ port: opts.port, host: opts.host, db: opts.db });
-    } catch (e) {
-      console.error(e instanceof Error ? e.message : String(e));
-      process.exit(1);
-    }
+    await startServer({ port: opts.port, host: opts.host, db: opts.db });
   });
 
 cli
@@ -155,14 +165,7 @@ cli
     const repoRoot = findRepoRoot();
     const dataDir = resolveDataDir(repoRoot);
     const configFile = resolveConfigFile(repoRoot, dataDir);
-    let server;
-    try {
-      server = resolveServerConfig();
-    } catch (e) {
-      console.error(e instanceof Error ? e.message : String(e));
-      process.exit(1);
-    }
-    const { port, host, portOrigin, hostOrigin } = server;
+    const { port, host, portOrigin, hostOrigin } = resolveServerConfig();
     const { path: dbPath, origin: dbOrigin } = resolveDbPath();
     const archive = resolveArchiveDir(repoRoot);
     const triageDb = triageDbFor(dbPath);
@@ -194,4 +197,11 @@ cli
 
 cli.help();
 cli.version(version());
-cli.parse();
+// `serve` and `watch` are async, so their failures surface as a rejected promise cac never returns
+// to us — the synchronous catch below would miss them entirely.
+process.on("unhandledRejection", die);
+try {
+  cli.parse();
+} catch (e) {
+  die(e);
+}

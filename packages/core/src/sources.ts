@@ -18,6 +18,7 @@
  */
 import { expandPath } from "./paths.js";
 import { readConfigFile } from "./config.js";
+import { UserError } from "./user-error.js";
 
 export interface Source {
   label: string;
@@ -44,11 +45,11 @@ export function loadSources(): Source[] {
   for (const raw of cfg.sources || []) {
     const s = raw as Partial<Source> | null;
     if (!s || !s.label || !s.configDir) continue;
-    if (seen.has(s.label)) throw new Error(`duplicate source label: ${s.label}`);
+    if (seen.has(s.label)) throw new UserError(`duplicate source label: ${s.label}`);
     seen.add(s.label);
     out.push({ label: s.label, agent: s.agent || "claude-code", configDir: expandPath(s.configDir) });
   }
-  if (!out.length) throw new Error("no valid sources configured");
+  if (!out.length) throw new UserError("no valid sources configured");
   return out;
 }
 
