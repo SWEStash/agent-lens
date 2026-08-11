@@ -80,7 +80,7 @@ agent-lens-ingest: files=312 skipped=298 new_events=1840 malformed=0
 - **Passive collection** — copies each account's transcripts into a local archive before Claude
   Code's 30-day prune, on a schedule or on file change. Never deletes, never copies secrets. Runs as
   portable Node (`agent-lens collect`) — no `rsync`/bash required.
-- **One cross-platform CLI** — `agent-lens <collect | ingest | serve | watch | service>`, a single
+- **One cross-platform CLI** — `agent-lens <collect | ingest | serve | watch | metrics | export | service | config>`, a single
   bundled binary that runs on Linux, macOS, and Windows (you already have Node from the Claude Code CLI).
 - **One-command install as OS services** — `agent-lens service install` registers both the periodic
   collect+ingest job **and** the always-on web UI with the OS service manager (systemd on Linux,
@@ -251,7 +251,8 @@ A **source** is a labeled agent account — a `label` plus its `configDir` — d
 A single resolver in `@agent-lens/core` feeds both collection and ingest (the `scripts/sources.mjs`
 shim just exposes it to the shell), so sessions are tagged with their source and you can
 filter/compare across accounts. Config is looked up as `AGENT_LENS_CONFIG` → `<dataDir>/agent-lens.config.json`
-→ the repo's `agent-lens.config.json`. Runtime knobs — the server **port**/**host** and the **db**
+→ the repo's `agent-lens.config.json`. `<dataDir>` is a per-user OS directory for an npm install and
+`<repo>/data` from a checkout — see [*Paths* in USAGE.md](docs/USAGE.md#paths). Runtime knobs — the server **port**/**host** and the **db**
 path — can be set per run (`agent-lens serve --port 5599`), persisted in the config file (`"server"`
 block, top-level `"db"`), or via env vars, with precedence **flag > env > file > default**; the data
 dir and retention stay environment variables (see the

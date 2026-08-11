@@ -10,7 +10,7 @@ flowchart LR
     A1["personal · ~/.claude"]
     A2["work · ~/.config/claude-work"]
   end
-  SRC -->|"Stage 1 · agent-lens collect"| ARCH["data/archive/"]
+  SRC -->|"Stage 1 · agent-lens collect"| ARCH["data dir · archive/"]
   ARCH -->|"Stage 2 · agent-lens ingest<br/>+ classify"| DB[("SQLite + FTS5")]
   DB -->|"Stage 3 · agent-lens serve · 127.0.0.1"| WEB["Browse · search · export<br/>analytics dashboard"]
 ```
@@ -18,7 +18,7 @@ flowchart LR
 ## Requirements
 
 - `node` >= 24 — the only hard requirement (Linux, macOS, or Windows). You already have it from the Claude Code CLI.
-- Optional, from-source/developer only: `pnpm`. The legacy bash collector also uses `rsync` 3.x + `systemd` (Linux); the Node CLI needs neither.
+- Optional, from-source/developer only: `pnpm`. No `rsync`, `systemd`, or bash is required — the CLI is portable Node.
 
 ## Install
 
@@ -35,7 +35,7 @@ pnpm install && pnpm -r build
 node packages/cli/dist/agent-lens.js <command>   # the built CLI
 ```
 
-Below, `agent-lens <command>` means either the installed binary or `node packages/cli/dist/agent-lens.js <command>` from a source build. The subcommands are `collect`, `ingest`, `serve`, `watch`, `metrics`, and `service`.
+Below, `agent-lens <command>` means either the installed binary or `node packages/cli/dist/agent-lens.js <command>` from a source build. The subcommands are `collect`, `ingest`, `serve`, `watch`, `metrics`, `export`, `service`, and `config`.
 
 ## Upgrade
 
@@ -396,18 +396,45 @@ pnpm web:dev           # http://127.0.0.1:5173
 ### Metrics & classification
 
 The heuristic classifier (ADR-004 — deterministic, no AI) populates each session's category and
-complexity. It runs **automatically at the end of every ingest**. To re-classify an
-already-ingested DB *without* re-reading the archive (e.g. after tuning classifier rules), run the
-`agent-lens-metrics` bin:
+complexity. It runs **automatically at the end of every ingest**. To re-derive the heuristics on an
+already-ingested DB *without* re-reading the archive (e.g. after tuning classifier rules):
 
 ```bash
-node packages/ingest/dist/metrics-cli.js     # or the installed `agent-lens-metrics` bin
-# prints: classified=<n> classifier_version=<v> db=<path>
+agent-lens metrics
+# prints: classified=<n> classifier_version=<v> findings=<n> detector_version=<v>
+#         errors_classified=<n> error_classifier_version=<v> file_changes=<n> filechanges_version=<v> db=<path>
 ```
+
+It re-runs classification, security detection, tool-error typing, and file-change indexing — every
+derived layer that reads the store rather than the archive. From a source checkout the same work is
+available as `node packages/ingest/dist/metrics-cli.js` (the `agent-lens-metrics` bin, which the npm
+package does not install).
 
 After changing classifier logic, bump `CLASSIFIER_VERSION` (`packages/ingest/src/classify.ts`) and
 re-run the above — no re-ingest needed. After changing *parser* logic instead, re-ingest with
 `--full`.
+
+## Export a session
+
+Write one session to a self-contained Markdown file — the shareable form of a transcript
+([ADR-020](decisions/ADR-020-redacted-export.md)). **Redacted by default**; you opt out explicitly.
+
+```bash
+agent-lens export <sessionId>                      # redacted (level: secrets) → stdout
+agent-lens export <sessionId> --out session.md     # …to a file
+agent-lens export <sessionId> --level structure    # structure only: no message bodies
+agent-lens export <sessionId> --no-redact          # verbatim, UNREDACTED
+```
+
+| Level | What survives |
+|---|---|
+| `secrets` (default) | The full transcript, with secrets, tokens, emails, IPs, and usernames masked. |
+| `structure` | Only the skeleton: every message body becomes `[redacted]`, leaving roles, timestamps, tool/skill markers, and pseudonymized directory names. |
+| off (`--no-redact`) | Everything, verbatim. |
+
+Redacted output carries a header saying so. The masking is **best-effort pattern matching, not a
+guarantee** — read the file before sharing it. The same export is available from the UI (the ⬇
+button) and as `GET /api/sessions/:id/export.md`.
 
 ## Typical daily loop
 
@@ -446,8 +473,9 @@ Claude account) takes three steps and **no schema change**:
 
 The archive's `projects/` mirror (the source of truth) and the DB grow with use and are kept; the
 only unbounded-yet-discardable growth is `.versions/` (divergence/compaction snapshots, deduped into
-the DB at ingest). `scripts/prune.sh` removes `.versions/` snapshots older than a window (default
-90 days). It is **dry-run by default** and only ever touches `*/.versions/<TS>/` dirs:
+the DB at ingest). `scripts/prune.sh` (a source-checkout script — it is not shipped in the npm
+package) removes `.versions/` snapshots older than a window (default 90 days). It is **dry-run by
+default** and only ever touches `*/.versions/<TS>/` dirs:
 
 ```bash
 scripts/prune.sh                 # dry run: list what would be removed + reclaimable size
@@ -477,9 +505,9 @@ than independently relocatable (ADR-021). Move `AGENT_LENS_DATA` to move the arc
 
 | Variable | Default | Used by | Purpose |
 |---|---|---|---|
-| `AGENT_LENS_DATA` | `<repo>/data` | all | base dir for archive + DBs — **the only way to relocate the archive** (ADR-021) |
+| `AGENT_LENS_DATA` | per-user data dir; `<repo>/data` from source (see below) | all | base dir for archive + DBs — **the only way to relocate the archive** (ADR-021) |
 | `AGENT_LENS_DB` | config `db` → `$AGENT_LENS_DATA/agent-lens.db` | ingest, metrics, server, export | SQLite path (overridden by `--db`) |
-| `AGENT_LENS_CONFIG` | `<repo>/agent-lens.config.json` | collect, ingest | sources config path |
+| `AGENT_LENS_CONFIG` | `<dataDir>/agent-lens.config.json` → repo config → repo example | collect, ingest, serve, config | sources config path |
 | `AGENT_LENS_EXCLUDE` | _(unset)_ | collect, ingest | comma-separated project paths to exclude, additive to the config `exclude` array |
 | `AGENT_LENS_PORT` | config `server.port` → `4477` | server | HTTP port (overridden by `--port`) |
 | `AGENT_LENS_HOST` | config `server.host` → `127.0.0.1` | server | bind host, loopback (overridden by `--host`) |
@@ -490,13 +518,25 @@ than independently relocatable (ADR-021). Move `AGENT_LENS_DATA` to move the arc
 
 ### Paths
 
+**The data dir.** Where `<dataDir>` lands depends on how you installed. From an npm install there is
+no repo to anchor to, so it is a per-user OS directory:
+
+| Platform | `<dataDir>` (npm install) |
+|---|---|
+| Linux | `$XDG_DATA_HOME/agent-lens`, else `~/.local/share/agent-lens` |
+| macOS | `~/Library/Application Support/agent-lens` |
+| Windows | `%LOCALAPPDATA%\agent-lens` |
+
+From a source checkout it is `<repo>/data` instead. `AGENT_LENS_DATA` overrides both. Everything
+below is relative to `<dataDir>`; run `agent-lens config` to print the resolved values.
+
 | Path | Contents | Tracked? |
 |---|---|---|
-| `data/archive/<label>/` | raw transcript mirror + `.versions/` backups | no (gitignored) |
-| `data/agent-lens.db` | normalized SQLite store | no |
-| `agent-lens.config.json` | your sources | no (`.example` is tracked) |
-| `docs/decisions/` | Architecture Decision Records (ADRs) | **yes** |
-| `.local/plans/` | phased plans | no (gitignored) |
+| `<dataDir>/archive/<label>/` | raw transcript mirror + `.versions/` backups | no (gitignored) |
+| `<dataDir>/agent-lens.db` | normalized SQLite store | no |
+| `<dataDir>/triage.db` | triage + UI prefs sidecar, survives full rebuilds (ADR-018) | no |
+| `<dataDir>/agent-lens.config.json` | your sources | no (`.example` is tracked in the repo) |
+| `docs/decisions/` | Architecture Decision Records (ADRs) — source checkout only | **yes** |
 
 ### HTTP API (read-only, `127.0.0.1`)
 
@@ -553,8 +593,8 @@ the SPA, so a renamed field is a compile error on both sides (ADR-026).
 - **Timer not firing while logged out (Linux)** — confirm linger: `loginctl show-user $USER -p Linger`
   should print `Linger=yes`; if not, `loginctl enable-linger $USER`.
 - **Re-ingest didn't pick up a parser change** — use `agent-lens ingest --full`.
-- **A source shows nothing** — check `node scripts/sources.mjs` resolves its `configDir`, and that
-  `data/archive/<label>/projects/` has files.
+- **A source shows nothing** — run `agent-lens config` and check the **Sources** block resolves its
+  `configDir` to the path you expect, and that `<dataDir>/archive/<label>/projects/` has files.
 
 ## Privacy
 
