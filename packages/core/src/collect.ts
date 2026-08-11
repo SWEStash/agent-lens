@@ -38,6 +38,7 @@ import { platform } from "node:os";
 import { loadExcludes, loadSources, type Source } from "./sources.js";
 import { resolveArchiveDir } from "./paths.js";
 import { encodeProjectPath } from "./projects.js";
+import { UserError } from "./user-error.js";
 
 const POSIX = platform() !== "win32";
 const DIR_MODE = 0o700; // archive is as sensitive as the originals (bash used umask 077)
@@ -316,7 +317,7 @@ export function collectAll(opts: CollectOptions = {}): CollectStats {
 
   ensureDir(archiveBase);
   const stats: CollectStats = { sources: 0, scanned: 0, copied: 0, appended: 0, diverged: 0, compacted: 0, snapshots: 0 };
-  if (!sources.length) throw new Error("no sources configured");
+  if (!sources.length) throw new UserError("no sources configured");
   for (const source of sources) {
     stats.sources++;
     collectSource(source, archiveBase, excludedDirs, runTs, stats, log);

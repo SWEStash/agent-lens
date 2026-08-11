@@ -5,6 +5,7 @@ export * from "./security.js";
 export * from "./secrets.js";
 export * from "./redact-export.js";
 export * from "./errors.js";
+export * from "./user-error.js";
 export * from "./pricing.js";
 export * from "./markdown.js";
 export * from "./rawjson.js";
