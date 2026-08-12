@@ -336,6 +336,13 @@ export async function createApp(db: DB, opts: CreateAppOpts = {}): Promise<Fasti
     await app.register(fastifyStatic, { root: opts.webDist });
     app.setNotFoundHandler((req, reply) => {
       if (req.url.startsWith("/api/")) return notFound(reply);
+      // A missing *file* must 404 honestly. The tempting blanket fallback breaks the case where an
+      // open tab outlives a rebuild: its index.html names hashed chunks the new dist no longer has
+      // (`emptyOutDir`), so the lazy `import()` asks for /assets/SessionView-<old>.js and gets HTML
+      // back with `content-type: text/html`. The browser refuses it on MIME grounds, and the error
+      // the SPA sees is a module-load failure rather than a plain 404 — harder to recognize as
+      // "your build is stale". Only extensionless paths are client routes worth falling back for.
+      if (/\.[^/.]+$/.test(req.url.split("?")[0])) return notFound(reply);
       return reply.sendFile("index.html");
     });
   }
