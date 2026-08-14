@@ -174,7 +174,10 @@ a.version-badge:hover { color: var(--text); border-color: var(--muted); }
 .multi-select[open] > summary { border-color: var(--accent); }
 .multi-select > .col-menu { left: 0; right: auto; }
 .search { display: flex; gap: 6px; flex: 1; min-width: 280px; }
-.search input { flex: 1; }
+/* The input absorbs every size change; the Search/clear buttons keep their label width instead of
+ * shrinking under it and spilling their text past the next filter control. */
+.search input { flex: 1; min-width: 0; }
+.search button { flex: none; }
 
 /* Unify every control in the Sessions filter row to one box metric. They come from different widgets
  * (native <select>, search <input>/<button>, the project dropdown <button>, the Security/Errors
