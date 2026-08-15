@@ -98,6 +98,8 @@ export interface EventOpts {
   timestamp?: string;
   model?: string | null;
   text?: string | null;
+  /** Reasoning, stored apart from `text` (schema v15) — the transcript read path selects it directly. */
+  thinking?: string | null;
   /** Raw transcript line. Defaults to a minimal envelope carrying `text`; pass a Buffer for packed raw. */
   raw?: string | Buffer;
   meta?: boolean;
@@ -110,8 +112,8 @@ export function addEvent(db: DatabaseSync, session: string, uuid: string, o: Eve
     o.raw ??
     JSON.stringify(role === "user" ? { message: { content: o.text ?? "" } } : { message: { content: o.text ? [{ type: "text", text: o.text }] : [] } });
   db.prepare(
-    `INSERT INTO events (uuid, session_id, turn_id, seq, type, role, timestamp, model, is_sidechain, is_meta, text, raw_json)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT INTO events (uuid, session_id, turn_id, seq, type, role, timestamp, model, is_sidechain, is_meta, text, thinking, raw_json)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     uuid,
     session,
@@ -124,6 +126,7 @@ export function addEvent(db: DatabaseSync, session: string, uuid: string, o: Eve
     o.sidechain ? 1 : 0,
     o.meta ? 1 : 0,
     o.text ?? null,
+    o.thinking ?? null,
     raw,
   );
 }

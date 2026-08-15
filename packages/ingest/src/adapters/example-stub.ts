@@ -82,6 +82,7 @@ export class ExampleStubAdapter implements SourceAdapter {
         is_sidechain: 0,
         is_meta: 0,
         text: typeof r.text === "string" ? r.text.trim() || null : null,
+        thinking: null, // this agent exposes no separate reasoning stream — a nullable column, not a required one
         raw_json: JSON.stringify(raw), // always preserve the line verbatim for lossless re-derivation
         source_file: file.path,
       },

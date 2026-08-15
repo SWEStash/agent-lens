@@ -1,9 +1,14 @@
 # ADR-011 — Compressed `raw_json` at rest (gzip BLOB) with transparent decode
 
-- Status: Accepted
+- Status: Accepted — read path superseded by [ADR-031](ADR-031-transcript-text-is-stored.md)
 - Date: 2026-06-29
 - Deciders: project owner
 - Extends: ADR-001 (two-stage collection), ADR-003 (data model)
+
+> **Amended by [ADR-031](ADR-031-transcript-text-is-stored.md) (2026-08).** `extractParts` is gone:
+> text and reasoning are stored as their own columns, so reading a transcript no longer decodes
+> `raw_json` at all. The storage decision below is unchanged — `raw_json` is still the verbatim,
+> gzip-compressed source of truth, now read only for re-derivation rather than on every page view.
 
 ## Context
 

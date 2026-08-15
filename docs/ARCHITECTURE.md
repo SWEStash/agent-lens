@@ -30,6 +30,7 @@ flowchart LR
 flowchart TB
   subgraph repo["agent-lens (pnpm monorepo)"]
     CONTRACTS["packages/contracts<br/>pure types, zero runtime<br/>DB rows · API responses"]
+    TFORMAT["packages/transcript-format<br/>node-free, zero deps<br/>command / task-notification tags"]
     CORE["packages/core<br/>schema (DDL) · types · pricing · markdown<br/>raw_json codec (packRaw/unpackRaw)"]
     INGEST["packages/ingest<br/>parser + engine · ClaudeCodeAdapter<br/>heuristic classifier"]
     SERVER["packages/server<br/>Fastify read-only API"]
@@ -43,6 +44,9 @@ flowchart TB
   CONTRACTS --> CORE
   CONTRACTS --> SERVER
   CONTRACTS --> WEB
+  TFORMAT --> INGEST
+  TFORMAT --> SERVER
+  TFORMAT --> WEB
   CORE --> INGEST
   CORE --> SERVER
   CORE --> CLI
@@ -116,7 +120,8 @@ Key properties (full rationale in [ADR-010](decisions/ADR-010-incremental-scalab
 The store is event-grained (ADR-003): `session › turn › event`. A *turn* is one user prompt →
 assistant completion, derived in `rebuildDerived`. Subagent (sidechain) sessions are linked back to the
 spawning parent turn via the `Task`/`Agent` tool call's `spawned_session_id`. `raw_json` is stored
-gzip-compressed (ADR-011) and decoded on read by `unpackRaw`.
+gzip-compressed (ADR-011) and decoded by `unpackRaw` when a line has to be re-derived — reading a
+transcript does not touch it, because an event's `text` and `thinking` are their own columns (ADR-031).
 
 ```mermaid
 erDiagram
@@ -164,3 +169,4 @@ erDiagram
 | [028](decisions/ADR-028-model-pricing.md) | Cost derived at read time; config-overridable price table; unpriced models flagged |
 | [029](decisions/ADR-029-node-sqlite-driver.md) | SQLite via Node's built-in `node:sqlite`; no compiled dependencies |
 | [030](decisions/ADR-030-in-session-search.md) | Find-in-session: client-side, highlight-and-navigate, reveals what the view hides |
+| [031](decisions/ADR-031-transcript-text-is-stored.md) | Transcript text is stored, not re-derived on read (`events.thinking`; shared markup vocabulary) |

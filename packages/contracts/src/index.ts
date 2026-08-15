@@ -8,6 +8,9 @@
  * package can share the exact shapes the server emits without pulling Node code into its bundle.
  * Keep it agent-agnostic and free of any value exports — one accidental value export and the
  * node-free guarantee stops being structural.
+ *
+ * Shared *values* that both Node and browser code need go in `@agent-lens/transcript-format`, which
+ * is node-free for the same reason but is allowed to export runtime constants and functions.
  */
 
 export type * from "./rows.js";

@@ -81,9 +81,9 @@ export interface FindingProjectionRow {
   signals_json: string | null;
 }
 
-/** The `events` projection for a transcript: display columns plus the packed `raw_json` that
- *  `extractParts` flattens into text/thinking. `raw_json` is a gzip BLOB post-ADR-011, but may be a
- *  legacy plain string — `unpackRaw` normalizes both, so the type admits both. */
+/** The `events` projection for a transcript: display columns only. `text` and `thinking` are stored
+ *  split (schema v15), so reading a transcript no longer unpacks and re-parses `raw_json` per event —
+ *  the ingest adapter is the only thing that reads a record's shape (ADR-008). */
 export interface EventProjectionRow {
   uuid: string;
   type: string;
@@ -92,12 +92,8 @@ export interface EventProjectionRow {
   model: string | null;
   is_sidechain: number;
   turn_id: string | null;
-  raw_json: string | Uint8Array;
-}
-
-/** Just the packed transcript line — for the completion-notification lookup, which needs nothing else. */
-export interface RawJsonRow {
-  raw_json: string | Uint8Array;
+  text: string | null;
+  thinking: string | null;
 }
 
 /** The `classifications` projection, with `signals_json` still unparsed. */

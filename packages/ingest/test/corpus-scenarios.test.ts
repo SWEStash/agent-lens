@@ -132,8 +132,10 @@ describe("committed corpus represents every pipeline scenario", () => {
     expect(one("SELECT COUNT(*) n FROM sessions WHERE workflow_run_id='wf_demo000abc' AND parent_turn_id IS NOT NULL").n).toBe(2);
   });
 
-  it("slash command: a /plugin-only session ingests as user turns with no assistant output", () => {
-    expect(one("SELECT turn_count n FROM sessions WHERE id='sc-command-0006'").n).toBe(2);
+  it("slash command: a /plugin-only session is ONE turn (its stdout is output, not a prompt)", () => {
+    // The command and the `<local-command-stdout>` it produces are two user lines but a single turn;
+    // counting the output as a prompt used to split them in two.
+    expect(one("SELECT turn_count n FROM sessions WHERE id='sc-command-0006'").n).toBe(1);
     expect(one("SELECT COUNT(*) n FROM events WHERE session_id='sc-command-0006' AND role='assistant'").n).toBe(0);
     expect(one("SELECT COUNT(*) n FROM events WHERE session_id='sc-command-0006' AND text LIKE '%<command-name>/plugin%'").n).toBe(1);
   });
