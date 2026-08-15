@@ -2,6 +2,10 @@
  * Redacted export endpoint (backlog #3). Seeds a secret-bearing session and asserts the
  * GET /api/sessions/:id/export.md route redacts by default, honors ?redact=structure/off, and
  * names the download to signal whether it was sanitized.
+ *
+ * The seeded `text` matches what the record's content flattens to, because that is what ingest
+ * stores and what every reader now uses (schema v15). The two only drifted apart back when the read
+ * path re-parsed `raw_json` and could disagree with the column beside it.
  */
 import { describe, it, expect, beforeAll } from "vitest";
 import { DatabaseSync } from "node:sqlite";
@@ -24,7 +28,8 @@ function seed(): DatabaseSync {
     INSERT INTO turns (id, session_id, seq, user_event_uuid, prompt_preview, model, started_at, ended_at, duration_ms)
       VALUES ('sess1:0', 'sess1', 0, 'e1', 'deploy', 'claude-opus-4-8', '2026-01-01T00:00:00Z', '2026-01-01T00:05:00Z', 300000);
     INSERT INTO events (uuid, session_id, turn_id, seq, type, role, timestamp, model, is_sidechain, is_meta, text, raw_json)
-      VALUES ('e1', 'sess1', 'sess1:0', 0, 'assistant', 'assistant', '2026-01-01T00:01:00Z', 'claude-opus-4-8', 0, 0, 'deploying',
+      VALUES ('e1', 'sess1', 'sess1:0', 0, 'assistant', 'assistant', '2026-01-01T00:01:00Z', 'claude-opus-4-8', 0, 0,
+              'Deploying with key ${AKIA} now',
               '{"message":{"content":[{"type":"text","text":"Deploying with key ${AKIA} now"}]}}');
   `);
   return db;

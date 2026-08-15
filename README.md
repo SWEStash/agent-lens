@@ -306,6 +306,10 @@ packages/contracts  the shapes that cross package boundaries, as pure types (zer
                   `node:` imports, so the browser bundle can share them): DB rows mirroring the DDL
                   (ADR-024) + the HTTP response contracts the server returns and the SPA consumes
                   (ADR-026)
+packages/transcript-format
+                  the markup vocabulary Claude Code embeds inside message text (`<command-*>`,
+                  `<task-notification>`) — pure constants + tag readers, zero deps and node-free so
+                  ingest, server and the browser bundle all share one copy (ADR-031)
 packages/core     SQLite schema, path/source resolution, the Node collector, the single-instance
                   lock, and cross-platform OS-service install (agent-agnostic)
 packages/ingest   Stage-2 parser + heuristic classifier; ClaudeCodeAdapter (extensible)

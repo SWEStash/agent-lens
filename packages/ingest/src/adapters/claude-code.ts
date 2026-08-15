@@ -8,20 +8,48 @@ import type {
   ToolResultPatch,
 } from "@agent-lens/core";
 
-/** Flatten a message `content` (string or block array) to searchable natural-language text. */
-function flattenText(content: unknown): string | null {
-  if (content == null) return null;
-  if (typeof content === "string") return content.trim() || null;
-  if (!Array.isArray(content)) return null;
-  const parts: string[] = [];
+/** The displayable halves of a message `content`, kept apart. Stored as two columns so nothing
+ * downstream has to re-parse a transcript record to tell prose from reasoning — this adapter is the
+ * only place that knows the record's shape (ADR-008). */
+export interface RecordParts {
+  text: string | null;
+  thinking: string | null;
+}
+
+/** Split a message `content` (string or block array) into visible text and reasoning. */
+function extractParts(content: unknown): RecordParts {
+  if (content == null) return { text: null, thinking: null };
+  if (typeof content === "string") return { text: content.trim() || null, thinking: null };
+  if (!Array.isArray(content)) return { text: null, thinking: null };
+  const texts: string[] = [];
+  const thoughts: string[] = [];
   for (const block of content) {
     if (!block || typeof block !== "object") continue;
     const b = block as Record<string, unknown>;
-    if (b.type === "text" && typeof b.text === "string") parts.push(b.text);
-    else if (b.type === "thinking" && typeof b.thinking === "string") parts.push(b.thinking);
+    if (b.type === "text" && typeof b.text === "string") texts.push(b.text);
+    else if (b.type === "thinking" && typeof b.thinking === "string") thoughts.push(b.thinking);
   }
-  const text = parts.join("\n").trim();
-  return text || null;
+  return { text: texts.join("\n").trim() || null, thinking: thoughts.join("\n").trim() || null };
+}
+
+/** Just the visible text — for the places that only ever carry prose (a queued prompt, a tool result). */
+function flattenText(content: unknown): string | null {
+  return extractParts(content).text;
+}
+
+/** Recover the text of a message the user typed while a turn was still running. Claude Code doesn't
+ * log it as a `user` event; it appends an `attachment` whose `prompt` holds what was typed (a string,
+ * or content blocks when something was pasted alongside it). Without this the words survive only in
+ * raw_json — the transcript renders nothing for a body-less event, so the message just disappears.
+ *
+ * Scoped to `commandMode: "prompt"`. The other mode, "task-notification", is Claude Code queuing its
+ * own notice, and that one IS replayed afterwards as a real user event — reading it here would show
+ * it twice. */
+function queuedPromptText(attachment: unknown): string | null {
+  if (!attachment || typeof attachment !== "object") return null;
+  const a = attachment as Record<string, unknown>;
+  if (a.type !== "queued_command" || a.commandMode !== "prompt") return null;
+  return flattenText(a.prompt);
 }
 
 /** Compact projection of a tool result for the transcript view. Preserves line structure — so console
@@ -177,7 +205,9 @@ export class ClaudeCodeAdapter implements SourceAdapter {
     if (!asString(r.uuid)) return { meta };
 
     const message = (r.message ?? {}) as Record<string, any>;
-    const text = flattenText(message.content);
+    const queued = queuedPromptText(r.attachment);
+    const parts = extractParts(message.content);
+    const text = parts.text ?? queued;
 
     const result: ParsedLine = {
       meta,
@@ -188,12 +218,15 @@ export class ClaudeCodeAdapter implements SourceAdapter {
         parent_uuid: asString(r.parentUuid),
         seq,
         type: asString(r.type) ?? "unknown",
-        role: asString(message.role),
+        // A recovered queued prompt has no `message` to take a role from, but it *is* the user
+        // speaking — without this the transcript labels their own words as a generic attachment.
+        role: asString(message.role) ?? (queued ? "user" : null),
         timestamp: asString(r.timestamp),
         model: asString(message.model),
         is_sidechain: r.isSidechain ? 1 : 0,
         is_meta: r.isMeta ? 1 : 0,
         text,
+        thinking: parts.thinking,
         raw_json: JSON.stringify(raw),
         source_file: file.path,
       },

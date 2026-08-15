@@ -1,5 +1,6 @@
 import { DatabaseSync } from "node:sqlite";
-import { SCHEMA_VERSION, unpackRaw, severityRank, activePricing, SECURITY_CATEGORIES, errorKind, type ToolErrorType, type Rate } from "@agent-lens/core";
+import { SCHEMA_VERSION, severityRank, activePricing, SECURITY_CATEGORIES, errorKind, type ToolErrorType, type Rate } from "@agent-lens/core";
+import { TASK_FAILURES_TAG, TASK_NOTIFICATION_TAG, TASK_RESULT_TAG, TASK_STATUS_TAG, TASK_SUMMARY_TAG, xmlTag } from "@agent-lens/transcript-format";
 import type {
   Finding,
   FindingListRow,
@@ -44,7 +45,6 @@ import type {
   FindingProjectionRow,
   FileTimelineRow,
   ModelRow,
-  RawJsonRow,
   SessionChildRow,
   SessionListRow,
   SessionParentRow,
@@ -90,30 +90,6 @@ export function schemaStatus(db: DB): { db_version: number | null; expected: num
 export function lastIngested(db: DB): string | null {
   const row = db.prepare("SELECT MAX(ingested_at) AS last FROM ingest_state").get() as { last: string | null };
   return row?.last ?? null;
-}
-
-/**
- * Split a raw transcript line's message content into natural text vs thinking. Accepts the stored
- * `events.raw_json` value, which is a gzip BLOB (Uint8Array) post-ADR-011 but may be a legacy plain string;
- * `unpackRaw` normalizes both.
- */
-export function extractParts(rawJson: string | Uint8Array): { text: string | null; thinking: string | null } {
-  let text = "";
-  let thinking = "";
-  try {
-    const content = JSON.parse(unpackRaw(rawJson))?.message?.content;
-    if (typeof content === "string") text = content;
-    else if (Array.isArray(content)) {
-      for (const b of content) {
-        if (b?.type === "text" && typeof b.text === "string") text += (text ? "\n" : "") + b.text;
-        else if (b?.type === "thinking" && typeof b.thinking === "string")
-          thinking += (thinking ? "\n" : "") + b.thinking;
-      }
-    }
-  } catch {
-    /* ignore */
-  }
-  return { text: text || null, thinking: thinking || null };
 }
 
 export interface SessionFilters {
@@ -434,7 +410,7 @@ function toResponseToolCall({ event_uuid: _e, error_type: _t, ...call }: ToolCal
 function loadEvents(db: DB, id: string, toolRows: ToolCallProjection[]): EventNode[] {
   const eventRows = queryAll<EventProjectionRow>(
     db,
-    `SELECT uuid, type, role, timestamp, model, is_sidechain, turn_id, raw_json
+    `SELECT uuid, type, role, timestamp, model, is_sidechain, turn_id, text, thinking
      FROM events WHERE session_id = ? ORDER BY timestamp, seq`,
     id,
   );
@@ -445,21 +421,18 @@ function loadEvents(db: DB, id: string, toolRows: ToolCallProjection[]): EventNo
     pushGrouped(toolsByEvent, t.event_uuid, t);
   }
 
-  return eventRows.map((e) => {
-    const { text, thinking } = extractParts(e.raw_json);
-    return {
-      uuid: e.uuid,
-      type: e.type,
-      role: e.role,
-      timestamp: e.timestamp,
-      model: e.model,
-      is_sidechain: e.is_sidechain,
-      turn_id: e.turn_id,
-      text,
-      thinking,
-      toolCalls: (toolsByEvent.get(e.uuid) ?? []).map(toResponseToolCall),
-    };
-  });
+  return eventRows.map((e) => ({
+    uuid: e.uuid,
+    type: e.type,
+    role: e.role,
+    timestamp: e.timestamp,
+    model: e.model,
+    is_sidechain: e.is_sidechain,
+    turn_id: e.turn_id,
+    text: e.text,
+    thinking: e.thinking,
+    toolCalls: (toolsByEvent.get(e.uuid) ?? []).map(toResponseToolCall),
+  }));
 }
 
 /** Heuristic classification: category + complexity + the signals that produced them
@@ -632,11 +605,6 @@ export function getSession(db: DB, id: string): SessionDetail | null {
  * and roll-up stats (agent count, tokens, cost, wall-clock span). Powers the /workflow/:run_id page.
  * Returns null when no Workflow tool_call carries this run id (→ 404).
  */
-/** Pull the inner text of a single `<tag>…</tag>` from a flattened message (non-greedy). */
-function xmlTag(text: string, tag: string): string | null {
-  return text.match(new RegExp(`<${tag}>([\\s\\S]*?)</${tag}>`))?.[1]?.trim() ?? null;
-}
-
 
 /** Parse a stored JSON column back to a value, or null when absent/malformed. */
 export function safeJson(s: string | null): unknown {
@@ -691,18 +659,22 @@ function loadAgents(db: DB, runId: string): { agents: WorkflowAgent[]; stats: Wo
  * task can notify more than once; takes the most recent.) */
 function parseCompletion(db: DB, wf: WorkflowLaunchRow): WorkflowCompletion | null {
   if (!wf.tool_use_id || !wf.parent_session_id) return null;
-  const ev = queryGet<RawJsonRow>(
+  const ev = queryGet<{ text: string | null }>(
     db,
-    `SELECT raw_json FROM events
-     WHERE session_id = ? AND text LIKE '%<task-notification>%' AND text LIKE ?
+    `SELECT text FROM events
+     WHERE session_id = ? AND text LIKE '%<${TASK_NOTIFICATION_TAG}>%' AND text LIKE ?
      ORDER BY timestamp DESC LIMIT 1`,
     wf.parent_session_id,
     `%${wf.tool_use_id}%`,
   );
   if (!ev) return null;
-  const { text } = extractParts(ev.raw_json);
-  const t = text ?? "";
-  return { status: xmlTag(t, "status"), summary: xmlTag(t, "summary"), result: xmlTag(t, "result"), failures: xmlTag(t, "failures") };
+  const t = ev.text ?? "";
+  return {
+    status: xmlTag(t, TASK_STATUS_TAG),
+    summary: xmlTag(t, TASK_SUMMARY_TAG),
+    result: xmlTag(t, TASK_RESULT_TAG),
+    failures: xmlTag(t, TASK_FAILURES_TAG),
+  };
 }
 
 /** The runner's own result sidecar (workflow_results), ingested from wf_<id>.json. It's the

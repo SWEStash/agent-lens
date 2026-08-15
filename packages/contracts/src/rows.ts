@@ -74,6 +74,7 @@ export interface EventRow {
   is_sidechain: number;
   is_meta: number;
   text: string | null;
+  thinking: string | null;
   raw_json: string;
   source_file: string | null;
 }

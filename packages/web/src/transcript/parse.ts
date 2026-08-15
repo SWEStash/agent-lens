@@ -1,7 +1,22 @@
 /** Parsers for the JSON/markup payloads the transcript renders — tool inputs, tool results, and the
  * `<command-*>` / `<task-notification>` markup Claude Code embeds in user messages. Every parser is
  * total: malformed input returns null/empty so the caller falls back to the generic chip, never throws.
- * Pure, no JSX — see parse.test.ts. */
+ * Pure, no JSX — see parse.test.ts.
+ *
+ * The tag names and the tag reader come from `@agent-lens/transcript-format`, shared with ingest and
+ * the server (ADR-031); what stays here is the render-side shaping those three don't need. */
+import {
+  COMMAND_ARGS_TAG,
+  COMMAND_CAVEAT_TAG,
+  COMMAND_NAME_TAG,
+  TASK_ID_TAG,
+  TASK_NOTIFICATION_TAG,
+  TASK_STATUS_TAG,
+  TASK_SUMMARY_TAG,
+  TASK_TOOL_USE_ID_TAG,
+  commandOutput,
+  xmlTag,
+} from "@agent-lens/transcript-format";
 import { diffLines, type DiffLine } from "./diff";
 
 /** Pull the plan markdown out of an ExitPlanMode call's input. Real approvals carry the full plan in
@@ -147,14 +162,14 @@ export type ParsedCommand =
   | { kind: "caveat" };
 
 export function parseCommand(text: string): ParsedCommand | null {
-  const name = text.match(/<command-name>([^<]*)<\/command-name>/)?.[1]?.trim();
+  const name = xmlTag(text, COMMAND_NAME_TAG);
   if (name) {
-    const args = text.match(/<command-args>([^<]*)<\/command-args>/)?.[1]?.trim() ?? "";
+    const args = xmlTag(text, COMMAND_ARGS_TAG) ?? "";
     return { kind: "invocation", name: name.startsWith("/") ? name : `/${name}`, args };
   }
-  const out = text.match(/<(?:local-command-stdout|command-output|local-command-stderr)>([\s\S]*?)<\/(?:local-command-stdout|command-output|local-command-stderr)>/)?.[1];
-  if (out != null) return { kind: "output", stdout: out.trim() };
-  if (/<local-command-caveat>/.test(text)) return { kind: "caveat" };
+  const out = commandOutput(text);
+  if (out != null) return { kind: "output", stdout: out };
+  if (text.includes(`<${COMMAND_CAVEAT_TAG}>`)) return { kind: "caveat" };
   return null;
 }
 
@@ -169,13 +184,12 @@ export interface ParsedTaskNotification {
 }
 
 export function parseTaskNotification(text: string): ParsedTaskNotification | null {
-  if (!/<task-notification>/.test(text)) return null;
-  const pick = (tag: string) => text.match(new RegExp(`<${tag}>([\\s\\S]*?)</${tag}>`))?.[1]?.trim() ?? null;
+  if (!text.includes(`<${TASK_NOTIFICATION_TAG}>`)) return null;
   return {
-    taskId: pick("task-id"),
-    toolUseId: pick("tool-use-id"),
-    status: pick("status"),
-    summary: pick("summary"),
+    taskId: xmlTag(text, TASK_ID_TAG),
+    toolUseId: xmlTag(text, TASK_TOOL_USE_ID_TAG),
+    status: xmlTag(text, TASK_STATUS_TAG),
+    summary: xmlTag(text, TASK_SUMMARY_TAG),
   };
 }
 

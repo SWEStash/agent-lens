@@ -21,6 +21,7 @@
     "start": "node dist/index.js"
   },
   "dependencies": {
-    "@agent-lens/core": "workspace:*"
+    "@agent-lens/core": "workspace:*",
+    "@agent-lens/transcript-format": "workspace:*"
   }
 }

@@ -6,6 +6,7 @@
 import { createHash } from "node:crypto";
 import type { StatementSync } from "node:sqlite";
 import { packRaw, runNamed, transaction, type SourceAdapter, type SourceFile, type TurnRow } from "@agent-lens/core";
+import { isCommandResultCarrier } from "@agent-lens/transcript-format";
 import { type DB } from "./db.js";
 import { createDirtySet } from "./dirtyset.js";
 
@@ -140,9 +141,18 @@ function durationMs(start: string | null, end: string | null): number | null {
 /** Group a session's events into turns and return the turns + a uuid→turn_id map. */
 export function buildTurns(
   sessionId: string,
-  rows: Array<{ uuid: string; type: string; is_sidechain: number; is_meta: number; timestamp: string | null; model: string | null; text: string | null }>,
+  rows: Array<{ uuid: string; seq: number | null; type: string; is_sidechain: number; is_meta: number; timestamp: string | null; model: string | null; text: string | null }>,
 ): { turns: TurnRow[]; eventTurn: Map<string, string> } {
-  rows.sort((x, y) => (x.timestamp ?? "").localeCompare(y.timestamp ?? "") || x.uuid.localeCompare(y.uuid));
+  // Ties on timestamp are common and meaningful — a slash command and its output share one to the
+  // millisecond — so the tiebreak decides which of them opens the turn and which events land in it.
+  // `seq` is the line order as first observed, i.e. the order Claude Code actually wrote them; uuid
+  // is random and silently reversed such pairs. This matches how the server reads events back.
+  rows.sort(
+    (x, y) =>
+      (x.timestamp ?? "").localeCompare(y.timestamp ?? "") ||
+      (x.seq ?? 0) - (y.seq ?? 0) ||
+      x.uuid.localeCompare(y.uuid),
+  );
   const turns: TurnRow[] = [];
   const eventTurn = new Map<string, string>();
   let cur: TurnRow | null = null;
@@ -151,8 +161,11 @@ export function buildTurns(
   for (const e of rows) {
     // A turn starts at a user prompt with real text. Sidechain (subagent) sessions are entirely
     // sidechain — verified no file mixes main+sidechain events — so their task prompt starts a turn
-    // too; we don't filter on is_sidechain here. Tool-result carrier messages have empty text.
-    const isPrompt = e.type === "user" && e.is_meta === 0 && !!e.text && e.text.trim().length > 0;
+    // too; we don't filter on is_sidechain here. Tool-result carrier messages have empty text, and a
+    // slash command's output rides on a user line without being a prompt (`/login` logs its stdout
+    // with the same timestamp as the command).
+    const body = e.text?.trim() ?? "";
+    const isPrompt = e.type === "user" && e.is_meta === 0 && body.length > 0 && !isCommandResultCarrier(body);
     if (isPrompt) {
       cur = {
         id: `${sessionId}:${seq}`,
@@ -237,7 +250,7 @@ function expandDirtyScope(db: DB, dirty: Set<string>): void {
  * scope so a changed/removed body can't leave a stale link. */
 function rebuildTurns(db: DB, scope: Scope, sessionIds: Array<{ id: string }>): void {
   const selEvents = db.prepare(
-    "SELECT uuid, type, is_sidechain, is_meta, timestamp, model, text FROM events WHERE session_id = ?",
+    "SELECT uuid, seq, type, is_sidechain, is_meta, timestamp, model, text FROM events WHERE session_id = ?",
   );
   const insTurn = db.prepare(
     `INSERT INTO turns (id, session_id, seq, user_event_uuid, prompt_preview, model, started_at, ended_at, duration_ms)
@@ -486,8 +499,8 @@ export function prepareStatements(db: DB): IngestStatements {
          events_ingested=excluded.events_ingested, ingested_at=excluded.ingested_at`,
     ),
     insEvent: db.prepare(
-      `INSERT INTO events (uuid, session_id, turn_id, parent_uuid, seq, type, role, timestamp, model, is_sidechain, is_meta, text, raw_json, source_file)
-       VALUES (@uuid, @session_id, @turn_id, @parent_uuid, @seq, @type, @role, @timestamp, @model, @is_sidechain, @is_meta, @text, @raw_json, @source_file)
+      `INSERT INTO events (uuid, session_id, turn_id, parent_uuid, seq, type, role, timestamp, model, is_sidechain, is_meta, text, thinking, raw_json, source_file)
+       VALUES (@uuid, @session_id, @turn_id, @parent_uuid, @seq, @type, @role, @timestamp, @model, @is_sidechain, @is_meta, @text, @thinking, @raw_json, @source_file)
        ON CONFLICT(uuid) DO NOTHING`,
     ),
     insTokens: db.prepare(

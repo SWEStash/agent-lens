@@ -71,6 +71,9 @@ importers:
       '@agent-lens/core':
         specifier: workspace:*
         version: link:../core
+      '@agent-lens/transcript-format':
+        specifier: workspace:*
+        version: link:../transcript-format
 
   packages/server:
     dependencies:
@@ -83,6 +86,9 @@ importers:
       '@agent-lens/ingest':
         specifier: workspace:*
         version: link:../ingest
+      '@agent-lens/transcript-format':
+        specifier: workspace:*
+        version: link:../transcript-format
       '@fastify/static':
         specifier: ^10.1.0
         version: 10.1.0
@@ -90,11 +96,16 @@ importers:
         specifier: ^5.2.0
         version: 5.8.5
 
+  packages/transcript-format: {}
+
   packages/web:
     dependencies:
       '@agent-lens/contracts':
         specifier: workspace:*
         version: link:../contracts
+      '@agent-lens/transcript-format':
+        specifier: workspace:*
+        version: link:../transcript-format
       react:
         specifier: ^18.3.1
         version: 18.3.1

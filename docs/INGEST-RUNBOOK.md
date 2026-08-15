@@ -41,8 +41,11 @@ to reflect changed parser/classifier *logic* — use `--full` for that.
 
 ### When to run `--full`
 
-- After a **`SCHEMA_VERSION` bump** (e.g. the ADR-011 BLOB migration — see below; or **v13**, which adds
-  `tool_calls.error_type` per [ADR-019](decisions/ADR-019-tool-error-observability.md)).
+- After a **`SCHEMA_VERSION` bump** (e.g. the ADR-011 BLOB migration — see below; **v13**, which adds
+  `tool_calls.error_type` per [ADR-019](decisions/ADR-019-tool-error-observability.md); or **v15**, which
+  splits `events.thinking` out of `events.text` per
+  [ADR-031](decisions/ADR-031-transcript-text-is-stored.md) — until you re-read, the transcript shows no
+  reasoning, because it is now a column rather than something the server re-parses).
 - After changing **parser or classifier** logic and you want it applied to all history. This includes the
   ADR-019 adapter fix that maps a tool result's `is_error` to `status='error'` — existing DBs only pick up
   the failure `status` (and the derived `error_type`) after a `--full` re-read.
@@ -70,8 +73,9 @@ uncompressed until `--full` runs. Expect a sizeable DB shrink (~40% on a typical
   ```bash
   sqlite3 data/agent-lens.db "SELECT typeof(raw_json), length(raw_json) FROM events LIMIT 1;"
   ```
-  (`blob`, and smaller than the original line). The transcript view in the web UI rendering text/thinking
-  confirms the read path decodes correctly.
+  (`blob`, and smaller than the original line). The transcript view no longer proves this — it reads the
+  `text`/`thinking` columns and never touches `raw_json` (ADR-031). What exercises the codec now is
+  re-derivation: a `--full` run reads every archived line back, so a clean run is the decode check.
 - **Tests.** `pnpm test` exercises incremental rebuild, cross-run subagent linkage, streaming parity, and
   the compression round-trip.
 

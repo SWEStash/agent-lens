@@ -12,12 +12,14 @@
  * - `raw_json` keeps the original line verbatim for lossless re-derivation; structured columns are
  *   projections for querying/dashboards. It is stored gzip-compressed as a BLOB (ADR-011) — write via
  *   `packRaw`, read via `unpackRaw` (both in `rawjson.ts`).
+ * - An event's displayable halves are *stored*, never re-derived: `text` and `thinking` are separate
+ *   columns so readers never parse a transcript record (ADR-031). Only the adapter knows that shape.
  *
  * This module only declares the schema. Connection handling and migrations live in `db.ts`.
  * Bump SCHEMA_VERSION on any DDL change.
  */
 
-export const SCHEMA_VERSION = 14;
+export const SCHEMA_VERSION = 15;
 
 export const SCHEMA_SQL = /* sql */ `
 PRAGMA journal_mode = WAL;
@@ -113,7 +115,8 @@ CREATE TABLE IF NOT EXISTS events (
   model        TEXT,
   is_sidechain INTEGER NOT NULL DEFAULT 0,
   is_meta      INTEGER NOT NULL DEFAULT 0,
-  text         TEXT,                     -- flattened text/thinking for search + preview
+  text         TEXT,                     -- visible message text, for search + preview
+  thinking     TEXT,                     -- reasoning blocks, kept apart so the read path needs no parsing
   raw_json     BLOB NOT NULL,            -- original line, verbatim, gzip-compressed (ADR-011); read via unpackRaw()
   source_file  TEXT                      -- archive path the canonical copy came from
 );
@@ -325,22 +328,26 @@ CREATE TABLE IF NOT EXISTS ingest_state (
 );
 
 -- Full-text search over event text (contentless external-content FTS). ------
+-- Both columns are indexed: search covered reasoning back when text carried it inline, and the
+-- queries are unqualified MATCHes, which span every column — so indexing thinking here is what makes
+-- splitting the columns invisible to search.
 CREATE VIRTUAL TABLE IF NOT EXISTS events_fts USING fts5(
   text,
+  thinking,
   content='events',
   content_rowid='rowid'
 );
 
 -- Keep FTS in sync with events. --------------------------------------------
 CREATE TRIGGER IF NOT EXISTS events_ai AFTER INSERT ON events BEGIN
-  INSERT INTO events_fts(rowid, text) VALUES (new.rowid, new.text);
+  INSERT INTO events_fts(rowid, text, thinking) VALUES (new.rowid, new.text, new.thinking);
 END;
 CREATE TRIGGER IF NOT EXISTS events_ad AFTER DELETE ON events BEGIN
-  INSERT INTO events_fts(events_fts, rowid, text) VALUES ('delete', old.rowid, old.text);
+  INSERT INTO events_fts(events_fts, rowid, text, thinking) VALUES ('delete', old.rowid, old.text, old.thinking);
 END;
 CREATE TRIGGER IF NOT EXISTS events_au AFTER UPDATE ON events
-WHEN old.text IS NOT new.text BEGIN
-  INSERT INTO events_fts(events_fts, rowid, text) VALUES ('delete', old.rowid, old.text);
-  INSERT INTO events_fts(rowid, text) VALUES (new.rowid, new.text);
+WHEN old.text IS NOT new.text OR old.thinking IS NOT new.thinking BEGIN
+  INSERT INTO events_fts(events_fts, rowid, text, thinking) VALUES ('delete', old.rowid, old.text, old.thinking);
+  INSERT INTO events_fts(rowid, text, thinking) VALUES (new.rowid, new.text, new.thinking);
 END;
 `;

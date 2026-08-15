@@ -7,8 +7,6 @@
  * rather than reaching SQLite. Workflow fan-out lives in workflows.test.ts, prefs in prefs.test.ts.
  */
 import { describe, it, expect, beforeAll } from "vitest";
-import { packRaw } from "@agent-lens/core";
-import { extractParts } from "../dist/db.js";
 import { addEvent, addSession, addSource, addTokens, addTool, addTurn, appFor, freshDb, seedBasic } from "./helpers/seed";
 
 let app: Awaited<ReturnType<typeof appFor>>;
@@ -243,21 +241,6 @@ describe("malformed stored JSON degrades instead of 500ing", () => {
     expect((await local.inject({ method: "GET", url: "/api/sessions" })).statusCode).toBe(200);
     expect((await local.inject({ method: "GET", url: "/api/sessions?q=searchable" })).statusCode).toBe(200);
     await local.close();
-  });
-});
-
-// raw_json is stored gzip-compressed (ADR-011); the transcript read path must transparently decode it,
-// while still tolerating legacy plain rows written before the migration.
-describe("extractParts decodes stored raw_json (ADR-011)", () => {
-  it("decompresses a gzip BLOB into text + thinking", () => {
-    const line = JSON.stringify({ message: { content: [{ type: "text", text: "hi" }, { type: "thinking", thinking: "hmm" }] } });
-    const { text, thinking } = extractParts(packRaw(line));
-    expect(text).toBe("hi");
-    expect(thinking).toBe("hmm");
-  });
-
-  it("still reads a legacy plain-string raw_json", () => {
-    expect(extractParts('{"message":{"content":"plain"}}').text).toBe("plain");
   });
 });
 
