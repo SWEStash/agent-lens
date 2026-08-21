@@ -550,7 +550,7 @@ table.sessions { width: 100%; border-collapse: collapse; }
    widget, so they share the styling rather than each inventing a pill. */
 .transcript-tools .format-toggle { margin-left: auto; display: flex; gap: 0; }
 .format-toggle button,
-.view-toggle button { border-radius: 0; }
+.view-toggle button { border-radius: 0; position: relative; }
 .format-toggle button:first-child,
 .view-toggle button:first-child { border-radius: 6px 0 0 6px; }
 .format-toggle button:last-child,
@@ -566,6 +566,11 @@ table.sessions { width: 100%; border-collapse: collapse; }
   border-color: var(--accent);
   z-index: 1;
 }
+/* The -1px overlap means the NEXT button's left border paints over this one's right border, so a
+   highlighted button needs to be lifted or it loses that edge. Hover sits above the active button:
+   hovering the neighbour of the active one must still show a complete box. */
+.format-toggle button:hover:not(:disabled),
+.view-toggle button:hover:not(:disabled) { z-index: 2; }
 
 /* Markdown-rendered message bodies. Block spacing is tightened so transcripts stay compact. */
 .text.md { white-space: normal; }
