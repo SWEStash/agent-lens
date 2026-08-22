@@ -26,6 +26,23 @@ export interface ChartProps {
   drill: Drilldown;
 }
 
+/**
+ * The unit caption for a numeric axis, e.g. `<YAxis label={unitLabel("work tokens")} />`.
+ *
+ * Always rendered, never behind a hover: "15.0M" of what is the first question a reader has, and a
+ * unit you have to discover by interacting with the chart is a unit most readers never see. Sits
+ * horizontally above the axis rather than rotated up its side — rotated axis titles are the classic
+ * label nobody reads, and in a three-across grid they cost width the plot needs.
+ */
+export function unitLabel(value: string, fill: string) {
+  // `position: "top"` alone lands the text ABOVE the svg's top edge, where it is clipped and
+  // invisible — hence the explicit offset back into the canvas, and CHART_MARGIN's top reservation.
+  return { value, position: "insideTopLeft" as const, offset: 0, dy: -14, dx: 2, fill, fontSize: 11 };
+}
+
+/** Chart margin with room reserved above the plot for `unitLabel`. */
+export const CHART_MARGIN = { top: 22, right: 8, left: 0, bottom: 0 };
+
 /** The scaffolding every ranked horizontal bar card repeats: a full-size vertical-layout BarChart with
  * a numeric X axis and no horizontal grid lines. `yAxis` and the bars/tooltip differ per card, so they
  * stay explicit at the call site. */

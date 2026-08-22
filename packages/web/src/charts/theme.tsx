@@ -66,6 +66,7 @@ export function useChartTokens() {
 export function ChartCard({
   title,
   hint,
+  guide,
   actions,
   bodyHeight,
   hidden,
@@ -73,6 +74,10 @@ export function ChartCard({
 }: {
   title: string;
   hint?: ReactNode;
+  /** "How to read this" — units, method, and the caveats that decide whether a reading is fair.
+   *  Behind a disclosure rather than a hover tooltip: it is multi-sentence reference text, hover
+   *  does not exist on touch, and a reader wants it open WHILE looking at the chart. */
+  guide?: ReactNode;
   actions?: ReactNode;
   bodyHeight?: number | string;
   hidden?: boolean;
@@ -83,6 +88,18 @@ export function ChartCard({
     <div className="card">
       <div className="card-head">
         <h3>{title}</h3>
+        {/* Before the hint, not after it: the header wraps, and a hint of any length would otherwise
+            push the ⓘ onto a line of its own, orphaned from the title it belongs to. */}
+        {guide && (
+          // <details> rather than a custom popover: keyboard, focus and screen-reader behaviour come
+          // for free, and it is the same idiom the strip customizers already use.
+          <details className="card-guide">
+            <summary aria-label={`How to read "${title}"`} title="How to read this chart">
+              ⓘ
+            </summary>
+            <div className="card-guide-body">{guide}</div>
+          </details>
+        )}
         {hint && <span className="card-hint">{hint}</span>}
         {actions && <span className="card-actions">{actions}</span>}
       </div>

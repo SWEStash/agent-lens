@@ -750,7 +750,7 @@ table.sessions { width: 100%; border-collapse: collapse; }
   grid-template-columns: repeat(auto-fit, minmax(380px, 1fr));
   gap: 14px;
 }
-.card { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 14px; min-width: 0; display: flex; flex-direction: column; }
+.card { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 14px; min-width: 0; display: flex; flex-direction: column; position: relative; }
 .card-head { display: flex; align-items: baseline; gap: 10px; margin-bottom: 10px; flex-wrap: wrap; }
 .card-head h3 { margin: 0; font-size: 14px; }
 .card-hint { font-size: 11px; color: var(--muted); }
@@ -1454,3 +1454,41 @@ table.kv .muted { font-size: 12px; margin-top: 4px; }
 .burn-hours { margin-top: 2px; }
 .burn-legend { display: flex; align-items: center; gap: 4px; font-size: 11px; color: var(--muted); }
 .burn-legend i { width: 14px; height: 10px; border-radius: 2px; }
+
+/* "How to read this" disclosure in a chart card header. A panel rather than a hover tooltip: the
+   content is multi-sentence reference text, hover does not exist on touch, and it has to stay open
+   while the reader looks back at the chart. */
+.card-guide { margin-left: 2px; }
+.card-guide > summary {
+  list-style: none; cursor: help; color: var(--muted); font-size: 12px;
+  border-radius: 50%; width: 16px; height: 16px; display: inline-flex;
+  align-items: center; justify-content: center; line-height: 1;
+}
+.card-guide > summary::-webkit-details-marker { display: none; }
+.card-guide > summary:hover, .card-guide[open] > summary { color: var(--accent); background: var(--tag); }
+/* Anchored to the CARD, not to the ⓘ: spanning the card's own width means the panel can never
+   spill over a neighbouring card or off the right edge of the grid, whatever column it lands in. */
+.card-guide-body {
+  position: absolute; z-index: 6; top: 40px; left: 10px; right: 10px;
+  padding: 10px 12px; border: 1px solid var(--border); border-radius: 7px;
+  background: var(--panel2); box-shadow: 0 6px 18px rgb(0 0 0 / 35%);
+  font-size: 12px; line-height: 1.5; color: var(--text); font-weight: 400;
+}
+.card-guide-body p { margin: 0 0 7px; }
+.card-guide-body p:last-child { margin-bottom: 0; }
+.card-guide-body dt { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: 0.03em; }
+.card-guide-body dd { margin: 1px 0 7px; }
+.card-guide-body dd:last-child { margin-bottom: 0; }
+
+/* Heatmap cell tooltip — hover IS right here: one short fact, tied to one mark. */
+.burn { position: relative; }
+.burn-tip {
+  position: absolute; z-index: 6; pointer-events: none;
+  padding: 5px 8px; border: 1px solid var(--border); border-radius: 7px;
+  background: var(--panel2); box-shadow: 0 6px 18px rgb(0 0 0 / 35%);
+  font-size: 12px; line-height: 1.45; white-space: nowrap;
+}
+.burn-tip-head { font-weight: 600; }
+.burn-tip-row { color: var(--muted); font-variant-numeric: tabular-nums; }
+.burn-cell { cursor: default; }
+.burn-cell:hover { outline: 2px solid var(--text); outline-offset: -1px; }

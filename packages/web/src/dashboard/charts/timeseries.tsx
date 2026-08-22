@@ -2,12 +2,12 @@ import { useEffect, useRef, useState } from "react";
 import { ResponsiveContainer, AreaChart, Area, LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend } from "recharts";
 import { ChartCard, useChartTokens } from "../../charts/theme";
 import { fmtCost, fmtTokens } from "../../format";
-import type { ChartProps } from "./common";
+import { CHART_MARGIN, unitLabel, type ChartProps } from "./common";
 
 /** Stacked token components per bucket. The legend toggles series: hiding the dominant cache-read
  * series lets the others use the full scale, and the stack recomputes automatically. */
 export function TokensOverTime({ hidden, ts }: ChartProps) {
-  const { TOKEN_COLORS, axisProps, gridProps, tooltipStyle } = useChartTokens();
+  const { C, TOKEN_COLORS, axisProps, gridProps, tooltipStyle } = useChartTokens();
   const [hiddenSeries, setHiddenSeries] = useState<Set<string>>(new Set());
   const toggle = (key: string) =>
     setHiddenSeries((prev) => {
@@ -18,13 +18,33 @@ export function TokensOverTime({ hidden, ts }: ChartProps) {
     });
 
   return (
-    <ChartCard title="Tokens over time" hint="input · output · cache-write · cache-read (kept separate)" hidden={hidden}>
+    <ChartCard
+      title="Tokens over time"
+      hint="input · output · cache-write · cache-read (kept separate)"
+      guide={
+        <>
+          <p>Total tokens per bucket, stacked by kind. Click a legend entry to hide that series and let the others use the full scale.</p>
+          <dl>
+            <dt>x-axis</dt>
+            <dd>time bucket — day, week or month, chosen from the range (the picker above overrides it).</dd>
+            <dt>y-axis</dt>
+            <dd>tokens.</dd>
+          </dl>
+          <p>
+            <strong>Cache reads usually dominate.</strong> They are an order of magnitude larger than
+            everything else and cost a fraction as much, so hide that series to read the rest.
+          </p>
+          <p>Buckets by the session's start, so a long session's tokens all land in the bucket it began.</p>
+        </>
+      }
+      hidden={hidden}
+    >
       <ResponsiveContainer width="100%" height="100%">
-        <AreaChart data={ts?.series ?? []} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
+        <AreaChart data={ts?.series ?? []} margin={CHART_MARGIN}>
           <CartesianGrid {...gridProps} />
           <XAxis dataKey="bucket" {...axisProps} minTickGap={24} />
-          <YAxis {...axisProps} tickFormatter={(v) => fmtTokens(v as number)} width={48} />
-          <Tooltip {...tooltipStyle} formatter={(v: number | string, n: string) => [fmtTokens(Number(v)), n]} />
+          <YAxis {...axisProps} tickFormatter={(v) => fmtTokens(v as number)} width={48} label={unitLabel("tokens", C.muted)} />
+          <Tooltip {...tooltipStyle} formatter={(v: number | string, n: string) => [`${fmtTokens(Number(v))} tokens`, n]} />
           <Legend
             wrapperStyle={{ fontSize: 12, cursor: "pointer" }}
             onClick={(o: { dataKey?: unknown }) => o?.dataKey && toggle(String(o.dataKey))}
@@ -45,12 +65,33 @@ export function TokensOverTime({ hidden, ts }: ChartProps) {
 export function CostOverTime({ hidden, ts }: ChartProps) {
   const { C, axisProps, gridProps, tooltipStyle } = useChartTokens();
   return (
-    <ChartCard title="Cost over time" hint="API list price estimate, model × tokens (cache-aware)" hidden={hidden}>
+    <ChartCard
+      title="Cost over time"
+      hint="API list price estimate, model × tokens (cache-aware)"
+      guide={
+        <>
+          <p>What the tokens in each bucket would have cost at API list prices.</p>
+          <dl>
+            <dt>x-axis</dt>
+            <dd>time bucket — day, week or month.</dd>
+            <dt>y-axis</dt>
+            <dd>US dollars, estimated.</dd>
+          </dl>
+          <p>
+            <strong>An estimate, and a lower bound.</strong> It prices each model's tokens at public
+            list rates with cache reads charged at their reduced rate — it is not your bill, and it
+            knows nothing about subscription plans. Models with no known price contribute zero and are
+            named in the "unpriced models" metric rather than being silently counted as free.
+          </p>
+        </>
+      }
+      hidden={hidden}
+    >
       <ResponsiveContainer width="100%" height="100%">
-        <LineChart data={ts?.series ?? []} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
+        <LineChart data={ts?.series ?? []} margin={CHART_MARGIN}>
           <CartesianGrid {...gridProps} />
           <XAxis dataKey="bucket" {...axisProps} minTickGap={24} />
-          <YAxis {...axisProps} tickFormatter={(v) => "$" + v} width={48} />
+          <YAxis {...axisProps} tickFormatter={(v) => "$" + v} width={48} label={unitLabel("USD (est.)", C.muted)} />
           <Tooltip {...tooltipStyle} formatter={(v: number | string) => fmtCost(Number(v))} />
           <Line type="monotone" dataKey="cost" stroke={C.red} strokeWidth={2} dot={false} />
         </LineChart>
@@ -91,23 +132,39 @@ export function Activity({ hidden, ts }: ChartProps) {
     <>
       <CartesianGrid {...gridProps} />
       <XAxis dataKey="bucket" {...axisProps} minTickGap={24} />
-      <YAxis {...axisProps} width={Y_AXIS_W} />
+      <YAxis {...axisProps} width={Y_AXIS_W} label={unitLabel("count", C.muted)} />
       <Tooltip {...tooltipStyle} />
       <Legend wrapperStyle={{ fontSize: 12 }} />
     </>
   );
   return (
-    <ChartCard title="Activity over time" hint="sessions & turns per bucket" hidden={hidden}>
+    <ChartCard
+      title="Activity over time"
+      hint="sessions & turns per bucket"
+      guide={
+        <>
+          <p>How much work happened in each bucket, by count rather than by size.</p>
+          <dl>
+            <dt>x-axis</dt>
+            <dd>time bucket — day, week or month.</dd>
+            <dt>y-axis</dt>
+            <dd>count. <strong>sessions</strong> = sessions that started in the bucket, subagent runs included; <strong>turns</strong> = prompt-and-response exchanges within them.</dd>
+          </dl>
+          <p>Bars become lines once the range holds more buckets than can be drawn as readable bars.</p>
+        </>
+      }
+      hidden={hidden}
+    >
       <div ref={ref} style={{ width: "100%", height: "100%" }}>
         <ResponsiveContainer width="100%" height="100%">
           {asBars ? (
-            <BarChart data={data} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
+            <BarChart data={data} margin={CHART_MARGIN}>
               {common}
               <Bar dataKey="sessions" fill={C.accent} />
               <Bar dataKey="turns" fill={C.green} />
             </BarChart>
           ) : (
-            <LineChart data={data} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
+            <LineChart data={data} margin={CHART_MARGIN}>
               {common}
               <Line dataKey="sessions" stroke={C.accent} strokeWidth={2} dot={false} />
               <Line dataKey="turns" stroke={C.green} strokeWidth={2} dot={false} />
@@ -131,7 +188,7 @@ export function ToolErrors({ hidden, ts }: ChartProps) {
     <>
       <CartesianGrid {...gridProps} />
       <XAxis dataKey="bucket" {...axisProps} minTickGap={24} />
-      <YAxis {...axisProps} width={Y_AXIS_W} allowDecimals={false} />
+      <YAxis {...axisProps} width={Y_AXIS_W} allowDecimals={false} label={unitLabel("errored calls", C.muted)} />
       <Tooltip {...tooltipStyle} />
       <Legend wrapperStyle={{ fontSize: 12 }} />
     </>
@@ -140,18 +197,35 @@ export function ToolErrors({ hidden, ts }: ChartProps) {
     <ChartCard
       title="Tool errors over time"
       hint="failed tool calls per bucket · rejections/blocks kept separate (not agent failures)"
+      guide={
+        <>
+          <p>Tool calls that came back as errors, stacked by kind.</p>
+          <dl>
+            <dt>x-axis</dt>
+            <dd>time bucket — day, week or month.</dd>
+            <dt>y-axis</dt>
+            <dd>count of errored tool calls.</dd>
+          </dl>
+          <p>
+            <strong>failures</strong> are the agent's — a bad edit, a command that did not run.
+            <strong> rejected/blocked</strong> are yours or a guardrail's: you declined a permission
+            prompt, or a rule stopped it. They are kept apart because a rejection is the system working.
+          </p>
+          <p>The split is a heuristic over the tool's result text, so treat the two totals as indicative and the combined count as exact.</p>
+        </>
+      }
       hidden={hidden}
     >
       <div ref={ref} style={{ width: "100%", height: "100%" }}>
         <ResponsiveContainer width="100%" height="100%">
           {asBars ? (
-            <BarChart data={data} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
+            <BarChart data={data} margin={CHART_MARGIN}>
               {common}
               <Bar dataKey="failures" name="failures" stackId="e" fill={C.red} />
               <Bar dataKey="rejections" name="rejected/blocked" stackId="e" fill={C.muted} />
             </BarChart>
           ) : (
-            <AreaChart data={data} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
+            <AreaChart data={data} margin={CHART_MARGIN}>
               {common}
               <Area dataKey="failures" name="failures" stackId="e" stroke="none" fill={C.red} fillOpacity={1} />
               <Area dataKey="rejections" name="rejected/blocked" stackId="e" stroke="none" fill={C.muted} fillOpacity={1} />

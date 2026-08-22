@@ -4,7 +4,7 @@ import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, CartesianGrid, Toolti
 import { ChartCard, useChartTokens } from "../../charts/theme";
 import { fmtCost, fmtTokens, shortModel } from "../../format";
 import { AxisLink, SkillTooltip, datumField, type AxisTickProps, type ChartDatum, type SkillVersionRow } from "../recharts-types";
-import { RankedBars, type ChartProps } from "./common";
+import { CHART_MARGIN, RankedBars, unitLabel, type ChartProps } from "./common";
 
 const BAND_ORDER = ["trivial", "small", "medium", "large", "xl"];
 
@@ -17,6 +17,20 @@ export function ErrorTypes({ hidden, bd, expand, drill }: ChartProps) {
   return (
     <ChartCard
       title="Error types"
+      guide={
+        <>
+          <p>Which kinds of tool error occurred, ranked by count. Click a bar to open the sessions behind it.</p>
+          <dl>
+            <dt>bar length</dt>
+            <dd>number of errored tool calls of that type.</dd>
+          </dl>
+          <p>
+            The type buckets are a <strong>heuristic over the tool's result text</strong>: the totals
+            are exact, the labels best-effort. Rejections and guardrail blocks are counted separately
+            because they are not agent failures.
+          </p>
+        </>
+      }
       hint="heuristic buckets from the tool result text · rejections/blocks are not agent failures · click a bar for those sessions"
       actions={expand.expandBtn("errors", data.length)}
       bodyHeight={expand.expandHeight("errors", data.length, 28)}
@@ -59,6 +73,16 @@ export function TokensByModel({ hidden, bd, drill }: ChartProps) {
   return (
     <ChartCard
       title="Tokens by model"
+      guide={
+        <>
+          <p>Which models the tokens went to. Switch between tokens and estimated cost — the ranking often differs, because models are priced very differently.</p>
+          <dl>
+            <dt>bar length</dt>
+            <dd>tokens, or estimated US dollars at API list prices, depending on the toggle.</dd>
+          </dl>
+          <p>Counts both main and subagent sessions: a subagent's tokens come off the same quota. Click a bar to open that model's sessions.</p>
+        </>
+      }
       hint="click a bar for those sessions"
       hidden={hidden}
       actions={
@@ -109,12 +133,32 @@ export function Category({ hidden, bd }: ChartProps) {
   const { PALETTE, axisProps, gridProps, tooltipStyle } = useChartTokens();
   const data = (bd?.by_category ?? []).map((c) => ({ name: c.category, value: c.n }));
   return (
-    <ChartCard title="Category distribution" hint="main sessions only" hidden={hidden}>
+    <ChartCard
+      title="Category distribution"
+      guide={
+        <>
+          <p>What kind of work the sessions were, as judged by the classifier.</p>
+          <dl>
+            <dt>x-axis</dt>
+            <dd>category — feature, bugfix, refactor, docs, ops, chore, review.</dd>
+            <dt>y-axis</dt>
+            <dd>number of sessions.</dd>
+          </dl>
+          <p>
+            <strong>Main sessions only</strong>: subagents inherit their parent's task and would
+            multiply-count it. The label is inferred from the transcript rather than declared by you,
+            so read it as a rough shape, not a ledger.
+          </p>
+        </>
+      }
+      hint="main sessions only"
+      hidden={hidden}
+    >
       <ResponsiveContainer width="100%" height="100%">
-        <BarChart data={data} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
+        <BarChart data={data} margin={CHART_MARGIN}>
           <CartesianGrid {...gridProps} />
           <XAxis dataKey="name" {...axisProps} />
-          <YAxis {...axisProps} width={36} allowDecimals={false} />
+          <YAxis {...axisProps} width={36} allowDecimals={false} label={unitLabel("sessions", axisProps.stroke)} />
           <Tooltip {...tooltipStyle} />
           <Bar dataKey="value">
             {data.map((_, i) => (
@@ -134,12 +178,32 @@ export function Complexity({ hidden, bd }: ChartProps) {
     value: bd?.by_complexity.find((b) => b.band === band)?.n ?? 0,
   })).filter((d) => d.value > 0);
   return (
-    <ChartCard title="Complexity bands" hint="main sessions only" hidden={hidden}>
+    <ChartCard
+      title="Complexity bands"
+      guide={
+        <>
+          <p>How involved each session was, banded by a score over signals like turn count, tools used and files touched.</p>
+          <dl>
+            <dt>x-axis</dt>
+            <dd>band — trivial, small, medium, large, xl.</dd>
+            <dt>y-axis</dt>
+            <dd>number of sessions.</dd>
+          </dl>
+          <p>
+            <strong>Main sessions only.</strong> Most sessions landing in the lower bands is the real
+            shape of the corpus, not a bug. Complexity measures effort spent — not difficulty, and not
+            quality.
+          </p>
+        </>
+      }
+      hint="main sessions only"
+      hidden={hidden}
+    >
       <ResponsiveContainer width="100%" height="100%">
-        <BarChart data={data} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
+        <BarChart data={data} margin={CHART_MARGIN}>
           <CartesianGrid {...gridProps} />
           <XAxis dataKey="name" {...axisProps} />
-          <YAxis {...axisProps} width={36} allowDecimals={false} />
+          <YAxis {...axisProps} width={36} allowDecimals={false} label={unitLabel("sessions", axisProps.stroke)} />
           <Tooltip {...tooltipStyle} />
           <Bar dataKey="value" fill={C.violet} />
         </BarChart>
@@ -154,6 +218,16 @@ export function ToolFrequency({ hidden, bd, expand }: ChartProps) {
   return (
     <ChartCard
       title="Tool frequency"
+      guide={
+        <>
+          <p>Which tools the agent reached for most.</p>
+          <dl>
+            <dt>bar length</dt>
+            <dd>number of calls to that tool.</dd>
+          </dl>
+          <p>Every call counts, successful or not, across both main and subagent sessions. "show all" opens the full list beyond the top few.</p>
+        </>
+      }
       hint="top tools by call count"
       actions={expand.expandBtn("tools", total)}
       bodyHeight={expand.expandHeight("tools", total, 22)}
@@ -183,6 +257,16 @@ export function SkillActivation({ hidden, bd, expand }: ChartProps) {
   return (
     <ChartCard
       title="Skill activation"
+      guide={
+        <>
+          <p>Which skills actually fired, ranked by how often.</p>
+          <dl>
+            <dt>bar length</dt>
+            <dd>number of activations, with every version of a skill grouped together.</dd>
+          </dl>
+          <p>Hover a bar for the per-version split, click one to open that skill. A skill that is installed but never invoked does not appear at all.</p>
+        </>
+      }
       hint="firings per skill (all versions grouped) · hover for versions · click to open"
       actions={expand.expandBtn("skills", total)}
       bodyHeight={expand.expandHeight("skills", total, 22)}
@@ -228,6 +312,20 @@ export function SubagentFanout({ hidden, bd, expand }: ChartProps) {
   return (
     <ChartCard
       title="Subagent fan-out"
+      guide={
+        <>
+          <p>Which kinds of subagent got spawned, and how often.</p>
+          <dl>
+            <dt>bar length</dt>
+            <dd>number of spawns of that agent type.</dd>
+          </dl>
+          <p>
+            Counted from the spawning side and <strong>main sessions only</strong>, so a subagent that
+            spawns its own children cannot inflate the total. The subtitle carries the per-session
+            average and the busiest single session.
+          </p>
+        </>
+      }
       hint={
         bd
           ? `${bd.subagent_fanout.total_spawns} spawns · ${bd.subagent_fanout.sessions_with_subagents} sessions · avg ${bd.subagent_fanout.avg_per_session}, max ${bd.subagent_fanout.max_per_session}`

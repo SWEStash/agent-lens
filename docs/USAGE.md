@@ -435,6 +435,10 @@ date range):
   **Timezone:** hour-of-day and weekday are *local*, resolved from your browser and named on each
   tile. The server computes and returns UTC; the browser localizes, so an exported snapshot reads
   correctly in every viewer's zone and across daylight-saving changes.
+- **Reading a chart** — every card carries an **ⓘ** beside its title. It opens a short panel saying
+  what the axes are in, how the number is computed, and the caveats that decide whether a reading is
+  fair — which population it counts, what a heuristic label is worth, where a tail is contaminated.
+  Axis units are also printed above each axis, so "15.0M" is never left ambiguous.
 - **Views** — a switcher above the strips picks a curated layout: **All** (everything), **Cost**,
   **Reliability**, **Activity**. Presets are defined in code, so they never grow silently when a new
   chart ships — `All` always has everything.
