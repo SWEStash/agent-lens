@@ -1,6 +1,6 @@
 import { act, cleanup, renderHook } from "@testing-library/react";
 import { createElement, type ReactNode } from "react";
-import { MemoryRouter, useLocation } from "react-router-dom";
+import { MemoryRouter, useLocation, useNavigationType } from "react-router-dom";
 import { afterEach, describe, expect, it } from "vitest";
 import { useQueryState } from "../src/useQueryState";
 
@@ -14,6 +14,8 @@ function renderQueryState(search: string, resetOnChange?: string[]) {
     () => ({
       q: useQueryState(resetOnChange),
       search: useLocation().search,
+      // PUSH adds a history entry; REPLACE rewrites the current one.
+      navType: useNavigationType(),
     }),
     { wrapper },
   );
@@ -34,6 +36,18 @@ describe("useQueryState", () => {
 
     act(() => result.current.q.set({ q: "" }));
     expect(result.current.search).toBe("?source=cli&project=p1");
+  });
+
+  it("pushes a history entry by default, and replaces one on request", () => {
+    // Anything written continuously — a search box being typed into, a range being dragged across the
+    // timeline — must replace, or Back becomes an undo log of every keystroke and every mouse move.
+    const { result } = renderQueryState("/?source=cli");
+    act(() => result.current.q.set({ q: "ab" }));
+    expect(result.current.navType).toBe("PUSH");
+
+    act(() => result.current.q.set({ q: "abc" }, { replace: true }));
+    expect(result.current.navType).toBe("REPLACE");
+    expect(result.current.search).toBe("?source=cli&q=abc");
   });
 
   it("patches several params at once", () => {

@@ -144,6 +144,24 @@ describe("find in session", () => {
     await waitFor(() => expect(count()).toBe(""));
   });
 
+  it("returns to the top when a term stops matching", async () => {
+    // Stepping through matches scrolls the reader down the page. When the next keystroke kills the
+    // last match nothing else moves, so they are left deep in a transcript that no longer relates to
+    // what they typed, with the box and its "No matches" far above them.
+    const scrollTo = vi.fn();
+    window.scrollTo = scrollTo as unknown as typeof window.scrollTo;
+    renderAt();
+    await waitFor(() => expect(screen.getByText("a needle in plain sight")).toBeTruthy());
+
+    type("needle");
+    await waitFor(() => expect(count()).not.toBe("No matches"));
+    expect(scrollTo).not.toHaveBeenCalled();
+
+    type("needlezzz");
+    await waitFor(() => expect(count()).toBe("No matches"));
+    expect(scrollTo).toHaveBeenCalledWith(expect.objectContaining({ top: 0 }));
+  });
+
   it("steps through matches with ▸ and wraps around", async () => {
     renderAt();
     await waitFor(() => expect(screen.getByText("a needle in plain sight")).toBeTruthy());

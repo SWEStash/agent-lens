@@ -8,7 +8,7 @@ import { TurnSection } from "./transcript/TurnSection";
 import { EventBlock } from "./transcript/EventBlock";
 import { groupByTurn } from "./transcript/group";
 import { useSessionDetail } from "./transcript/useSessionDetail";
-import { buildHaystacks, searchSession } from "./transcript/search";
+import { buildHaystacks, searchSession, MIN_QUERY } from "./transcript/search";
 import { useHighlightPaint } from "./transcript/useHighlightPaint";
 import { useScrollToEvent } from "./transcript/useScrollToEvent";
 import { useQueryState } from "./useQueryState";
@@ -107,8 +107,12 @@ export default function SessionView() {
     const to = Date.parse(get("to"));
     return Number.isNaN(from) || Number.isNaN(to) ? null : [from, to];
   }, [get]);
+  // Replaced, never pushed: the band writes this on every pointer move while a range is being
+  // dragged, so pushing would bury the previous page under a history entry per mouse move.
   const setRange = (r: [number, number] | null) =>
-    set(r ? { from: new Date(r[0]).toISOString(), to: new Date(r[1]).toISOString() } : { from: "", to: "" });
+    set(r ? { from: new Date(r[0]).toISOString(), to: new Date(r[1]).toISOString() } : { from: "", to: "" }, {
+      replace: true,
+    });
   const [domain, setDomain] = useState<[number, number] | null>(null);
   useEffect(() => setDomain(null), [id]);
 
@@ -138,6 +142,16 @@ export default function SessionView() {
   const [banded, setBanded] = useState<{ uuid: string; nonce: number } | null>(null);
   useEffect(() => setBanded(null), [id]);
   const jumpTo = (uuid: string) => setBanded((b) => ({ uuid, nonce: (b?.nonce ?? 0) + 1 }));
+
+  // A search that matches nothing leaves the reader wherever the last match had scrolled them, with
+  // no sign that the view no longer relates to what they typed. Return to the top, where the box and
+  // its "No matches" sit, so the result of the keystroke is visible.
+  const noMatches = query.trim().length >= MIN_QUERY && model.total === 0;
+  useEffect(() => {
+    if (!noMatches) return;
+    const reduced = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false;
+    window.scrollTo({ top: 0, behavior: reduced ? "auto" : "smooth" });
+  }, [noMatches, query]);
   const targetUuid = banded?.uuid ?? activeHit?.uuid ?? hashUuid;
   // `seq` re-fires the jump when the index can't change — pressing ▸ on a session with one match.
   // The range is part of the deep-link token: a target outside the range isn't in the DOM yet, so the
@@ -314,7 +328,10 @@ export default function SessionView() {
         search={
           <SearchBar
             query={query}
-            onQuery={(q) => set({ q })}
+            // Replaced rather than pushed: the term is debounced but still lands per word, and one
+            // history entry per keystroke makes Back walk the query back a letter at a time instead
+            // of leaving the page.
+            onQuery={(q) => set({ q }, { replace: true })}
             total={model.total}
             index={pos.idx}
             onPrev={() => step(-1)}

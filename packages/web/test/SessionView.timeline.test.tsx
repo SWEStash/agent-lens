@@ -198,3 +198,4 @@ describe("jumping to a message that \"hide tool messages\" is burying", () => {
     expect(screen.getByText(/ls -la/)).toBeTruthy();
   });
 });
+
