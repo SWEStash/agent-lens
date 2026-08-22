@@ -1331,6 +1331,9 @@ table.kv .muted { font-size: 12px; margin-top: 4px; }
 /* A break is a hole in the axis, not data: recessive fill plus a hatch so it never reads as a mark. */
 .tl-break rect { fill: var(--panel2); stroke: var(--border); stroke-dasharray: 2 2; }
 .tl-mark { shape-rendering: crispEdges; }
+/* An opened gap reads as the same kind of thing as a collapsed one — just at its real width. */
+.tl-expanded { cursor: zoom-out; }
+.tl-expanded rect { fill: var(--panel2); stroke: var(--border); stroke-dasharray: 2 2; opacity: 0.75; }
 .tl-err { fill: var(--err); }
 .tl-file { fill: var(--muted); }
 .tl-spawn { fill: var(--muted); }

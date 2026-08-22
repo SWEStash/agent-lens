@@ -77,6 +77,47 @@ function setup(over: Partial<Parameters<typeof TimelineBand>[0]> = {}) {
   return { svg, live, onRange, onJump };
 }
 
+describe("timeline band degraded states", () => {
+  it("with no usage anywhere, falls back to uniform heights and hides the metric control", () => {
+    // A newer page served by a server that predates per-event usage. It must still do its navigation
+    // job rather than drawing a row of zero-height marks — and offering a token metric to choose
+    // between would be offering a choice that changes nothing.
+    setup({ events: EVENTS.map(({ usage: _u, ...e }) => e as EventNode) });
+    expect(document.querySelector(".tl-ctl")).toBeNull();
+    const heights = [...document.querySelectorAll(".tl-mark")].map((n) => n.getAttribute("height"));
+    expect(new Set(heights).size).toBe(1);
+    expect(document.querySelectorAll(".tl-mark")).toHaveLength(4);
+  });
+
+  it("says so plainly when a session has no timing data at all", () => {
+    setup({ events: EVENTS.map((e) => ({ ...e, timestamp: null })) });
+    expect(screen.getByText(/no timing data for this session/i)).toBeTruthy();
+    expect(document.querySelector(".tl-svg")).toBeNull();
+  });
+
+  it("renders nothing at all when there are no events", () => {
+    setup({ events: [] });
+    expect(document.querySelector(".timeline")).toBeNull();
+  });
+
+  it("places a single-message session without a brush", () => {
+    setup({ events: [EVENTS[0]] });
+    expect(document.querySelectorAll(".tl-mark")).toHaveLength(1);
+    expect(screen.getByText(/^1 message$/)).toBeTruthy();
+  });
+
+  it("lists only the message types the session actually contains", () => {
+    // "thinking" can never occur on a Claude Code transcript — those blocks arrive with their text
+    // stripped — so a fixed legend would advertise a category that cannot appear.
+    setup();
+    const legend = [...document.querySelectorAll(".tl-key")].map((n) => n.textContent.trim());
+    expect(legend).toContain("user");
+    expect(legend).toContain("assistant");
+    expect(legend).not.toContain("thinking");
+    expect(legend).not.toContain("tool error");
+  });
+});
+
 describe("timeline band keyboard support", () => {
   it("renders the svg once a width is measured", () => {
     const { svg } = setup();

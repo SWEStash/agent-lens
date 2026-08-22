@@ -162,6 +162,32 @@ describe("buildScale — degenerate and empty sessions", () => {
   });
 });
 
+describe("buildScale — an expanded gap", () => {
+  const hour = 60 * 60 * 1000;
+  const evs = at(0, 1000, 1000 + hour, 1000 + hour + 1000);
+
+  it("keeps a chosen gap at its real duration instead of collapsing it", () => {
+    const collapsed = buildScale(evs, { width: WIDTH });
+    expect(collapsed.breaks).toHaveLength(1);
+    expect(collapsed.expanded).toHaveLength(0);
+
+    const opened = buildScale(evs, { width: WIDTH, expandedGaps: new Set([T0 + 1000]) });
+    expect(opened.breaks).toHaveLength(0);
+    expect(opened.segments).toHaveLength(1);
+    // It stays reported, so the band can still draw it and let the reader collapse it again —
+    // otherwise expanding would be a one-way door.
+    expect(opened.expanded).toHaveLength(1);
+    expect(opened.expanded[0].durationMs).toBe(hour);
+    expect(opened.expanded[0].x1 - opened.expanded[0].x0).toBeGreaterThan(WIDTH * 0.9);
+  });
+
+  it("ignores an expansion key that matches no gap", () => {
+    const s = buildScale(evs, { width: WIDTH, expandedGaps: new Set([T0 + 999_999]) });
+    expect(s.breaks).toHaveLength(1);
+    expect(s.expanded).toHaveLength(0);
+  });
+});
+
 describe("buildScale — zoom", () => {
   it("re-derives segments over a narrowed domain", () => {
     const hour = 60 * 60 * 1000;

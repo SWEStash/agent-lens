@@ -95,7 +95,7 @@ export interface TimelineBandProps {
 /** Below this many pixels a pointer gesture is a click, not a drag. */
 const DRAG_THRESHOLD = 3;
 
-type Drag = { kind: "new" | "start" | "end"; anchor: number; x: number };
+type Drag = { kind: "new" | "start" | "end"; anchor: number; x: number; pointerId: number; captured: boolean };
 
 export function TimelineBand(props: TimelineBandProps) {
   const { events, findings, fileChanges, userPromptUuids, axisMode, onAxisMode, metric, onMetric } = props;
@@ -234,26 +234,36 @@ export function TimelineBand(props: TimelineBandProps) {
     if (e.button !== 0 || scale.degenerate) return;
     const x = localX(e);
     const handle = handleHit(x);
-    e.currentTarget.setPointerCapture(e.pointerId);
-    setDrag(handle ? { kind: handle, anchor: handleAnchor(handle), x } : { kind: "new", anchor: x, x });
+    // Capture is taken LAZILY, once a drag really starts (below). Capturing here would retarget the
+    // compatibility mouse events to this element, and the break markers' double-click — which opens a
+    // single idle gap in place — would never reach them.
+    const common = { x, pointerId: e.pointerId, captured: false };
+    setDrag(handle ? { kind: handle, anchor: handleAnchor(handle), ...common } : { kind: "new", anchor: x, ...common });
   };
 
   const onPointerMove = (e: ReactPointerEvent<SVGSVGElement>) => {
     if (!drag) return;
     const x = localX(e);
-    setDrag({ ...drag, x });
+    const dragging = Math.abs(x - drag.anchor) >= DRAG_THRESHOLD;
+    if (dragging && !drag.captured) e.currentTarget.setPointerCapture(drag.pointerId);
+    setDrag({ ...drag, x, captured: drag.captured || dragging });
     // Live filtering while dragging: the point of a brush is watching the transcript narrow.
-    if (Math.abs(x - drag.anchor) >= DRAG_THRESHOLD) onRange(orderedRange(drag.anchor, x));
+    if (dragging) onRange(orderedRange(drag.anchor, x));
   };
 
   const onPointerUp = (e: ReactPointerEvent<SVGSVGElement>) => {
     if (!drag) return;
     const x = localX(e);
-    e.currentTarget.releasePointerCapture(e.pointerId);
+    if (drag.captured && e.currentTarget.hasPointerCapture(drag.pointerId)) {
+      e.currentTarget.releasePointerCapture(drag.pointerId);
+    }
     setDrag(null);
     if (Math.abs(x - drag.anchor) < DRAG_THRESHOLD) {
-      // A click, not a drag: jump to the nearest mark.
-      if (drag.kind === "new") {
+      // A click, not a drag: jump to the nearest mark — unless the click was on a break marker, whose
+      // own gesture is a double-click to open the gap. Without this the first click of that
+      // double-click also jumps, which scrolls the page and moves the band out from under the second.
+      const onGap = (e.target as Element | null)?.closest?.(".tl-break, .tl-expanded");
+      if (drag.kind === "new" && !onGap) {
         const hit = nearestMark(x);
         if (hit) onJump(hit.uuid);
       }
@@ -372,6 +382,25 @@ export function TimelineBand(props: TimelineBandProps) {
               </g>
             );
           })}
+          {/* A gap the reader opened: drawn at its real duration, and still double-clickable so the
+              expansion can be undone. */}
+          {scale.expanded.map((g, i) => (
+            <g
+              key={"x" + i}
+              className="tl-expanded"
+              onDoubleClick={(ev) => {
+                ev.stopPropagation();
+                setExpandedGaps((prev) => {
+                  const next = new Set(prev);
+                  next.delete(g.t0);
+                  return next;
+                });
+              }}
+            >
+              <rect x={g.x0} y={0} width={Math.max(g.x1 - g.x0, 1)} height={PLOT_H} />
+              <title>{breakLabel(g.durationMs, false)} — shown in full; double-click to collapse it again</title>
+            </g>
+          ))}
           {marks.map((m) => (
             <MarkRect key={m.uuid} m={m} scale={scale} h={barHeight(m.value)} fill={fillFor(m.kind)} />
           ))}

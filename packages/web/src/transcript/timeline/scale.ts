@@ -33,7 +33,7 @@ export interface ScaleInput {
   timestamp: string | null;
 }
 
-/** One placed event. `durationMs` is derived (§2.3): there is no stored per-message elapsed time, and
+/** One placed event. `durationMs` is derived: there is no stored per-message elapsed time, and
  *  `tool_calls.total_duration_ms` is NULL in 99.5% of rows, so a timestamp delta is the only signal.
  *  It is 0 for the last event of a segment, so a mark never draws across a break. */
 export interface TimelinePoint {
@@ -61,10 +61,22 @@ export interface Break {
   durationMs: number;
 }
 
+/** A gap long enough to collapse that the reader has chosen to keep open. It draws at its real
+ *  duration inside a segment, so it needs a marker of its own to stay double-clickable — otherwise
+ *  expanding one would be a one-way door. */
+export interface ExpandedGap {
+  t0: number;
+  t1: number;
+  x0: number;
+  x1: number;
+  durationMs: number;
+}
+
 export interface TimeScale {
   points: TimelinePoint[];
   segments: Segment[];
   breaks: Break[];
+  expanded: ExpandedGap[];
   width: number;
   /** [first, last] timestamp actually placed, or null when nothing could be placed. */
   domain: [number, number] | null;
@@ -124,14 +136,18 @@ export function buildScale(events: readonly ScaleInput[], opts: ScaleOptions): T
   // Group into active runs, and record the gap that ended each one.
   const runs: Array<{ from: number; to: number }> = [];
   const gaps: number[] = [];
+  const held: Array<{ t0: number; t1: number; durationMs: number }> = [];
   let start = 0;
   for (let i = 1; i < placed.length; i++) {
     const gap = placed[i].t - placed[i - 1].t;
-    if (gap > gapMs && !opts.expandedGaps?.has(placed[i - 1].t)) {
-      runs.push({ from: start, to: i - 1 });
-      gaps.push(gap);
-      start = i;
+    if (gap <= gapMs) continue;
+    if (opts.expandedGaps?.has(placed[i - 1].t)) {
+      held.push({ t0: placed[i - 1].t, t1: placed[i].t, durationMs: gap });
+      continue;
     }
+    runs.push({ from: start, to: i - 1 });
+    gaps.push(gap);
+    start = i;
   }
   runs.push({ from: start, to: placed.length - 1 });
 
@@ -224,10 +240,12 @@ export function buildScale(events: readonly ScaleInput[], opts: ScaleOptions): T
   };
 
   const idleMs = gaps.reduce((a, b) => a + b, 0);
+  const expanded: ExpandedGap[] = held.map((h) => ({ ...h, x0: x(h.t0), x1: x(h.t1) }));
   return {
     points,
     segments,
     breaks,
+    expanded,
     width,
     domain: [first, last],
     spanMs: last - first,
@@ -244,6 +262,7 @@ function emptyScale(width: number): TimeScale {
     points: [],
     segments: [],
     breaks: [],
+    expanded: [],
     width,
     domain: null,
     spanMs: 0,
