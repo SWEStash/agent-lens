@@ -1344,6 +1344,12 @@ table.kv .muted { font-size: 12px; margin-top: 4px; }
 .tl-svg { cursor: crosshair; }
 .tl-svg.is-dragging { cursor: ew-resize; }
 .tl-break { cursor: zoom-in; }
+/* The keyboard cursor. Only shown while the band has keyboard focus — a permanently visible marker
+   would read as a second selection to everyone navigating with a pointer. */
+.tl-cursor { fill: var(--text); opacity: 0; pointer-events: none; }
+.tl-svg:focus-visible .tl-cursor { opacity: 0.9; }
+.tl-svg:focus { outline: none; }
+.tl-svg:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 4px; }
 .tl-sel-shade { fill: var(--bg); opacity: 0.62; pointer-events: none; }
 .tl-sel-box { fill: var(--accent); opacity: 0.10; pointer-events: none; }
 .tl-sel-handle { fill: var(--accent); pointer-events: none; }

@@ -47,7 +47,11 @@ export function useScrollToEvent(
     const el = document.getElementById("ev-" + targetUuid);
     if (!el) return;
     jumpedFor.current = token;
-    el.scrollIntoView({ block: "center", behavior: "smooth" });
+    // Smooth scrolling is a preference, not a given: honour prefers-reduced-motion. A timeline mark
+    // click makes this jump far more frequent than the deep link it was written for, which is what
+    // turned a latent gap into a real one. `matchMedia` is guarded for jsdom.
+    const reduced = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false;
+    el.scrollIntoView({ block: "center", behavior: reduced ? "auto" : "smooth" });
     setFlashUuid(targetUuid);
     const t = window.setTimeout(() => setFlashUuid(null), 3000);
     return () => window.clearTimeout(t);

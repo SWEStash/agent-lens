@@ -7,9 +7,15 @@
  * Rendering only. Selection, zoom and click-to-jump arrive with the interaction layer; the props are
  * shaped for them but this component draws a static band.
  */
-import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
+import {
+  useEffect,
+  useRef,
+  useState,
+  type KeyboardEvent as ReactKeyboardEvent,
+  type PointerEvent as ReactPointerEvent,
+} from "react";
 import type { EventNode, Finding, FileChangeRow } from "../../api";
-import { fmtDuration } from "../../format";
+import { fmtDuration, fmtTokens } from "../../format";
 import { useChartTokens } from "../../charts/theme";
 import { buildScale, type TimeScale } from "./scale";
 import { buildMarks, hasUsage, type Mark, type MarkKind, type TokenMetric } from "./marks";
@@ -99,6 +105,12 @@ export function TimelineBand(props: TimelineBandProps) {
   const [drag, setDrag] = useState<Drag | null>(null);
   // Idle gaps the reader has opened in place, keyed by the timestamp before them.
   const [expandedGaps, setExpandedGaps] = useState<ReadonlySet<number>>(() => new Set());
+  // Keyboard cursor: an index into `marks`. The band is a single tab stop, and this is the roving
+  // position within it — there is no native element that does this, so it is built by hand.
+  const [cursor, setCursor] = useState(0);
+  // Where a Shift+arrow extension started, so the selection grows from the anchor rather than from
+  // wherever the cursor happens to be now.
+  const [keyAnchor, setKeyAnchor] = useState<number | null>(null);
   const { TIMELINE_COLORS, C } = useChartTokens();
 
   const usagePresent = hasUsage(events);
@@ -152,6 +164,64 @@ export function TimelineBand(props: TimelineBandProps) {
       if (!best || d < best.d) best = { uuid: m.uuid, d };
     }
     return best;
+  };
+
+  const cursorMark = marks[Math.min(cursor, marks.length - 1)] ?? null;
+
+  /** What a screen reader hears as the cursor moves. Identity, position, size and time — the same
+   *  four things the mark encodes visually, since none of them survive as colour and height alone. */
+  const announcement = cursorMark
+    ? [
+        `message ${Math.min(cursor, marks.length - 1) + 1} of ${marks.length}`,
+        cursorMark.kind === "tool-error" ? "tool error" : cursorMark.kind,
+        usagePresent && cursorMark.value > 0 ? `${fmtTokens(cursorMark.value)} tokens` : null,
+        new Date(cursorMark.t).toLocaleTimeString(),
+        cursorMark.finding ? `${cursorMark.finding} security finding` : null,
+        cursorMark.fileChange ? "changed files" : null,
+      ]
+        .filter(Boolean)
+        .join(", ")
+    : "";
+
+  const moveCursor = (next: number, extend: boolean) => {
+    const clamped = Math.max(0, Math.min(next, marks.length - 1));
+    setCursor(clamped);
+    if (!extend) {
+      setKeyAnchor(null);
+      return;
+    }
+    const anchor = keyAnchor ?? Math.min(cursor, marks.length - 1);
+    setKeyAnchor(anchor);
+    const [lo, hi] = anchor <= clamped ? [anchor, clamped] : [clamped, anchor];
+    onRange([marks[lo].t, marks[hi].t]);
+  };
+
+  const onKeyDown = (e: ReactKeyboardEvent<SVGSVGElement>) => {
+    if (!marks.length) return;
+    switch (e.key) {
+      case "ArrowLeft":
+        e.preventDefault();
+        moveCursor(cursor - 1, e.shiftKey);
+        break;
+      case "ArrowRight":
+        e.preventDefault();
+        moveCursor(cursor + 1, e.shiftKey);
+        break;
+      case "Home":
+        e.preventDefault();
+        moveCursor(0, e.shiftKey);
+        break;
+      case "End":
+        e.preventDefault();
+        moveCursor(marks.length - 1, e.shiftKey);
+        break;
+      case "Enter":
+      case " ":
+        e.preventDefault();
+        if (cursorMark) onJump(cursorMark.uuid);
+        break;
+      default:
+    }
   };
 
   /** Pointer x within the svg. */
@@ -269,7 +339,10 @@ export function TimelineBand(props: TimelineBandProps) {
           width={width}
           height={SVG_H}
           role="group"
-          aria-label={`Session timeline: ${caption}`}
+          aria-label={`Session timeline: ${caption}. Use the arrow keys to move between messages, Enter to open one, Shift with the arrows to select a range.`}
+          tabIndex={0}
+          onKeyDown={onKeyDown}
+          onFocus={() => setCursor((c) => Math.min(c, Math.max(marks.length - 1, 0)))}
           onPointerDown={onPointerDown}
           onPointerMove={onPointerMove}
           onPointerUp={onPointerUp}
@@ -302,6 +375,15 @@ export function TimelineBand(props: TimelineBandProps) {
           {marks.map((m) => (
             <MarkRect key={m.uuid} m={m} scale={scale} h={barHeight(m.value)} fill={fillFor(m.kind)} />
           ))}
+          {cursorMark && (
+            <rect
+              className="tl-cursor"
+              x={scale.x(cursorMark.t) - 1}
+              y={0}
+              width={Math.max(TICK_W, 2)}
+              height={PLOT_H}
+            />
+          )}
           {rangeX && (
             <g className="tl-sel">
               <rect className="tl-sel-shade" x={0} y={0} width={Math.max(rangeX[0], 0)} height={PLOT_H} />
@@ -327,6 +409,14 @@ export function TimelineBand(props: TimelineBandProps) {
           </g>
         </svg>
       )}
+
+      {/* The cursor is a visual mark; this is how it reaches a screen reader. Polite, because moving
+          the cursor is navigation, not an alert — and deliberately NOT role="status": the search
+          counter already owns that role on this page, and two status regions compete to be read.
+          aria-atomic, so each move is announced as one whole line rather than a diff of the last. */}
+      <div className="sr-only" aria-live="polite" aria-atomic="true">
+        {announcement}
+      </div>
 
       {/* Only the types actually in this session. A fixed legend would advertise categories that
           cannot occur — "thinking" never fires on a Claude Code transcript, because thinking blocks
