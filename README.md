@@ -98,8 +98,9 @@ agent-lens-ingest: files=312 skipped=298 new_events=1840 malformed=0
   gaps over a minute are a fraction of the events but almost all of the wall-clock), with a toggle
   back to literal wall-clock. Bar height is the tokens behind each message; colour is the message
   type; and a rail underneath marks failed tool calls, security findings, file changes and subagent
-  spawns. Click a mark to jump to that message, drag to filter the transcript to a time range (the
-  range is in the URL, so it is shareable), or drive the whole thing from the keyboard. Each message
+  spawns. Hover a mark to see which message it is, click to jump to it, drag to filter the transcript
+  to a time range (the range is in the URL, so it is shareable), or drive the whole thing from the
+  keyboard. Each message
   also carries its own **token count**, attributed to the message you can actually see
   ([ADR-032](docs/decisions/ADR-032-per-event-token-attribution.md)).
 - **Find in session** (`/`) — searches message bodies, thinking, and tool inputs/results, highlights

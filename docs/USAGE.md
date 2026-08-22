@@ -339,6 +339,8 @@ corpus by `node scripts/screenshots.mjs`.
     order of magnitude larger than the rest and would flatten every message to the same size.
   - **Colour** is the message type, and the rail beneath the baseline marks the audit-worthy events:
     failed tool calls, security findings, file changes, and subagent spawns.
+  - **Hover** a mark to see which message it is — turn, type, time, size and any flags on it. The
+    marks are only a few pixels wide, so the hover target is much larger than the mark itself.
   - **Click** a mark to jump to that message (its turn expands and the message is highlighted, the
     same as following a deep link). **Drag** across the band to filter the transcript to that time
     range; the range shows in a bar underneath with the surviving message count, a **zoom** control,
@@ -347,6 +349,8 @@ corpus by `node scripts/screenshots.mjs`.
     reload. Messages with no timestamp are never filtered out — they cannot be placed on the axis, so
     hiding them would make them unreachable — and a `#ev-…` deep link into a message outside the
     range clears the range rather than failing to land.
+  - A **back-to-top** control appears once you scroll away from the header, and returns keyboard
+    focus there as well as the scroll position.
   - **Keyboard**: the band is a single tab stop. `←`/`→` move between messages and `Home`/`End` jump
     to the ends, `Enter` opens the message under the cursor, `Shift`+`←`/`→` selects a range, and
     `Esc` clears it. The cursor's position, type, size and time are announced as it moves.
