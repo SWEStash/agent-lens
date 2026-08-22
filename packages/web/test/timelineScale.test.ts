@@ -162,6 +162,32 @@ describe("buildScale — degenerate and empty sessions", () => {
   });
 });
 
+describe("buildScale — every run gets room for its own marks", () => {
+  it("keeps a short run readable when the session's duration is nearly all idle", () => {
+    // The shape of a small session punctuated by long waits: each run is seconds long, each gap is
+    // many minutes. Purely proportional widths would collapse every run to a fraction of a pixel and
+    // stack its messages on one spot.
+    const gap = 10 * 60_000;
+    const evs = at(0, 1000, 2000, gap, gap + 1000, gap + 2000, 2 * gap, 2 * gap + 1000);
+    const s = buildScale(evs, { width: WIDTH });
+    expect(s.breaks).toHaveLength(2);
+    for (const seg of s.segments) expect(seg.x1 - seg.x0).toBeGreaterThanOrEqual(6);
+    // Marks within a run must land on distinguishable pixels rather than one shared point.
+    const xs = s.points.map((p) => s.x(p.t));
+    expect(new Set(xs.map((x) => Math.round(x))).size).toBe(evs.length);
+  });
+
+  it("still fits when the floors alone exceed the available width", () => {
+    const evs = at(...Array.from({ length: 60 }, (_, i) => i * (IDLE_GAP_MS + 1000)));
+    const s = buildScale(evs, { width: 120 });
+    const last = s.segments[s.segments.length - 1];
+    expect(last.x1).toBeLessThanOrEqual(120 + 1e-6);
+    for (let i = 1; i < s.segments.length; i++) {
+      expect(s.segments[i].x0).toBeGreaterThanOrEqual(s.segments[i - 1].x1 - 1e-6);
+    }
+  });
+});
+
 describe("buildScale — an expanded gap", () => {
   const hour = 60 * 60 * 1000;
   const evs = at(0, 1000, 1000 + hour, 1000 + hour + 1000);

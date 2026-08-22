@@ -26,6 +26,19 @@ export const BREAK_PX = 14;
  *  degenerate scale still has a well-defined, monotonic mapping instead of dividing by zero. */
 export const DEGENERATE_PAD_MS = 30_000;
 
+/** Room every active run gets before any time-proportional width is handed out, so that a run whose
+ *  events are seconds apart can still draw them side by side instead of stacking them on one pixel.
+ *  Short sessions punctuated by long gaps are otherwise unreadable: nearly all of the duration sits in
+ *  the breaks, so proportional allocation leaves the runs with almost no width at all. */
+const SEGMENT_FLOOR_PX = 4;
+const PER_EVENT_FLOOR_PX = 3;
+/** Share of the active width handed out evenly across runs before any of it is allocated by duration.
+ *  A run holding a single event has ZERO duration, so a purely proportional split gives every such run
+ *  nothing and hands the entire width to whichever run happens to span some seconds — which is the
+ *  common shape of a short session, and it renders as a couple of marks jammed against one edge.
+ *  Half is enough to keep every run legible while duration still drives the rest. */
+const EVEN_SHARE = 0.5;
+
 /** An event as the scale needs it. Anything without a parseable timestamp is dropped — it cannot be
  *  placed on a time axis — but it stays in the transcript (a filtered-out event would be unreachable). */
 export interface ScaleInput {
@@ -170,16 +183,26 @@ export function buildScale(events: readonly ScaleInput[], opts: ScaleOptions): T
 
   const durations = bounds.map((b) => Math.max(b.t1 - b.t0, 0));
   const totalActive = durations.reduce((a, b) => a + b, 0);
-  // Several zero-duration runs (repeated identical timestamps) would otherwise divide by zero; an
-  // equal share keeps every run visible and the mapping monotonic.
-  const weights = totalActive > 0 ? durations : durations.map(() => 1);
-  const totalWeight = weights.reduce((a, b) => a + b, 0) || 1;
+
+  // Each run first gets a floor wide enough for its own marks; whatever is left over is then shared
+  // out in proportion to real duration. When the floors alone do not fit, the whole width is split by
+  // floor instead — the runs stay in order and on screen, just tighter.
+  const evenShare = runs.length ? (activeWidth * EVEN_SHARE) / runs.length : 0;
+  const floors = runs.map((r) =>
+    Math.max(SEGMENT_FLOOR_PX, (r.to - r.from + 1) * PER_EVENT_FLOOR_PX, evenShare),
+  );
+  const floorTotal = floors.reduce((a, b) => a + b, 0);
+  const surplus = Math.max(activeWidth - floorTotal, 0);
+  const widths =
+    floorTotal <= activeWidth
+      ? floors.map((f, i) => f + (totalActive > 0 ? (durations[i] / totalActive) * surplus : surplus / runs.length))
+      : floors.map((f) => (f / (floorTotal || 1)) * activeWidth);
 
   const segments: Segment[] = [];
   const breaks: Break[] = [];
   let cursor = 0;
   for (let s = 0; s < runs.length; s++) {
-    const w = (weights[s] / totalWeight) * activeWidth;
+    const w = widths[s];
     segments.push({ t0: bounds[s].t0, t1: bounds[s].t1, x0: cursor, x1: cursor + w });
     cursor += w;
     if (s < gaps.length) {
