@@ -8,7 +8,7 @@
 import { describe, it, expect, beforeAll } from "vitest";
 import { DatabaseSync } from "node:sqlite";
 import { SCHEMA_SQL } from "@agent-lens/core";
-import { dashboardOverview, dashboardBreakdowns, dashboardTimeseries } from "../dist/dashboard.js";
+import { dashboardOverview, dashboardBreakdowns, dashboardTimeseries, dashboardTime } from "../dist/dashboard.js";
 
 function seed(): DatabaseSync {
   const db = new DatabaseSync(":memory:");
@@ -146,5 +146,88 @@ describe("source filter scopes every aggregate", () => {
     expect(o.cost).toBe(0);
     expect(o.workflows.total).toBe(1); // only the personal 'running' run; success_rate 0 (none decided)
     expect(o.workflows.success_rate).toBe(0);
+  });
+});
+
+/**
+ * A second, purpose-built corpus for the time analytics. It exists separately because those queries
+ * need what the aggregate seed above deliberately omits: real event timestamps, turn spans, and a
+ * session whose events run for hours after it started.
+ *
+ * `long` is the whole point — it starts at 22:00 and spends tokens at 22:00, 23:00 and 01:00 the
+ * next day. Every other dashboard series would attribute all of it to the 22:00 hour.
+ */
+function seedTime(): DatabaseSync {
+  const db = new DatabaseSync(":memory:");
+  db.exec(SCHEMA_SQL);
+  db.exec("PRAGMA foreign_keys = OFF");
+  db.exec(`
+    INSERT INTO sessions (id, agent_id, source_id, is_sidechain, started_at) VALUES
+      ('long','claude-code','isf',0,'2026-03-01T22:00:00Z'),
+      ('sub','claude-code','isf',1,'2026-03-01T22:00:00Z');
+    INSERT INTO events (uuid, session_id, turn_id, type, role, timestamp, raw_json) VALUES
+      ('e1','long','long:0','assistant','assistant','2026-03-01T22:00:30Z',x''),
+      ('e2','long','long:0','assistant','assistant','2026-03-01T23:10:00Z',x''),
+      ('e3','long','long:1','assistant','assistant','2026-03-02T01:30:00Z',x''),
+      ('s1','sub','sub:0','assistant','assistant','2026-03-01T22:05:00Z',x'');
+    INSERT INTO token_usage (event_uuid, session_id, model, input_tokens, output_tokens, cache_creation_input_tokens, cache_read_input_tokens) VALUES
+      ('e1','long','claude-opus-5',10,20,30,9999),
+      ('e2','long','claude-opus-5',1,1,1,9999),
+      ('e3','long','claude-opus-5',100,100,100,9999),
+      ('s1','sub','claude-opus-5',5,5,5,9999);
+    INSERT INTO turns (id, session_id, seq, model, started_at, ended_at) VALUES
+      ('long:0','long',0,'claude-opus-5','2026-03-01T22:00:00Z','2026-03-01T23:10:00Z'),
+      ('long:1','long',1,'claude-opus-5','2026-03-01T23:10:05Z','2026-03-02T01:30:00Z'),
+      ('sub:0','sub',0,'claude-opus-5','2026-03-01T22:04:00Z','2026-03-01T22:05:00Z');
+    INSERT INTO tool_calls (id, session_id, turn_id, tool_name) VALUES ('tc1','long','long:0','Edit');
+    INSERT INTO file_changes (id, tool_call_id, session_id, turn_id, file_path, tool_name) VALUES
+      ('fc1','tc1','long','long:0','a.ts','Edit');
+  `);
+  return db;
+}
+
+describe("dashboardTime", () => {
+  it("buckets burn by the usage event's own hour, not the session's start hour", () => {
+    const t = dashboardTime(seedTime(), {});
+    const isf = t.burn_hours.filter((r: any) => r.source === "isf");
+    expect(isf.map((r: any) => r.hour)).toEqual(["2026-03-01T22", "2026-03-01T23", "2026-03-02T01"]);
+    // 22:00 holds e1 (60) plus the subagent's s1 (15) — spend counts both populations.
+    expect(isf.map((r: any) => r.work)).toEqual([75, 3, 300]);
+  });
+
+  it("excludes cache-read from work tokens", () => {
+    const t = dashboardTime(seedTime(), {});
+    expect(t.burn_hours.reduce((a: number, r: any) => a + r.work, 0)).toBe(378); // not 40k-odd
+  });
+
+  it("measures prompt to first assistant token per model, main sessions only", () => {
+    const t = dashboardTime(seedTime(), {});
+    expect(t.latency.series).toHaveLength(1); // one bucket, one model — the subagent is excluded
+    const row = t.latency.series[0];
+    expect(row.model).toBe("claude-opus-5");
+    expect(row.n).toBe(2); // long's two turns; sub's turn is not counted
+    // Turn 0 answers in 30s, turn 1 in 2h19m55s. Nearest-rank p50 over two values is the first.
+    expect(row.p50_ms).toBe(30_000);
+    expect(row.p90_ms).toBe(8_395_000);
+  });
+
+  it("splits turnaround by whether the turn wrote files", () => {
+    const t = dashboardTime(seedTime(), {});
+    // long:0 wrote a.ts and long:1 started 5s later; long:1 has no successor.
+    expect(t.review.wrote).toEqual({ n: 1, under_10s: 1, under_30s: 1, under_2min: 1 });
+    expect(t.review.none.n).toBe(0);
+  });
+
+  it("returns the same shape with no rows at all", () => {
+    const db = new DatabaseSync(":memory:");
+    db.exec(SCHEMA_SQL);
+    const t = dashboardTime(db, {});
+    expect(t.burn_hours).toEqual([]);
+    expect(t.latency.series).toEqual([]);
+    expect(t.review.wrote).toEqual({ n: 0, under_10s: 0, under_30s: 0, under_2min: 0 });
+  });
+
+  it("scopes to the source filter", () => {
+    expect(dashboardTime(seedTime(), { source: "personal" }).burn_hours).toEqual([]);
   });
 });

@@ -69,6 +69,9 @@ const DASH_OVERVIEW_KEYS = [
   "session_duration_ms", "workflows",
 ];
 
+const DASH_TIME_KEYS = ["burn_hours", "latency", "review"];
+const REVIEW_LATENCY_KEYS = ["n", "under_10s", "under_30s", "under_2min"];
+
 const DASH_BREAKDOWN_KEYS = [
   "by_model", "by_source", "by_category", "by_complexity", "tools", "skills", "skill_versions",
   "subagent_fanout", "error_types",
@@ -255,6 +258,14 @@ describe("response contracts — populated DB", () => {
       "subagent_fanout",
     );
     expectKeys(bd.error_types, ["by_type", "failures", "rejections"], "error_types");
+
+    const time = (await app.inject({ method: "GET", url: "/api/dashboard/time" })).json();
+    expectKeys(time, DASH_TIME_KEYS, "dash time");
+    expectKeys(time.latency, ["bucket", "series"], "dash time latency");
+    expectKeys(time.review, ["wrote", "none"], "dash time review");
+    expectKeys(time.review.wrote, REVIEW_LATENCY_KEYS, "review latency (wrote)");
+    expectKeys(time.review.none, REVIEW_LATENCY_KEYS, "review latency (none)");
+    expectKeys(time.burn_hours[0], ["hour", "source", "work"], "burn hour row");
     await app.close();
   });
 
@@ -416,6 +427,12 @@ describe("response contracts — degraded DBs keep the shape stable", () => {
     expectKeys((await app.inject({ method: "GET", url: "/api/dashboard/overview" })).json(), DASH_OVERVIEW_KEYS, "dash overview (empty)");
     expectKeys((await app.inject({ method: "GET", url: "/api/dashboard/breakdowns" })).json(), DASH_BREAKDOWN_KEYS, "dash breakdowns (empty)");
     expectKeys((await app.inject({ method: "GET", url: "/api/dashboard/timeseries" })).json(), ["bucket", "series"], "dash timeseries (empty)");
+    const time = (await app.inject({ method: "GET", url: "/api/dashboard/time" })).json();
+    expectKeys(time, DASH_TIME_KEYS, "dash time (empty)");
+    expect(time.burn_hours).toEqual([]);
+    expect(time.latency.series).toEqual([]);
+    expectKeys(time.review.wrote, REVIEW_LATENCY_KEYS, "review latency (empty)");
+    expect(time.review.wrote.n).toBe(0);
     await app.close();
   });
 });

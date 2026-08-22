@@ -171,3 +171,4 @@ erDiagram
 | [030](decisions/ADR-030-in-session-search.md) | Find-in-session: client-side, highlight-and-navigate, reveals what the view hides |
 | [031](decisions/ADR-031-transcript-text-is-stored.md) | Transcript text is stored, not re-derived on read (`events.thinking`; shared markup vocabulary) |
 | [032](decisions/ADR-032-per-event-token-attribution.md) | Per-event token usage is attributed to the message that renders it, not the raw `token_usage` row |
+| [033](decisions/ADR-033-time-analytics-bucketing.md) | Time analytics bucket token burn by event time, and the browser localizes the hours |

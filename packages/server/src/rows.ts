@@ -298,3 +298,28 @@ export interface ModelBreakdownRow extends UsageAggRow {
   model: string;
   sessions: number | null;
 }
+
+/** Work tokens per UTC hour per source, for the burn heatmap. `src` is nullable (unassigned source). */
+export interface BurnHourRow {
+  h: string | null;
+  src: string | null;
+  work: number | null;
+}
+
+/** Prompt-to-first-token percentiles for one (bucket, model) pair. */
+export interface LatencyRow {
+  b: string | null;
+  model: string | null;
+  p50: number | null;
+  p90: number | null;
+  n: number;
+}
+
+/** Turnaround-after-a-turn counts, one row per wrote-files/wrote-nothing group. */
+export interface ReviewLatencyRow {
+  wrote: number;
+  n: number;
+  u10: number | null;
+  u30: number | null;
+  u120: number | null;
+}

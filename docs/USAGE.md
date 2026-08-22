@@ -597,6 +597,7 @@ below is relative to `<dataDir>`; run `agent-lens config` to print the resolved 
 | `GET /api/dashboard/overview` | KPI aggregates (sessions, split token totals, cost) |
 | `GET /api/dashboard/timeseries` | tokens/cost/activity over time (adaptive buckets) |
 | `GET /api/dashboard/breakdowns` | by model / category / complexity / tool / skill / subagent / error type |
+| `GET /api/dashboard/time` | when work happened: hourly token burn, model latency, review latency |
 | `GET /api/workflows/:run_id` | workflow run detail (phase graph, returned result, run log, per-agent rows) |
 | `GET /api/skills` | skills list (optional `q`, `source`, `project` filters) |
 | `GET /api/skills/:name` | skill detail (content-addressed versions + firings) |

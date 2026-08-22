@@ -10,7 +10,7 @@ import fastifyStatic from "@fastify/static";
 import { resolveVersion } from "@agent-lens/core";
 import { renderSessionExport, parseRedactionLevel } from "./export.js";
 import { type DB, lastIngested, schemaStatus, listSources, listProjects, listModels, listSessions, getSession, getWorkflow, listSkills, getSkill, listFindings, openFindingIds, securitySummary, listFiles, getFileTimeline, safeJson } from "./db.js";
-import { dashboardOverview, dashboardTimeseries, dashboardBreakdowns, type DashFilters } from "./dashboard.js";
+import { dashboardOverview, dashboardTimeseries, dashboardBreakdowns, dashboardTime, type DashFilters } from "./dashboard.js";
 import { writeBlocked, runRefresh, LOOPBACK_HOSTS } from "./refresh.js";
 import { openTriage, dismiss, reopen, muteRule, unmute, listMutes, type TriageDB, type MuteScope } from "./triage.js";
 import { about, type AboutContext } from "./about.js";
@@ -155,6 +155,10 @@ export async function createApp(db: DB, opts: CreateAppOpts = {}): Promise<Fasti
     return dashboardTimeseries(db, dashFilters(req), q.bucket);
   });
   app.get("/api/dashboard/breakdowns", async (req) => dashboardBreakdowns(db, dashFilters(req)));
+  app.get("/api/dashboard/time", async (req) => {
+    const q = req.query as Record<string, string>;
+    return dashboardTime(db, dashFilters(req), q.bucket);
+  });
 
   // UI preferences (chart/column visibility, per-chart toggles). Stored in the writable sidecar
   // (prefs.ts); localStorage on the client is an optimistic cache. GET degrades to `{value:null}` when
