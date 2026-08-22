@@ -411,6 +411,30 @@ date range):
   failure-vs-rejection split are a heuristic over the tool result text — see [ADR-019](decisions/ADR-019-tool-error-observability.md).
 - **Unpriced models** (e.g. `claude-fable-5`) are surfaced explicitly, not silently zeroed, so cost
   reads as a lower bound rather than a wrong number.
+- **Time analytics** — *when* the work happened, rather than how much of it there was. These five
+  tiles share one endpoint, and the dashboard skips fetching it entirely while all of them are
+  hidden:
+
+  - ***When tokens are spent*** — mean work tokens per weekday × hour. Uniquely among the charts it
+    buckets by the **event's own timestamp**, not the session's start: a session a human sat through
+    runs mostly idle and often spans hours, so session-start bucketing would drop a whole day's spend
+    into the hour it began. It therefore **will not tie out against "Tokens over time"** — that is
+    deliberate, see [ADR-033](decisions/ADR-033-time-analytics-bucketing.md).
+  - ***Weekly burn by source*** and ***Rolling 7-day burn*** — sources are plotted separately and
+    never summed; they have genuinely different profiles. The rolling window needs no reset anchor
+    and assumes no provider's quota mechanics.
+  - ***Model response latency*** — prompt → first assistant token, p50 and p90 per model, main
+    sessions only. Weekly at the finest and weeks under five turns are dropped: split by model, a day
+    holds one or two turns, and a percentile over one observation is that observation. The p90 tail
+    mixes slow models with agents parked on a **permission prompt**, which nothing in the data
+    separates — read it for drift between weeks, not as an absolute.
+  - ***Turnaround after a turn*** — how fast the next prompt arrived, split by whether that turn
+    wrote files. An **audit** view, not a productivity one: it reports that a reply came in four
+    seconds and makes no claim about whether that was long enough to read the diff.
+
+  **Timezone:** hour-of-day and weekday are *local*, resolved from your browser and named on each
+  tile. The server computes and returns UTC; the browser localizes, so an exported snapshot reads
+  correctly in every viewer's zone and across daylight-saving changes.
 - **Views** — a switcher above the strips picks a curated layout: **All** (everything), **Cost**,
   **Reliability**, **Activity**. Presets are defined in code, so they never grow silently when a new
   chart ships — `All` always has everything.

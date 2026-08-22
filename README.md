@@ -144,9 +144,11 @@ A live, **corpus-only** demo (synthetic data, no real sessions) is published via
 generated from the same committed corpus by `node scripts/screenshots.mjs` — fully reproducible.
 
 **Dashboard** — token breakdown, estimated cost, cache-read ratio, and breakdowns by model, category,
-complexity, tool, skill, and subagent fan-out:
+complexity, tool, skill, and subagent fan-out — plus **time analytics**: a weekday × hour heatmap of
+when tokens are actually spent (in your own timezone), weekly and rolling-7-day burn kept separate
+per source, model response latency, and how fast turns that wrote files were answered:
 
-![Agent Lens dashboard showing KPI cards (token breakdown, estimated cost, cache-read ratio, total tokens), tokens/cost/activity-over-time charts, and breakdown charts by model, task category, complexity band, tool frequency, skill activation, and subagent fan-out](docs/img/dashboard.png)
+![Agent Lens dashboard showing KPI cards (token breakdown, estimated cost, cache-read ratio, total tokens), tokens/cost/activity-over-time charts, breakdown charts by model, task category, complexity band, tool frequency, skill activation and subagent fan-out, and time-analytics tiles: a weekday-by-hour token burn heatmap, weekly and rolling 7-day burn per source, model response latency, and turnaround after a turn](docs/img/dashboard.png)
 
 **Session transcript** — turn-segmented, with purpose-built rendering per tool. Here, `Bash` as a
 shell console: a `$` prompt per logical command (a heredoc's body correctly left unprefixed), the
