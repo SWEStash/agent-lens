@@ -18,6 +18,7 @@ import {
   FlashContext,
   FormatContext,
   HideToolsContext,
+  JumpTargetContext,
   SearchContext,
   WorkflowMapContext,
   type MsgFormat,
@@ -35,6 +36,7 @@ import {
   type AxisMode,
 } from "./transcript/viewPrefs";
 import { TimelineBand } from "./transcript/timeline/TimelineBand";
+import { fmtClock } from "./format";
 import type { TokenMetric } from "./transcript/timeline/marks";
 
 export default function SessionView() {
@@ -95,8 +97,34 @@ export default function SessionView() {
   // term lives in `?q=` so the view is shareable and can be handed over from the sessions list.
   const { get, set } = useQueryState();
   const query = get("q");
-  const haystacks = useMemo(() => buildHaystacks(renderable), [renderable]);
-  const model = useMemo(() => searchSession(renderable, haystacks, query), [renderable, haystacks, query]);
+
+  // The timeline's selection hard-filters the transcript, and lives in the URL beside `?q=` so a
+  // narrowed view is shareable. Zoom (`domain`) is deliberately NOT in the URL: it changes what the
+  // axis shows, not what the reader is looking at.
+  const range = useMemo((): [number, number] | null => {
+    const from = Date.parse(get("from"));
+    const to = Date.parse(get("to"));
+    return Number.isNaN(from) || Number.isNaN(to) ? null : [from, to];
+  }, [get]);
+  const setRange = (r: [number, number] | null) =>
+    set(r ? { from: new Date(r[0]).toISOString(), to: new Date(r[1]).toISOString() } : { from: "", to: "" });
+  const [domain, setDomain] = useState<[number, number] | null>(null);
+  useEffect(() => setDomain(null), [id]);
+
+  // renderable -> time-range filter -> search, so a match count always describes what is on screen.
+  // An event with NO timestamp is never filtered out: it cannot be placed on the axis, and hiding it
+  // would make it unreachable.
+  const visible = useMemo(() => {
+    if (!range) return renderable;
+    return renderable.filter((e) => {
+      if (!e.timestamp) return true;
+      const t = Date.parse(e.timestamp);
+      return Number.isNaN(t) || (t >= range[0] && t <= range[1]);
+    });
+  }, [renderable, range]);
+
+  const haystacks = useMemo(() => buildHaystacks(visible), [visible]);
+  const model = useMemo(() => searchSession(visible, haystacks, query), [visible, haystacks, query]);
 
   // Deep link `#ev-<event_uuid>` (e.g. from a security finding row) and find-in-session's ◂/▸ are the
   // same jump. Keying the search position off the hash as well as the query means following a deep
@@ -104,10 +132,44 @@ export default function SessionView() {
   const hashUuid = /^#ev-(.+)$/.exec(hash)?.[1] ?? null;
   const [pos, setPos] = useResetOn(hash + "\n" + query, { idx: 0, seq: 0 });
   const activeHit = model.hits[pos.idx] ?? null;
-  const targetUuid = activeHit?.uuid ?? hashUuid;
+  // Clicking a timeline mark is the third caller of the same jump, after `#ev-` deep links and
+  // find-in-session's arrows. `nonce` re-fires it when the same mark is clicked twice.
+  const [banded, setBanded] = useState<{ uuid: string; nonce: number } | null>(null);
+  useEffect(() => setBanded(null), [id]);
+  const jumpTo = (uuid: string) => setBanded((b) => ({ uuid, nonce: (b?.nonce ?? 0) + 1 }));
+  const targetUuid = banded?.uuid ?? activeHit?.uuid ?? hashUuid;
   // `seq` re-fires the jump when the index can't change — pressing ▸ on a session with one match.
-  const token = activeHit ? `q:${query}:${pos.idx}:${pos.seq}` : hash || null;
+  // The range is part of the deep-link token: a target outside the range isn't in the DOM yet, so the
+  // first attempt finds nothing. Clearing the range (below) changes the token, which is what re-fires
+  // the jump once the message is actually rendered.
+  const token = banded
+    ? `band:${banded.uuid}:${banded.nonce}`
+    : activeHit
+      ? `q:${query}:${pos.idx}:${pos.seq}`
+      : hash
+        ? `${hash}${range ? ":ranged" : ""}`
+        : null;
   const flashUuid = useScrollToEvent(d?.events, targetUuid, token, collapsed, setCollapsed);
+
+  // A deep link must always land: if `#ev-<uuid>` points outside the active range, drop the range
+  // first, and say so, rather than scrolling to a message the filter is hiding.
+  const [rangeCleared, setRangeCleared] = useState(false);
+  useEffect(() => {
+    if (!hashUuid || !range || !d) return;
+    const target = d.events.find((e) => e.uuid === hashUuid);
+    const t = target?.timestamp ? Date.parse(target.timestamp) : NaN;
+    if (Number.isNaN(t) || (t >= range[0] && t <= range[1])) return;
+    set({ from: "", to: "" });
+    setRangeCleared(true);
+    // Drive the jump explicitly rather than leaving it to the hash: patching the query navigates, and
+    // that drops the URL fragment, so `#ev-<uuid>` is gone by the time the message is on screen.
+    jumpTo(hashUuid);
+  }, [hashUuid, range, d, set]);
+  useEffect(() => {
+    if (!rangeCleared) return;
+    const t = window.setTimeout(() => setRangeCleared(false), 6000);
+    return () => window.clearTimeout(t);
+  }, [rangeCleared]);
 
   // Wraps around at both ends. ◂/▸ are disabled with no matches, but Enter in the search box reaches
   // this too, where the modulo would be a division by zero — harmless today (`hits[NaN]` is undefined,
@@ -172,7 +234,10 @@ export default function SessionView() {
   if (error) return <ErrorAlert error={error} />;
   if (!d) return <Loading />;
 
-  const groups = groupByTurn(renderable, d.turns);
+  const groups = groupByTurn(visible, d.turns);
+  // Unfiltered per-turn totals, so a partially-filtered turn can say "3 of 11".
+  const turnTotals = new Map<string, number>();
+  for (const e of renderable) if (e.turn_id) turnTotals.set(e.turn_id, (turnTotals.get(e.turn_id) ?? 0) + 1);
   const collapsibleIds = groups.filter((g) => g.turn).map((g) => g.turnId as string);
   const anyOpen = collapsibleIds.some((tid) => !collapsed.has(tid));
 
@@ -197,7 +262,43 @@ export default function SessionView() {
         onAxisMode={chooseAxisMode}
         metric={metric}
         onMetric={chooseMetric}
+        range={range}
+        onRange={setRange}
+        onJump={jumpTo}
+        domain={domain}
+        onDomain={setDomain}
       />
+
+      {rangeCleared && (
+        <div className="tl-pill muted" role="status">
+          Range cleared to show the linked message.
+        </div>
+      )}
+
+      {range && (
+        <div className="tl-pill" role="status">
+          <span className="tl-pill-range">
+            {fmtClock(range[0])}–{fmtClock(range[1])}
+          </span>
+          <span className="muted">
+            {visible.length === 0
+              ? "no messages in this range"
+              : `showing ${visible.length} of ${renderable.length} messages`}
+          </span>
+          {domain ? (
+            <button type="button" className="link-btn" onClick={() => setDomain(null)}>
+              ◂ full session
+            </button>
+          ) : (
+            <button type="button" className="link-btn" onClick={() => setDomain(range)}>
+              ⤢ zoom
+            </button>
+          )}
+          <button type="button" className="link-btn" onClick={() => setRange(null)}>
+            clear ✕
+          </button>
+        </div>
+      )}
 
       {d.children && d.children.length > 0 && <SubagentPanel d={d} />}
 
@@ -225,12 +326,18 @@ export default function SessionView() {
       <WorkflowMapContext.Provider value={wfMap}>
       <FormatContext.Provider value={format}>
       <HideToolsContext.Provider value={hideTools}>
+      <JumpTargetContext.Provider value={targetUuid}>
       <FlashContext.Provider value={flashUuid}>
       <SearchContext.Provider value={searchCtx}>
       <div className="transcript" ref={transcriptRef}>
         {renderable.length === 0 && (
           <div className="muted pad" role="status">
             This session has no rendered messages.
+          </div>
+        )}
+        {renderable.length > 0 && visible.length === 0 && (
+          <div className="muted pad" role="status">
+            No messages in the selected time range.
           </div>
         )}
         {groups.map((g, i) =>
@@ -240,6 +347,7 @@ export default function SessionView() {
               turn={g.turn}
               events={g.events}
               matches={model.byTurn.get(g.turnId as string) ?? 0}
+              total={turnTotals.get(g.turnId as string)}
               open={!collapsed.has(g.turnId as string)}
               onToggle={() => toggleTurn(g.turnId as string)}
             />
@@ -254,6 +362,7 @@ export default function SessionView() {
       </div>
       </SearchContext.Provider>
       </FlashContext.Provider>
+      </JumpTargetContext.Provider>
       </HideToolsContext.Provider>
       </FormatContext.Provider>
       </WorkflowMapContext.Provider>

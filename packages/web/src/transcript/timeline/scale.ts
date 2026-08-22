@@ -89,6 +89,9 @@ export interface ScaleOptions {
   gapMs?: number;
   /** Restrict to a time range and re-derive segments over it. This is how zoom works. */
   domain?: [number, number];
+  /** Gaps to leave UNCOLLAPSED, keyed by the timestamp of the event that precedes them (stable across
+   *  re-renders, unlike an ordinal). Double-clicking a break marker expands just that one in place. */
+  expandedGaps?: ReadonlySet<number>;
 }
 
 /** Parse to epoch ms, or null when absent/unparseable. */
@@ -124,7 +127,7 @@ export function buildScale(events: readonly ScaleInput[], opts: ScaleOptions): T
   let start = 0;
   for (let i = 1; i < placed.length; i++) {
     const gap = placed[i].t - placed[i - 1].t;
-    if (gap > gapMs) {
+    if (gap > gapMs && !opts.expandedGaps?.has(placed[i - 1].t)) {
       runs.push({ from: start, to: i - 1 });
       gaps.push(gap);
       start = i;

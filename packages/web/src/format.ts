@@ -49,6 +49,12 @@ export function workTokens(s?: TokenSplit | null): number {
   return s.input + s.output + s.cache_creation;
 }
 
+/** Wall-clock time only — for labels inside a single session, where the date is the same throughout
+ *  and repeating it is noise. */
+export function fmtClock(ms: number): string {
+  return new Date(ms).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
+}
+
 export function fmtDate(iso: string | null): string {
   if (!iso) return "—";
   const d = new Date(iso);

@@ -7,7 +7,7 @@
  * Rendering only. Selection, zoom and click-to-jump arrive with the interaction layer; the props are
  * shaped for them but this component draws a static band.
  */
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 import type { EventNode, Finding, FileChangeRow } from "../../api";
 import { fmtDuration } from "../../format";
 import { useChartTokens } from "../../charts/theme";
@@ -75,14 +75,46 @@ export interface TimelineBandProps {
   onAxisMode: (m: AxisMode) => void;
   metric: TokenMetric;
   onMetric: (m: TokenMetric) => void;
+  /** The datetime range filtering the transcript, or null. Lives in the URL, owned by SessionView. */
+  range: [number, number] | null;
+  onRange: (r: [number, number] | null) => void;
+  /** Jump the transcript to a message (expand its turn, scroll, flash). */
+  onJump: (uuid: string) => void;
+  /** What the axis currently SHOWS. Distinct from `range`, which is what the transcript FILTERS to —
+   *  conflating the two is the usual mistake here. */
+  domain: [number, number] | null;
+  onDomain: (d: [number, number] | null) => void;
 }
+
+/** Below this many pixels a pointer gesture is a click, not a drag. */
+const DRAG_THRESHOLD = 3;
+
+type Drag = { kind: "new" | "start" | "end"; anchor: number; x: number };
 
 export function TimelineBand(props: TimelineBandProps) {
   const { events, findings, fileChanges, userPromptUuids, axisMode, onAxisMode, metric, onMetric } = props;
+  const { range, onRange, onJump, domain, onDomain } = props;
   const [ref, width] = useMeasuredWidth();
+  const svgRef = useRef<SVGSVGElement>(null);
+  const [drag, setDrag] = useState<Drag | null>(null);
+  // Idle gaps the reader has opened in place, keyed by the timestamp before them.
+  const [expandedGaps, setExpandedGaps] = useState<ReadonlySet<number>>(() => new Set());
   const { TIMELINE_COLORS, C } = useChartTokens();
 
   const usagePresent = hasUsage(events);
+
+  // Esc clears the selection and leaves the domain alone — they are separate concepts (see props).
+  useEffect(() => {
+    if (!range) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Escape" || e.defaultPrevented) return;
+      const el = e.target as HTMLElement | null;
+      if (el && (el.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName))) return;
+      onRange(null);
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [range, onRange]);
   // With no usage anywhere the metric is meaningless: heights go uniform and the toggle disappears,
   // rather than the band drawing a flat row of zero-height marks.
   const effectiveMetric: TokenMetric = usagePresent ? metric : "work";
@@ -90,8 +122,75 @@ export function TimelineBand(props: TimelineBandProps) {
   const scale = buildScale(events, {
     width,
     gapMs: axisMode === "literal" ? Infinity : undefined,
+    ...(domain ? { domain } : {}),
+    expandedGaps,
   });
   const marks = buildMarks({ events, points: scale.points, findings, fileChanges, metric: effectiveMetric });
+
+  const rangeX: [number, number] | null = range && !scale.degenerate ? [scale.x(range[0]), scale.x(range[1])] : null;
+
+  /** A pointer within this many px of a selection edge grabs that handle instead of starting anew. */
+  const HANDLE_GRAB = 6;
+  const handleHit = (x: number): "start" | "end" | null => {
+    if (!rangeX) return null;
+    if (Math.abs(x - rangeX[0]) <= HANDLE_GRAB) return "start";
+    if (Math.abs(x - rangeX[1]) <= HANDLE_GRAB) return "end";
+    return null;
+  };
+  /** Resizing pivots on the edge you did NOT grab. */
+  const handleAnchor = (h: "start" | "end"): number => (h === "start" ? rangeX![1] : rangeX![0]);
+
+  const orderedRange = (a: number, b: number): [number, number] => {
+    const [lo, hi] = a <= b ? [a, b] : [b, a];
+    return [scale.t(lo), scale.t(hi)];
+  };
+
+  const nearestMark = (x: number) => {
+    let best: { uuid: string; d: number } | null = null;
+    for (const m of marks) {
+      const d = Math.abs(scale.x(m.t) - x);
+      if (!best || d < best.d) best = { uuid: m.uuid, d };
+    }
+    return best;
+  };
+
+  /** Pointer x within the svg. */
+  const localX = (e: { clientX: number }): number => {
+    const box = svgRef.current?.getBoundingClientRect();
+    return box ? e.clientX - box.left : 0;
+  };
+
+  const onPointerDown = (e: ReactPointerEvent<SVGSVGElement>) => {
+    if (e.button !== 0 || scale.degenerate) return;
+    const x = localX(e);
+    const handle = handleHit(x);
+    e.currentTarget.setPointerCapture(e.pointerId);
+    setDrag(handle ? { kind: handle, anchor: handleAnchor(handle), x } : { kind: "new", anchor: x, x });
+  };
+
+  const onPointerMove = (e: ReactPointerEvent<SVGSVGElement>) => {
+    if (!drag) return;
+    const x = localX(e);
+    setDrag({ ...drag, x });
+    // Live filtering while dragging: the point of a brush is watching the transcript narrow.
+    if (Math.abs(x - drag.anchor) >= DRAG_THRESHOLD) onRange(orderedRange(drag.anchor, x));
+  };
+
+  const onPointerUp = (e: ReactPointerEvent<SVGSVGElement>) => {
+    if (!drag) return;
+    const x = localX(e);
+    e.currentTarget.releasePointerCapture(e.pointerId);
+    setDrag(null);
+    if (Math.abs(x - drag.anchor) < DRAG_THRESHOLD) {
+      // A click, not a drag: jump to the nearest mark.
+      if (drag.kind === "new") {
+        const hit = nearestMark(x);
+        if (hit) onJump(hit.uuid);
+      }
+      return;
+    }
+    onRange(orderedRange(drag.anchor, x));
+  };
 
   if (events.length === 0) return null;
   if (!scale.domain) {
@@ -165,11 +264,16 @@ export function TimelineBand(props: TimelineBandProps) {
 
       {width > 0 && (
         <svg
-          className="tl-svg"
+          ref={svgRef}
+          className={"tl-svg" + (drag ? " is-dragging" : "")}
           width={width}
           height={SVG_H}
           role="group"
           aria-label={`Session timeline: ${caption}`}
+          onPointerDown={onPointerDown}
+          onPointerMove={onPointerMove}
+          onPointerUp={onPointerUp}
+          onPointerCancel={onPointerUp}
         >
           {/* Breaks first, so marks paint over their edges rather than under them. */}
           {scale.breaks.map((b, i) => {
@@ -177,7 +281,19 @@ export function TimelineBand(props: TimelineBandProps) {
             const next = scale.points.find((p) => p.t >= b.t1);
             const nextIsPrompt = !!next && !!userPromptUuids?.has(next.uuid);
             return (
-              <g key={"b" + i} className="tl-break">
+              <g
+                key={"b" + i}
+                className="tl-break"
+                onDoubleClick={(ev) => {
+                  ev.stopPropagation();
+                  setExpandedGaps((prev) => {
+                    const next = new Set(prev);
+                    if (next.has(b.t0)) next.delete(b.t0);
+                    else next.add(b.t0);
+                    return next;
+                  });
+                }}
+              >
                 <rect x={b.x0} y={0} width={b.x1 - b.x0} height={PLOT_H} />
                 <title>{breakLabel(b.durationMs, nextIsPrompt)}</title>
               </g>
@@ -186,6 +302,15 @@ export function TimelineBand(props: TimelineBandProps) {
           {marks.map((m) => (
             <MarkRect key={m.uuid} m={m} scale={scale} h={barHeight(m.value)} fill={fillFor(m.kind)} />
           ))}
+          {rangeX && (
+            <g className="tl-sel">
+              <rect className="tl-sel-shade" x={0} y={0} width={Math.max(rangeX[0], 0)} height={PLOT_H} />
+              <rect className="tl-sel-shade" x={rangeX[1]} y={0} width={Math.max(width - rangeX[1], 0)} height={PLOT_H} />
+              <rect className="tl-sel-box" x={rangeX[0]} y={0} width={Math.max(rangeX[1] - rangeX[0], 1)} height={PLOT_H} />
+              <rect className="tl-sel-handle" x={rangeX[0] - 1} y={0} width={2} height={PLOT_H} />
+              <rect className="tl-sel-handle" x={rangeX[1] - 1} y={0} width={2} height={PLOT_H} />
+            </g>
+          )}
           {/* Annotation rail: the audit-relevant events, below the baseline. */}
           <g className="tl-rail" transform={`translate(0, ${PLOT_H + RAIL_GAP})`}>
             {marks.map((m) => {

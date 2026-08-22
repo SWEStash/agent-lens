@@ -1339,6 +1339,27 @@ table.kv .muted { font-size: 12px; margin-top: 4px; }
 .tl-find.sev-medium { fill: var(--sev-c-medium); }
 .tl-find.sev-low { fill: var(--sev-c-low); }
 .tl-find.sev-info { fill: var(--muted); }
+/* Selection: everything OUTSIDE the range is shaded back, so the selected span reads as the
+   subject rather than as a highlight laid over it. */
+.tl-svg { cursor: crosshair; }
+.tl-svg.is-dragging { cursor: ew-resize; }
+.tl-break { cursor: zoom-in; }
+.tl-sel-shade { fill: var(--bg); opacity: 0.62; pointer-events: none; }
+.tl-sel-box { fill: var(--accent); opacity: 0.10; pointer-events: none; }
+.tl-sel-handle { fill: var(--accent); pointer-events: none; }
+.tl-pill {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  font-size: 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel);
+  padding: 5px 10px;
+  margin: -4px 0 10px;
+}
+.tl-pill-range { font-weight: 600; font-variant-numeric: tabular-nums; }
 .tl-legend { display: flex; flex-wrap: wrap; gap: 10px; font-size: 11px; color: var(--muted); margin-top: 4px; }
 .tl-key { display: inline-flex; align-items: center; gap: 4px; }
 .tl-swatch { width: 8px; height: 8px; border-radius: 2px; display: inline-block; }
