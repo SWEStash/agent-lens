@@ -324,6 +324,37 @@ corpus by `node scripts/screenshots.mjs`.
   tool calls, model/subagent tags, a **classification badge** (category + complexity) with a
   collapsible signals panel, and an **error summary** in the header — *"X failed · Y declined/blocked
   of N tool calls"* (the failed-vs-declined split is a heuristic; see [ADR-019](decisions/ADR-019-tool-error-observability.md)).
+- Read the session's shape from the **timeline** under the header — a minimap of the whole session,
+  not a second dashboard:
+
+  - **Idle gaps are collapsed by default.** A session a human sat through is mostly waiting, so a
+    literal wall-clock axis would spend nearly all of its width on almost none of the messages. Gaps
+    over a minute collapse to a marker; `time ⇄` switches to literal wall-clock, and is hidden
+    entirely when a session has no such gaps (usual for subagents). **Double-click a gap marker** to
+    open just that one at its real duration, and double-click it again to collapse it back.
+  - A gap's label says only what **bounds** it — *"4h 02m before your next message"*, *"12m
+    mid-turn"*. Which side was waiting is in the data; **why** is not, so the label does not guess.
+  - **Bar height** is the tokens behind that message — *work* (input + output + cache-write) by
+    default, switchable to output only or to the total including cache reads. Cache reads are an
+    order of magnitude larger than the rest and would flatten every message to the same size.
+  - **Colour** is the message type, and the rail beneath the baseline marks the audit-worthy events:
+    failed tool calls, security findings, file changes, and subagent spawns.
+  - **Click** a mark to jump to that message (its turn expands and the message is highlighted, the
+    same as following a deep link). **Drag** across the band to filter the transcript to that time
+    range; the range shows in a bar underneath with the surviving message count, a **zoom** control,
+    and **clear**. Partly-filtered turns show *"3 of 11 msgs"* on their header.
+  - The range lives in the URL as `?from=` / `?to=`, so a narrowed view is shareable and survives a
+    reload. Messages with no timestamp are never filtered out — they cannot be placed on the axis, so
+    hiding them would make them unreachable — and a `#ev-…` deep link into a message outside the
+    range clears the range rather than failing to land.
+  - **Keyboard**: the band is a single tab stop. `←`/`→` move between messages and `Home`/`End` jump
+    to the ends, `Enter` opens the message under the cursor, `Shift`+`←`/`→` selects a range, and
+    `Esc` clears it. The cursor's position, type, size and time are announced as it moves.
+
+  Each message also shows its **token count** next to the model tag, with the full
+  input/output/cache-write/cache-read split on hover. That number is the usage of the response the
+  message belongs to, which is not the same as the raw usage row stored against it — see
+  [ADR-032](decisions/ADR-032-per-event-token-attribution.md).
 - **Find in session** (`/` to focus, or the box above the transcript) — searches the open session
   ([ADR-030](decisions/ADR-030-in-session-search.md)). Unlike the list's FTS above, this is a literal
   case-insensitive **substring** match, so it hits mid-word (`AWS_SECRET` inside

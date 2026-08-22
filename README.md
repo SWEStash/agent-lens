@@ -93,6 +93,15 @@ agent-lens-ingest: files=312 skipped=298 new_events=1840 malformed=0
   rendering per tool: Bash as a shell console, `Edit`/`MultiEdit`/`Write` as colored diffs, plans and
   `AskUserQuestion` as cards, workflow runs with a phase graph. One-click **Markdown export** and a
   **light/dark theme toggle** (dark by default).
+- **Session timeline** — a minimap under each session's header showing where the work, the waiting and
+  the audit-worthy moments are. Idle gaps are collapsed by default (a real session is mostly waiting —
+  gaps over a minute are a fraction of the events but almost all of the wall-clock), with a toggle
+  back to literal wall-clock. Bar height is the tokens behind each message; colour is the message
+  type; and a rail underneath marks failed tool calls, security findings, file changes and subagent
+  spawns. Click a mark to jump to that message, drag to filter the transcript to a time range (the
+  range is in the URL, so it is shareable), or drive the whole thing from the keyboard. Each message
+  also carries its own **token count**, attributed to the message you can actually see
+  ([ADR-032](docs/decisions/ADR-032-per-event-token-attribution.md)).
 - **Find in session** (`/`) — searches message bodies, thinking, and tool inputs/results, highlights
   every hit and steps through them with `Enter`/`Shift+Enter`, reaching what the browser's own find
   can't: matches inside collapsed turns (counted on the turn header), below a long message's fold, and
