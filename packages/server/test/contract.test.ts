@@ -47,7 +47,11 @@ const SESSION_DETAIL_KEYS = [
   "file_changes",
 ];
 
+// `usage` is deliberately OMITTED rather than null on an event with no token_usage row (most user and
+// meta events), so the two shapes are pinned separately: the base set below must stay exact for a
+// usage-less event, and USAGE adds the one key for an event that has a row.
 const EVENT_NODE_KEYS = ["uuid", "type", "role", "timestamp", "model", "is_sidechain", "turn_id", "text", "thinking", "toolCalls"];
+const EVENT_NODE_KEYS_WITH_USAGE = [...EVENT_NODE_KEYS, "usage"];
 
 // No event_uuid (the server already used it to nest this call), no error_type (server-side split
 // only), no total_tokens (nothing reads it) — see ToolCallProjection in server/src/rows.ts.
@@ -174,7 +178,14 @@ describe("response contracts — populated DB", () => {
       expect(body.session, `session detail is missing ${k}`).toHaveProperty(k);
     }
 
-    expectKeys(body.events[0], EVENT_NODE_KEYS, "event node");
+    // e1 is the user event and has no token_usage row: the key must be ABSENT, not null, which an
+    // exact-key assertion against the base set is precisely what proves.
+    expectKeys(body.events[0], EVENT_NODE_KEYS, "event node (no usage row)");
+    const withUsage = body.events.find((e: { uuid: string }) => e.uuid === "e2");
+    expectKeys(withUsage, EVENT_NODE_KEYS_WITH_USAGE, "event node (with usage row)");
+    expectKeys(withUsage.usage, TOKEN_SPLIT_KEYS, "event usage split");
+    expect(withUsage.usage).toEqual({ input: 100, output: 50, cache_creation: 0, cache_read: 0 });
+
     const withTool = body.events.find((e: { toolCalls: unknown[] }) => e.toolCalls.length > 0);
     expectKeys(withTool.toolCalls[0], TOOL_CALL_KEYS, "tool call");
     await app.close();

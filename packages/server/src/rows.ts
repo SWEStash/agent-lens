@@ -86,6 +86,9 @@ export interface FindingProjectionRow {
  *  the ingest adapter is the only thing that reads a record's shape (ADR-008). */
 export interface EventProjectionRow {
   uuid: string;
+  /** Ordering within the session. Server-internal — never put on the wire; used to fold token usage
+   *  onto the event that actually renders (see loadEvents). */
+  seq: number;
   type: string;
   role: string | null;
   timestamp: string | null;
@@ -94,6 +97,16 @@ export interface EventProjectionRow {
   turn_id: string | null;
   text: string | null;
   thinking: string | null;
+}
+
+/** One event's `token_usage` row, split into the four categories. `event_uuid` is that table's PRIMARY
+ *  KEY, so this is at most one row per event and needs no aggregation. */
+export interface EventUsageRow {
+  event_uuid: string;
+  i: number;
+  o: number;
+  cw: number;
+  cr: number;
 }
 
 /** The `classifications` projection, with `signals_json` still unparsed. */

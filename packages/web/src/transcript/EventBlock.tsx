@@ -1,6 +1,6 @@
 import { useContext, useId, useState } from "react";
 import type { EventNode, ToolCall } from "../api";
-import { fmtDate, shortModel } from "../format";
+import { fmtDate, fmtTokens, shortModel, tokenSplitTitle, workTokens } from "../format";
 import CopyButton from "../CopyButton";
 import { FlashContext, HideToolsContext, SearchContext } from "./contexts";
 import { parseCommand, parseTaskNotification } from "./parse";
@@ -41,6 +41,14 @@ export function EventBlock({ e }: { e: EventNode }) {
         </span>
         {e.model && <span className="tag">{shortModel(e.model)}</span>}
         {e.is_sidechain ? <span className="tag subagent">subagent</span> : null}
+        {/* Only events with a token_usage row carry `usage` at all — most user and meta events have
+            none, and get no chip rather than a "0 tok" one. The label is WORK tokens (see
+            workTokens); the hover carries the full four-way split including cache-read. */}
+        {e.usage && (
+          <span className="muted ev-tokens" title={tokenSplitTitle(e.usage)}>
+            {fmtTokens(workTokens(e.usage))} tok
+          </span>
+        )}
         <span className="muted ev-time">{fmtDate(e.timestamp)}</span>
         {copyText && <CopyButton text={copyText} className="ev-copy copy-hover" title="Copy message" />}
       </div>

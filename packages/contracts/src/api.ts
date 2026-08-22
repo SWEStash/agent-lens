@@ -242,6 +242,11 @@ export interface EventNode {
   text: string | null;
   thinking: string | null;
   toolCalls: ToolCall[];
+  /** Token usage for the assistant RESPONSE this event belongs to — NOT the raw `token_usage` row
+   *  keyed by this uuid (ADR-032; session and dashboard totals are unaffected).
+   *
+   *  OMITTED, not null, when no usage reaches this event — which is most user and meta events. */
+  usage?: TokenSplit;
 }
 
 /** The evidence blob behind a classification, written verbatim by the heuristic classifier
