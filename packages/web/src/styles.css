@@ -452,8 +452,7 @@ table.sessions { width: 100%; border-collapse: collapse; }
 }
 .to-top:hover { background: var(--tag); }
 .to-top:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-.detail:has(.search-nav) ~ .to-top,
-body:has(.search-nav) .to-top { bottom: 68px; }
+.app:has(.search-nav) .to-top { bottom: 68px; }
 
 .search-nav {
   position: fixed;

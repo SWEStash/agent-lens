@@ -349,8 +349,6 @@ corpus by `node scripts/screenshots.mjs`.
     reload. Messages with no timestamp are never filtered out — they cannot be placed on the axis, so
     hiding them would make them unreachable — and a `#ev-…` deep link into a message outside the
     range clears the range rather than failing to land.
-  - A **back-to-top** control appears once you scroll away from the header, and returns keyboard
-    focus there as well as the scroll position.
   - **Keyboard**: the band is a single tab stop. `←`/`→` move between messages and `Home`/`End` jump
     to the ends, `Enter` opens the message under the cursor, `Shift`+`←`/`→` selects a range, and
     `Esc` clears it. The cursor's position, type, size and time are announced as it moves.
@@ -377,6 +375,9 @@ corpus by `node scripts/screenshots.mjs`.
   suppressed tool card for as long as it is the active match. Since the term is in the URL (`?q=`), a
   search is shareable.
 - **Export** any session to Markdown (⬇ button, or `GET /api/sessions/:id/export.md`).
+
+On every page, a **back-to-top** control appears once you scroll away from the top, and returns
+keyboard focus there as well as the scroll position.
 
 **Files** (`/files`) — file-modification provenance ([ADR-022](decisions/ADR-022-file-modification-provenance.md)):
 which sessions (and which turns) changed which files, derived deterministically from every

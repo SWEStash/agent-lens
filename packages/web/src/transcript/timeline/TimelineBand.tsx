@@ -94,6 +94,15 @@ export interface TimelineBandProps {
   onDomain: (d: [number, number] | null) => void;
 }
 
+/** Where a mark sits and how wide it is. A span for anything that genuinely occupies time; a fixed
+ *  tick for user and meta events, because a user message does not "last" — the gap after it is the
+ *  human being away. */
+function markGeom(m: Mark, scale: TimeScale): { x: number; w: number } {
+  const x = scale.x(m.t);
+  const isTick = m.kind === "user" || m.kind === "meta";
+  return { x, w: isTick ? TICK_W : Math.max(MIN_MARK_W, scale.x(m.t + m.durationMs) - x - 1) };
+}
+
 /** Below this many pixels a pointer gesture is a click, not a drag. */
 const DRAG_THRESHOLD = 3;
 /** How far the pointer may sit from a mark and still be hovering it. Marks are 2–3px wide, which is
@@ -118,7 +127,7 @@ export function TimelineBand(props: TimelineBandProps) {
   const [keyAnchor, setKeyAnchor] = useState<number | null>(null);
   // The mark under the pointer. Without it, clicking or brushing is a guess: the marks are only a few
   // pixels wide, and colour plus height say nothing about which message they are.
-  const [hover, setHover] = useState<{ uuid: string; x: number } | null>(null);
+  const [hover, setHover] = useState<{ uuid: string; x: number; w: number } | null>(null);
   const { TIMELINE_COLORS, C } = useChartTokens();
 
   const usagePresent = hasUsage(events);
@@ -165,13 +174,17 @@ export function TimelineBand(props: TimelineBandProps) {
     return [scale.t(lo), scale.t(hi)];
   };
 
-  const nearestMark = (x: number) => {
-    let best: { uuid: string; d: number; i: number } | null = null;
+  /** Distance from `px` to a mark, measured to its whole SPAN rather than its start: a long assistant
+   *  or tool message can be tens of pixels wide, and measuring from its leading edge left most of the
+   *  bar unhoverable and unclickable. Zero when the pointer is on the mark. */
+  const nearestMark = (px: number) => {
+    let best: { uuid: string; d: number; i: number; x: number; w: number } | null = null;
     marks.forEach((m, i) => {
-      const d = Math.abs(scale.x(m.t) - x);
-      if (!best || d < best.d) best = { uuid: m.uuid, d, i };
+      const { x, w } = markGeom(m, scale);
+      const d = px < x ? x - px : px > x + w ? px - (x + w) : 0;
+      if (!best || d < best.d) best = { uuid: m.uuid, d, i, x, w };
     });
-    return best as { uuid: string; d: number; i: number } | null;
+    return best as { uuid: string; d: number; i: number; x: number; w: number } | null;
   };
 
   const cursorMark = marks[Math.min(cursor, marks.length - 1)] ?? null;
@@ -253,7 +266,7 @@ export function TimelineBand(props: TimelineBandProps) {
     const px = localX(e);
     if (!drag) {
       const near = nearestMark(px);
-      setHover(near && near.d <= HOVER_RADIUS_PX ? { uuid: near.uuid, x: scale.x(marks[near.i].t) } : null);
+      setHover(near && near.d <= HOVER_RADIUS_PX ? { uuid: near.uuid, x: near.x, w: near.w } : null);
       return;
     }
     const x = px;
@@ -322,7 +335,7 @@ export function TimelineBand(props: TimelineBandProps) {
 
   const present = new Set<MarkKind>(marks.map((m) => m.kind));
   const hoveredMark = hover ? marks.find((m) => m.uuid === hover.uuid) : undefined;
-  const hovered = hover && hoveredMark ? { mark: hoveredMark, x: hover.x } : null;
+  const hovered = hover && hoveredMark ? { mark: hoveredMark, x: hover.x, w: hover.w } : null;
 
   const fillFor = (k: MarkKind): string =>
     k === "tool-error" ? TIMELINE_COLORS.toolError : k === "meta" ? C.muted : TIMELINE_COLORS[k];
@@ -425,7 +438,7 @@ export function TimelineBand(props: TimelineBandProps) {
             <MarkRect key={m.uuid} m={m} scale={scale} h={barHeight(m.value)} fill={fillFor(m.kind)} />
           ))}
           {hovered && (
-            <rect className="tl-hover" x={hovered.x - 2} y={0} width={4} height={PLOT_H} />
+            <rect className="tl-hover" x={hovered.x - 1} y={0} width={hovered.w + 2} height={PLOT_H} />
           )}
           {cursorMark && (
             <rect
@@ -526,13 +539,7 @@ export function TimelineBand(props: TimelineBandProps) {
   );
 }
 
-/** One event. A span for anything that genuinely occupies time; a fixed tick for user and meta events,
- *  because a user message does not "last" — the gap after it is the human being away. */
 function MarkRect({ m, scale, h, fill }: { m: Mark; scale: TimeScale; h: number; fill: string }) {
-  const x = scale.x(m.t);
-  const isTick = m.kind === "user" || m.kind === "meta";
-  const w = isTick ? TICK_W : Math.max(MIN_MARK_W, scale.x(m.t + m.durationMs) - x - 1);
-  return (
-    <rect className="tl-mark" x={x} y={PLOT_H - h} width={w} height={h} rx={2} fill={fill} />
-  );
+  const { x, w } = markGeom(m, scale);
+  return <rect className="tl-mark" x={x} y={PLOT_H - h} width={w} height={h} rx={2} fill={fill} />;
 }

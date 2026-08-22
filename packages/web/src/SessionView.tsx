@@ -36,7 +36,6 @@ import {
   type AxisMode,
 } from "./transcript/viewPrefs";
 import { TimelineBand } from "./transcript/timeline/TimelineBand";
-import BackToTop from "./BackToTop";
 import { fmtClock } from "./format";
 import type { TokenMetric } from "./transcript/timeline/marks";
 
@@ -391,8 +390,6 @@ export default function SessionView() {
       </HideToolsContext.Provider>
       </FormatContext.Provider>
       </WorkflowMapContext.Provider>
-
-      <BackToTop />
     </div>
   );
 }

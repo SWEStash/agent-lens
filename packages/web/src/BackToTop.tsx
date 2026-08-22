@@ -1,8 +1,9 @@
 /** Return to the top of a long page.
  *
  * A transcript runs to hundreds of messages, and once the reader is deep in one the header — the
- * title, the classification, the timeline, the search box — is a long scroll away. The browser's back
- * button is not the answer: it leaves the page entirely.
+ * title, the classification, the timeline, the search box — is a long scroll away. The session list,
+ * the files index and the security list get long the same way. The browser's back button is not the
+ * answer: it leaves the page entirely.
  *
  * Focus moves as well as the scroll position. Scrolling alone leaves a keyboard reader's focus where
  * it was, so the next Tab would jump them straight back down the page.
@@ -27,9 +28,9 @@ export default function BackToTop() {
   const toTop = () => {
     const reduced = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false;
     window.scrollTo({ top: 0, behavior: reduced ? "auto" : "smooth" });
-    // Hand focus back to the top of the document so tabbing resumes from there.
-    const target = document.querySelector<HTMLElement>("main h1, main a, h1");
-    target?.focus({ preventScroll: true });
+    // Hand focus back to the top of the page so tabbing resumes from there rather than from wherever
+    // the reader had scrolled to. `#main` is the app shell's landmark and already takes focus.
+    document.getElementById("main")?.focus({ preventScroll: true });
   };
 
   return (

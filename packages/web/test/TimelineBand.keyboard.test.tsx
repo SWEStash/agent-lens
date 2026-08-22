@@ -12,6 +12,8 @@ import type { EventNode } from "../src/api";
 import { TimelineBand } from "../src/transcript/timeline/TimelineBand";
 
 const WIDTH = 1000;
+/** Mirrors HOVER_RADIUS_PX in the component. */
+const HOVER_RADIUS = 12;
 
 beforeEach(() => {
   vi.stubGlobal(
@@ -102,6 +104,31 @@ describe("timeline band hover", () => {
     const { svg } = setup();
     hoverAt(svg, 0);
     expect(document.querySelector(".tl-hover")).toBeTruthy();
+  });
+
+  it("covers the whole mark, not just where it starts", () => {
+    // An assistant or tool message that occupied real time renders as a wide bar. Measuring from its
+    // leading edge left most of that bar dead to both hover and click.
+    // Consecutive minutes, so nothing is collapsed and the middle message really does span half the
+    // axis. A gap over the idle threshold would make it a 2px tick and the test would prove nothing.
+    const long = [
+      ev("u", 0, { role: "user" }),
+      ev("wide", 1, { usage: { input: 0, output: 100, cache_creation: 0, cache_read: 0 } }),
+      ev("end", 2),
+    ];
+    const { svg } = setup({ events: long });
+    const bar = [...document.querySelectorAll(".tl-mark")].map((n) => ({
+      x: +n.getAttribute("x")!,
+      w: +n.getAttribute("width")!,
+    }))[1];
+    expect(bar.w).toBeGreaterThan(HOVER_RADIUS + 1); // otherwise this proves nothing
+
+    // Its far end is well beyond the hover radius measured from the start.
+    hoverAt(svg, bar.x + bar.w - 1);
+    expect(document.querySelector(".tl-tip")).toBeTruthy();
+    // And the highlight spans the bar rather than sitting on its edge.
+    const hl = document.querySelector(".tl-hover")!;
+    expect(+hl.getAttribute("width")!).toBeGreaterThanOrEqual(bar.w);
   });
 
   it("ignores the pointer when it is nowhere near a mark", () => {
