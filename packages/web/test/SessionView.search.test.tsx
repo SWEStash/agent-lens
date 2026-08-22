@@ -23,8 +23,12 @@ vi.mock("../src/transcript/viewPrefs", () => ({
   fetchViewPrefs: () => Promise.resolve({}),
   loadFormat: () => "raw",
   loadHideTools: () => false,
+  loadAxisMode: () => "compressed",
+  loadTimelineMetric: () => "work",
   saveFormat: () => {},
   saveHideTools: () => {},
+  saveAxisMode: () => {},
+  saveTimelineMetric: () => {},
 }));
 
 const { default: SessionView } = await import("../src/SessionView");

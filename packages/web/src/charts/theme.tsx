@@ -27,6 +27,15 @@ export function useChartTokens() {
       violet: v("--violet"),
       teal: v("--teal"),
     };
+    // Timeline band message-type steps — a validated categorical set of their own (see styles.css).
+    // tool-error is NOT a fifth entry: it is the status red, and always pairs with the rail tick.
+    const TIMELINE_COLORS = {
+      user: v("--tl-user"),
+      assistant: v("--tl-assistant"),
+      thinking: v("--tl-thinking"),
+      tool: v("--tl-tool"),
+      toolError: C.red,
+    };
     // Token series colors. Cache-read is intentionally muted — it dominates and misleads.
     const TOKEN_COLORS = {
       input: C.green,
@@ -43,7 +52,7 @@ export function useChartTokens() {
       labelStyle: { color: C.text },
       itemStyle: { color: C.text },
     };
-    return { C, TOKEN_COLORS, PALETTE, axisProps, gridProps, tooltipStyle };
+    return { C, TOKEN_COLORS, TIMELINE_COLORS, PALETTE, axisProps, gridProps, tooltipStyle };
   }, [theme]);
 }
 

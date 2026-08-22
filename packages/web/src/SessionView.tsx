@@ -22,7 +22,20 @@ import {
   WorkflowMapContext,
   type MsgFormat,
 } from "./transcript/contexts";
-import { fetchViewPrefs, loadFormat, loadHideTools, saveFormat, saveHideTools } from "./transcript/viewPrefs";
+import {
+  fetchViewPrefs,
+  loadAxisMode,
+  loadFormat,
+  loadHideTools,
+  loadTimelineMetric,
+  saveAxisMode,
+  saveFormat,
+  saveHideTools,
+  saveTimelineMetric,
+  type AxisMode,
+} from "./transcript/viewPrefs";
+import { TimelineBand } from "./transcript/timeline/TimelineBand";
+import type { TokenMetric } from "./transcript/timeline/marks";
 
 export default function SessionView() {
   const { id } = useParams();
@@ -34,6 +47,9 @@ export default function SessionView() {
   const [format, setFormat] = useState<MsgFormat>(loadFormat);
   // Hide mechanical tool chips to read only the human-facing conversation. Persisted like format.
   const [hideTools, setHideTools] = useState<boolean>(loadHideTools);
+  // Timeline band: axis mode and which token number drives mark height. Persisted the same way.
+  const [axisMode, setAxisMode] = useState<AxisMode>(loadAxisMode);
+  const [metric, setMetric] = useState<TokenMetric>(loadTimelineMetric);
 
   useEffect(() => setCollapsed(new Set()), [id]);
 
@@ -43,12 +59,24 @@ export default function SessionView() {
     void fetchViewPrefs().then((p) => {
       if (p.format !== undefined) setFormat(p.format);
       if (p.hideTools !== undefined) setHideTools(p.hideTools);
+      if (p.axisMode !== undefined) setAxisMode(p.axisMode);
+      if (p.metric !== undefined) setMetric(p.metric);
     });
   }, []);
 
   const chooseFormat = (f: MsgFormat) => {
     setFormat(f);
     saveFormat(f);
+  };
+
+  const chooseAxisMode = (m: AxisMode) => {
+    setAxisMode(m);
+    saveAxisMode(m);
+  };
+
+  const chooseMetric = (m: TokenMetric) => {
+    setMetric(m);
+    saveTimelineMetric(m);
   };
 
   const toggleHideTools = () =>
@@ -130,6 +158,12 @@ export default function SessionView() {
     return () => document.removeEventListener("keydown", onKey);
   }, []);
 
+  // Which events are REAL human prompts (as opposed to tool results, which also carry role "user").
+  const userPromptUuids = useMemo(
+    () => new Set((d?.turns ?? []).map((t) => t.user_event_uuid).filter((u): u is string => !!u)),
+    [d],
+  );
+
   const searchCtx = useMemo(
     () => ({ query, activeUuid: activeHit?.uuid ?? null }),
     [query, activeHit],
@@ -153,6 +187,17 @@ export default function SessionView() {
   return (
     <div className="detail">
       <SessionHeader d={d} />
+
+      <TimelineBand
+        events={renderable}
+        findings={d.findings}
+        fileChanges={d.file_changes}
+        userPromptUuids={userPromptUuids}
+        axisMode={axisMode}
+        onAxisMode={chooseAxisMode}
+        metric={metric}
+        onMetric={chooseMetric}
+      />
 
       {d.children && d.children.length > 0 && <SubagentPanel d={d} />}
 

@@ -15,6 +15,17 @@
   --gold: #e0b85a;
   --violet: #b98cff;
   --teal: #4fd1c5;
+  /* Timeline band message-type steps. These are NOT the vars above: as a categorical set those fail
+     validation on a dark surface (--violet against --accent measures ΔE 0.4 for deuteranopes, and the
+     whole set sits above the dark lightness band). Derived from the same hue families and validated
+     with the dataviz palette checker against both --panel and --bg: worst CVD ΔE 9.4, worst
+     normal-vision ΔE 18.5, all four at or above 3:1 contrast. Re-run the validator before changing
+     any of them. tool-error is deliberately absent — it is a status colour (--err) that always ships
+     with the annotation-rail tick, never colour alone. */
+  --tl-user: #3fa270;
+  --tl-assistant: #058dfa;
+  --tl-thinking: #b343ad;
+  --tl-tool: #a86819;
   --code-bg: var(--bg);
 }
 /* Light theme: same tokens, WCAG-AA palette. Applied via <html data-theme="light">. */
@@ -34,6 +45,12 @@
   --gold: #b7791f;
   --violet: #7c3aed;
   --teal: #0d9488;
+  /* Light-theme timeline steps — separately derived and validated, not a flip of the dark set:
+     worst CVD ΔE 9.8, worst normal-vision ΔE 18.3, all four at or above 3:1. */
+  --tl-user: #226929;
+  --tl-assistant: #2649c0;
+  --tl-thinking: #8d1a89;
+  --tl-tool: #a1790c;
   --code-bg: #eef1f5;
 }
 * { box-sizing: border-box; }
@@ -1129,16 +1146,25 @@ button.small { padding: 2px 8px; font-size: 12px; }
 /* Sessions-list Security cell: worst-severity dot + total finding count (kept visually distinct so
  * "critical 40" can't be misread as 40 criticals). Dot uses the vivid per-severity color. */
 .sec-count { display: inline-flex; align-items: center; gap: 6px; justify-content: flex-end; }
+/* The vivid per-severity mark colour, shared by the sessions-list dot and the timeline rail. */
+:root {
+  --sev-c-critical: #ff8f8f;
+  --sev-c-high: #f0a860;
+  --sev-c-medium: #e0b85a;
+  --sev-c-low: #79c0ff;
+}
+:root[data-theme="light"] {
+  --sev-c-critical: #b12626;
+  --sev-c-high: #b5651d;
+  --sev-c-medium: #8a6d1f;
+  --sev-c-low: #1a5fa8;
+}
 .sev-dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; background: var(--muted); flex: none; }
-.sev-dot.sev-critical { background: #ff8f8f; }
-.sev-dot.sev-high { background: #f0a860; }
-.sev-dot.sev-medium { background: #e0b85a; }
-.sev-dot.sev-low { background: #79c0ff; }
+.sev-dot.sev-critical { background: var(--sev-c-critical); }
+.sev-dot.sev-high { background: var(--sev-c-high); }
+.sev-dot.sev-medium { background: var(--sev-c-medium); }
+.sev-dot.sev-low { background: var(--sev-c-low); }
 .sev-dot.sev-info { background: var(--muted); }
-:root[data-theme="light"] .sev-dot.sev-critical { background: #b12626; }
-:root[data-theme="light"] .sev-dot.sev-high { background: #b5651d; }
-:root[data-theme="light"] .sev-dot.sev-medium { background: #8a6d1f; }
-:root[data-theme="light"] .sev-dot.sev-low { background: #1a5fa8; }
 /* Framework anchor chip (OWASP/MITRE) — a subtle outlined variant. */
 .tag.framework { background: transparent; border: 1px solid var(--border); color: var(--muted); }
 
@@ -1285,3 +1311,34 @@ table.kv .muted { font-size: 12px; margin-top: 4px; }
   padding: 1px 6px;
   white-space: nowrap;
 }
+
+
+/* ---- Session timeline band (minimap under the classification row) -----------
+   Marks are drawn in SVG; everything positional comes from the piecewise scale in
+   transcript/timeline/scale.ts, so this file owns only colour, chrome and spacing. */
+.timeline {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel);
+  padding: 8px 10px 6px;
+  margin: 10px 0;
+}
+.tl-head { display: flex; align-items: center; gap: 10px; font-size: 12px; margin-bottom: 4px; }
+.tl-caption { margin-left: auto; }
+.tl-ctl select { font: inherit; background: var(--panel2); color: var(--text); border: 1px solid var(--border); border-radius: 5px; padding: 1px 4px; }
+.tl-axis { font-variant-numeric: tabular-nums; }
+.tl-svg { display: block; width: 100%; }
+/* A break is a hole in the axis, not data: recessive fill plus a hatch so it never reads as a mark. */
+.tl-break rect { fill: var(--panel2); stroke: var(--border); stroke-dasharray: 2 2; }
+.tl-mark { shape-rendering: crispEdges; }
+.tl-err { fill: var(--err); }
+.tl-file { fill: var(--muted); }
+.tl-spawn { fill: var(--muted); }
+.tl-find.sev-critical { fill: var(--sev-c-critical); }
+.tl-find.sev-high { fill: var(--sev-c-high); }
+.tl-find.sev-medium { fill: var(--sev-c-medium); }
+.tl-find.sev-low { fill: var(--sev-c-low); }
+.tl-find.sev-info { fill: var(--muted); }
+.tl-legend { display: flex; flex-wrap: wrap; gap: 10px; font-size: 11px; color: var(--muted); margin-top: 4px; }
+.tl-key { display: inline-flex; align-items: center; gap: 4px; }
+.tl-swatch { width: 8px; height: 8px; border-radius: 2px; display: inline-block; }
