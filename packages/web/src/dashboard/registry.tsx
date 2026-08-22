@@ -2,6 +2,7 @@ import type { FC } from "react";
 import type { ChartProps } from "./charts/common";
 import { Activity, CostOverTime, TokensOverTime, ToolErrors } from "./charts/timeseries";
 import { Category, Complexity, ErrorTypes, SkillActivation, SubagentFanout, TokensByModel, ToolFrequency } from "./charts/breakdowns";
+import { BurnHeatmap, ModelLatency, ReviewLatency, Rolling7d, WeeklyBurn } from "./charts/time";
 
 /**
  * Every dashboard chart, in render order — the single source of truth for both the render loop and the
@@ -24,4 +25,13 @@ export const CHART_REGISTRY: Array<{ id: string; label: string; Component: FC<Ch
   { id: "tool-frequency", label: "Tool frequency", Component: ToolFrequency },
   { id: "skill-activation", label: "Skill activation", Component: SkillActivation },
   { id: "subagent-fanout", label: "Subagent fan-out", Component: SubagentFanout },
+  { id: "burn-heatmap", label: "When tokens are spent", Component: BurnHeatmap },
+  { id: "weekly-burn", label: "Weekly burn by source", Component: WeeklyBurn },
+  { id: "rolling-7d", label: "Rolling 7-day burn", Component: Rolling7d },
+  { id: "model-latency", label: "Model response latency", Component: ModelLatency },
+  { id: "review-latency", label: "Turnaround after a turn", Component: ReviewLatency },
 ];
+
+/** The chart ids backed by `/api/dashboard/time`. Dashboard.tsx skips that fetch entirely while all
+ *  of them are hidden, so a reader who does not use these tiles never pays for them. */
+export const TIME_CHART_IDS = ["burn-heatmap", "weekly-burn", "rolling-7d", "model-latency", "review-latency"];

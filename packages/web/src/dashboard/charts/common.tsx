@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
 import { ResponsiveContainer, BarChart, CartesianGrid, XAxis } from "recharts";
-import type { DashBreakdowns, DashTimeseries } from "../../api";
+import type { DashBreakdowns, DashTime, DashTimeseries } from "../../api";
 import { useChartTokens } from "../../charts/theme";
 import type { Expanded } from "../useExpanded";
 import type { Drilldown } from "../useDrilldown";
@@ -19,6 +19,9 @@ export interface ChartProps {
   hidden: boolean;
   ts: DashTimeseries | null;
   bd: DashBreakdowns | null;
+  /** Time analytics. Fetched separately from the other three and skipped entirely when every tile
+   *  that reads it is hidden, so it is null more often than `ts`/`bd` — see Dashboard.tsx. */
+  time: DashTime | null;
   expand: Expanded;
   drill: Drilldown;
 }

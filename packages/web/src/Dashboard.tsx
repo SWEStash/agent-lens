@@ -1,11 +1,11 @@
-import { api, type DashOverview, type DashTimeseries, type DashBreakdowns, type SecuritySummary, type Source } from "./api";
+import { api, type DashOverview, type DashTimeseries, type DashBreakdowns, type DashTime, type SecuritySummary, type Source } from "./api";
 import { useAsync, useLookup } from "./useFetch";
 import { useQueryState } from "./useQueryState";
 import { ErrorAlert, Loading } from "./AsyncBoundary";
 import { useExpanded } from "./dashboard/useExpanded";
 import { useDrilldown } from "./dashboard/useDrilldown";
 import { KPI_REGISTRY, KpiRow } from "./dashboard/Kpis";
-import { CHART_REGISTRY } from "./dashboard/registry";
+import { CHART_REGISTRY, TIME_CHART_IDS } from "./dashboard/registry";
 import { StripCustomizer } from "./dashboard/StripCustomizer";
 import { PresetPills } from "./dashboard/PresetPills";
 import { useDashLayout } from "./dashboard/useDashLayout";
@@ -44,6 +44,13 @@ export default function Dashboard() {
   );
   const [overview, ts, bd] = dash ?? NOT_LOADED;
 
+  // The time analytics load on their own, NOT as a fourth entry in the Promise.all above: they are
+  // several heavier aggregates, and folding them in would mean one slow or failing query blanking
+  // the whole dashboard. Skipped entirely while every tile that reads them is hidden — the flag is
+  // in the dep key, so un-hiding one fires the request.
+  const timeVisible = TIME_CHART_IDS.some((id) => !hiddenCharts.has(id));
+  const { data: time, error: timeError } = useAsync(() => (timeVisible ? api<DashTime>("/dashboard/time" + s) : null), [s, timeVisible]);
+
   return (
     <div>
       <h1 className="sr-only">Dashboard</h1>
@@ -71,6 +78,7 @@ export default function Dashboard() {
       </div>
 
       <ErrorAlert error={error} />
+      <ErrorAlert error={timeError} />
       {loading && <Loading />}
 
       {overview && !loading && (
@@ -121,7 +129,7 @@ export default function Dashboard() {
                 filtered out here, so a hidden card keeps its local view state — see ChartProps. */}
             <div className="cards">
               {arrange(CHART_REGISTRY, body.charts.order).map(({ id, Component }) => (
-                <Component key={id} hidden={hiddenCharts.has(id)} ts={ts} bd={bd} expand={expand} drill={drill} />
+                <Component key={id} hidden={hiddenCharts.has(id)} ts={ts} bd={bd} time={time} expand={expand} drill={drill} />
               ))}
             </div>
           </section>

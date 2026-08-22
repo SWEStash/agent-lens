@@ -495,8 +495,23 @@ export function dashboardTime(db: DB, f: DashFilters, bucketParam?: string): Das
  * Percentiles are nearest-rank at the same offset `percentiles()` uses, so the two agree; that
  * helper takes a single value set and this needs one per group, hence the window functions. Never a
  * mean — the tail is the story, and this tile exists to show drift between buckets.
+ *
+ * Buckets holding fewer than MIN_LATENCY_SAMPLES turns are dropped rather than plotted: a percentile
+ * over three observations is not a percentile. The drop is visible in `n`, which ships with the row.
+ *
+ * The tail carries real contamination that no query can separate out — a turn whose first assistant
+ * event lands hours later is an agent parked on a permission prompt, not a slow model, and the
+ * corpus analysis (§4.2) established that those are indistinguishable from long tool calls. p90 is
+ * still reported, because "the slowest tenth took this long" is a fact; the tile says what it
+ * includes rather than pretending the number is pure model latency.
  */
-function modelLatency(db: DB, mw: Where, bucket: Bucket): DashTime["latency"] {
+const MIN_LATENCY_SAMPLES = 5;
+
+function modelLatency(db: DB, mw: Where, chosen: Bucket): DashTime["latency"] {
+  // Never a daily bucket, whatever the dashboard's control says. Split by model, a day holds one or
+  // two turns for most models on the real corpus, and a p90 over a single observation IS that
+  // observation — a chart of noise that reads as a latency spike.
+  const bucket: Bucket = chosen === "day" ? "week" : chosen;
   const expr = BUCKET_EXPR[bucket];
   const series = queryAll<LatencyRow>(
     db,
@@ -518,7 +533,7 @@ function modelLatency(db: DB, mw: Where, bucket: Bucket): DashTime["latency"] {
      SELECT b, model, MAX(c) n,
             MAX(CASE WHEN rn = MAX(1, CAST(ceil(0.5 * c) AS INTEGER)) THEN ms END) p50,
             MAX(CASE WHEN rn = MAX(1, CAST(ceil(0.9 * c) AS INTEGER)) THEN ms END) p90
-     FROM ranked GROUP BY b, model ORDER BY b, model`,
+     FROM ranked GROUP BY b, model HAVING MAX(c) >= ${MIN_LATENCY_SAMPLES} ORDER BY b, model`,
     ...mw.params,
   )
     .filter((r): r is LatencyRow & { b: string } => r.b != null)

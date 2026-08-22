@@ -26,6 +26,16 @@
   --tl-assistant: #058dfa;
   --tl-thinking: #b343ad;
   --tl-tool: #a86819;
+  /* Burn-heatmap ramp — SEQUENTIAL, not categorical: one hue, monotone lightness, low→high. Derived
+     from the --tl-assistant blue (OKLCH hue 252) and validated as an ordinal ramp against both
+     --panel and --bg; the lightest step clears 2:1 on the surface so a cell with any spend at all is
+     never invisible. Blue rather than a heat ramp on purpose: amber/red would read as a warning, and
+     this chart reports when tokens were spent, not whether that was good. */
+  --burn-1: #27527f;
+  --burn-2: #3a6ca3;
+  --burn-3: #4d88c8;
+  --burn-4: #62a5ee;
+  --burn-5: #77c2ff;
   --code-bg: var(--bg);
 }
 /* Light theme: same tokens, WCAG-AA palette. Applied via <html data-theme="light">. */
@@ -51,6 +61,11 @@
   --tl-assistant: #2649c0;
   --tl-thinking: #8d1a89;
   --tl-tool: #a1790c;
+  --burn-1: #8cb0d8;
+  --burn-2: #6695cb;
+  --burn-3: #3d7bbc;
+  --burn-4: #0160ae;
+  --burn-5: #00449e;
   --code-bg: #eef1f5;
 }
 * { box-sizing: border-box; }
@@ -1427,3 +1442,15 @@ table.kv .muted { font-size: 12px; margin-top: 4px; }
 .tl-legend { display: flex; flex-wrap: wrap; gap: 10px; font-size: 11px; color: var(--muted); margin-top: 4px; }
 .tl-key { display: inline-flex; align-items: center; gap: 4px; }
 .tl-swatch { width: 8px; height: 8px; border-radius: 2px; display: inline-block; }
+
+/* Burn heatmap — a plain CSS grid rather than a charting library: 7x24 fixed cells, no scales to
+   compute, and the cell colours come straight from the validated --burn-* ramp. */
+.burn { display: flex; flex-direction: column; gap: 8px; height: 100%; justify-content: center; }
+.burn-grid { display: flex; flex-direction: column; gap: 2px; }
+.burn-row { display: flex; align-items: center; gap: 2px; }
+.burn-day { width: 30px; flex: none; font-size: 11px; color: var(--muted); }
+.burn-cell { flex: 1 1 0; height: 14px; border-radius: 2px; }
+.burn-tick { flex: 1 1 0; font-size: 10px; color: var(--muted); font-style: normal; text-align: left; }
+.burn-hours { margin-top: 2px; }
+.burn-legend { display: flex; align-items: center; gap: 4px; font-size: 11px; color: var(--muted); }
+.burn-legend i { width: 14px; height: 10px; border-radius: 2px; }

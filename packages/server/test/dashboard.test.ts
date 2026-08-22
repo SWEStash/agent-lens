@@ -186,6 +186,31 @@ function seedTime(): DatabaseSync {
   return db;
 }
 
+/** Five main-session turns in one week, with hand-picked latencies (1s, 2s, 3s, 4s, 100s) so the
+ *  nearest-rank percentiles are checkable by eye. Just clears MIN_LATENCY_SAMPLES. */
+function seedLatency(): DatabaseSync {
+  const db = new DatabaseSync(":memory:");
+  db.exec(SCHEMA_SQL);
+  db.exec("PRAGMA foreign_keys = OFF");
+  const secs = [1, 2, 3, 4, 100];
+  const rows = secs
+    .map((sec, i) => {
+      const start = `2026-03-0${i + 2}T10:00:00Z`;
+      const reply = new Date(Date.parse(start) + sec * 1000).toISOString().replace(".000Z", "Z");
+      return {
+        turn: `('t${i}','lat',${i},'claude-opus-5','${start}','${reply}')`,
+        event: `('e${i}','lat','t${i}','assistant','assistant','${reply}',x'')`,
+      };
+    });
+  db.exec(`
+    INSERT INTO sessions (id, agent_id, source_id, is_sidechain, started_at) VALUES
+      ('lat','claude-code','isf',0,'2026-03-02T10:00:00Z');
+    INSERT INTO turns (id, session_id, seq, model, started_at, ended_at) VALUES ${rows.map((r) => r.turn).join(",")};
+    INSERT INTO events (uuid, session_id, turn_id, type, role, timestamp, raw_json) VALUES ${rows.map((r) => r.event).join(",")};
+  `);
+  return db;
+}
+
 describe("dashboardTime", () => {
   it("buckets burn by the usage event's own hour, not the session's start hour", () => {
     const t = dashboardTime(seedTime(), {});
@@ -200,15 +225,27 @@ describe("dashboardTime", () => {
     expect(t.burn_hours.reduce((a: number, r: any) => a + r.work, 0)).toBe(378); // not 40k-odd
   });
 
+  it("drops a bucket holding too few turns to have a percentile", () => {
+    // `long` has two turns. A p90 over two observations is just the larger one, so the row is not
+    // reported at all rather than plotted as if it meant something.
+    expect(dashboardTime(seedTime(), {}).latency.series).toEqual([]);
+  });
+
   it("measures prompt to first assistant token per model, main sessions only", () => {
-    const t = dashboardTime(seedTime(), {});
+    const t = dashboardTime(seedLatency(), {});
     expect(t.latency.series).toHaveLength(1); // one bucket, one model — the subagent is excluded
     const row = t.latency.series[0];
     expect(row.model).toBe("claude-opus-5");
-    expect(row.n).toBe(2); // long's two turns; sub's turn is not counted
-    // Turn 0 answers in 30s, turn 1 in 2h19m55s. Nearest-rank p50 over two values is the first.
-    expect(row.p50_ms).toBe(30_000);
-    expect(row.p90_ms).toBe(8_395_000);
+    expect(row.n).toBe(5);
+    // Latencies are 1s, 2s, 3s, 4s, 100s. Nearest-rank over n=5: p50 is the 3rd, p90 the 5th.
+    expect(row.p50_ms).toBe(3_000);
+    expect(row.p90_ms).toBe(100_000);
+  });
+
+  it("buckets latency by week even when the dashboard asks for days", () => {
+    // Split by model, a daily bucket holds one or two turns on real data — see modelLatency.
+    expect(dashboardTime(seedLatency(), {}, "day").latency.bucket).toBe("week");
+    expect(dashboardTime(seedLatency(), {}, "month").latency.bucket).toBe("month");
   });
 
   it("splits turnaround by whether the turn wrote files", () => {

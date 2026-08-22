@@ -36,6 +36,9 @@ export function useChartTokens() {
       tool: v("--tl-tool"),
       toolError: C.red,
     };
+    // Burn-heatmap ramp, low→high. Sequential (magnitude), so one hue with monotone lightness —
+    // see the derivation note in styles.css.
+    const BURN_RAMP = [v("--burn-1"), v("--burn-2"), v("--burn-3"), v("--burn-4"), v("--burn-5")];
     // Token series colors. Cache-read is intentionally muted — it dominates and misleads.
     const TOKEN_COLORS = {
       input: C.green,
@@ -52,7 +55,7 @@ export function useChartTokens() {
       labelStyle: { color: C.text },
       itemStyle: { color: C.text },
     };
-    return { C, TOKEN_COLORS, TIMELINE_COLORS, PALETTE, axisProps, gridProps, tooltipStyle };
+    return { C, TOKEN_COLORS, TIMELINE_COLORS, BURN_RAMP, PALETTE, axisProps, gridProps, tooltipStyle };
   }, [theme]);
 }
 
