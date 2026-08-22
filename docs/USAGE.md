@@ -320,7 +320,7 @@ corpus by `node scripts/screenshots.mjs`.
   (show/hide, persisted per browser). Sortable **Security** (worst-severity + finding count) and
   **Errors** (failed-tool-call count) columns are shown by default; **Cost** is hidden by default
   (it still shows on the session detail page).
-- Open a session for the **transcript viewer**: turn-segmented, collapsible thinking, expandable
+- Open a session for the **transcript viewer**: turn-segmented, expandable
   tool calls, model/subagent tags, a **classification badge** (category + complexity) with a
   collapsible signals panel, and an **error summary** in the header — *"X failed · Y declined/blocked
   of N tool calls"* (the failed-vs-declined split is a heuristic; see [ADR-019](decisions/ADR-019-tool-error-observability.md)).

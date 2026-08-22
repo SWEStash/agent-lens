@@ -4,8 +4,10 @@
  * a piecewise scale, with an annotation rail) that no chart library models, and the largest session in
  * the corpus is 1 632 events, well inside what SVG handles.
  *
- * Rendering only. Selection, zoom and click-to-jump arrive with the interaction layer; the props are
- * shaped for them but this component draws a static band.
+ * The band owns its own interaction: pointer drag sets the selection range, a click under the drag
+ * threshold jumps to that message, double-clicking a break marker opens that idle gap to scale, and
+ * the whole band is a single tab stop with a roving cursor announced through an aria-live region.
+ * Filtering the transcript from the selection is the caller's job — see SessionView.
  */
 import {
   useEffect,

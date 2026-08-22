@@ -89,7 +89,7 @@ agent-lens-ingest: files=312 skipped=298 new_events=1840 malformed=0
 - **Live `watch` mode** — `agent-lens watch` collects + ingests whenever a source changes (debounced).
 - **Normalized store** — sessions / turns / events / tool-calls / token-usage in SQLite with **FTS5**
   full-text search. The archive is the source of truth; the DB is a rebuildable projection.
-- **Rich transcript viewer** — turn-segmented sessions, collapsible thinking, and purpose-built
+- **Rich transcript viewer** — turn-segmented sessions, a navigable timeline band, and purpose-built
   rendering per tool: Bash as a shell console, `Edit`/`MultiEdit`/`Write` as colored diffs, plans and
   `AskUserQuestion` as cards, workflow runs with a phase graph. One-click **Markdown export** and a
   **light/dark theme toggle** (dark by default).
