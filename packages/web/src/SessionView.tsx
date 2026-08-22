@@ -36,6 +36,7 @@ import {
   type AxisMode,
 } from "./transcript/viewPrefs";
 import { TimelineBand } from "./transcript/timeline/TimelineBand";
+import BackToTop from "./BackToTop";
 import { fmtClock } from "./format";
 import type { TokenMetric } from "./transcript/timeline/marks";
 
@@ -220,6 +221,12 @@ export default function SessionView() {
     return () => document.removeEventListener("keydown", onKey);
   }, []);
 
+  // Turn id -> its number, so a hovered timeline mark can say which turn it belongs to.
+  const turnSeqById = useMemo(
+    () => new Map((d?.turns ?? []).map((t) => [t.id, t.seq])),
+    [d],
+  );
+
   // Which events are REAL human prompts (as opposed to tool results, which also carry role "user").
   const userPromptUuids = useMemo(
     () => new Set((d?.turns ?? []).map((t) => t.user_event_uuid).filter((u): u is string => !!u)),
@@ -258,6 +265,7 @@ export default function SessionView() {
         findings={d.findings}
         fileChanges={d.file_changes}
         userPromptUuids={userPromptUuids}
+        turnSeqById={turnSeqById}
         axisMode={axisMode}
         onAxisMode={chooseAxisMode}
         metric={metric}
@@ -366,6 +374,8 @@ export default function SessionView() {
       </HideToolsContext.Provider>
       </FormatContext.Provider>
       </WorkflowMapContext.Provider>
+
+      <BackToTop />
     </div>
   );
 }

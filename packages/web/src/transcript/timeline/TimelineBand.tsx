@@ -74,6 +74,8 @@ export interface TimelineBandProps {
   events: readonly EventNode[];
   findings?: readonly Finding[] | null;
   fileChanges?: readonly FileChangeRow[] | null;
+  /** turn id -> 0-based seq, so a hovered mark can say which turn it belongs to. */
+  turnSeqById?: ReadonlyMap<string, number> | null;
   /** `turns[].user_event_uuid` — the events that are REAL human prompts. Tool results arrive with
    *  role "user" too, so the role alone cannot tell them apart, and the break wording depends on it. */
   userPromptUuids?: ReadonlySet<string>;
@@ -94,11 +96,14 @@ export interface TimelineBandProps {
 
 /** Below this many pixels a pointer gesture is a click, not a drag. */
 const DRAG_THRESHOLD = 3;
+/** How far the pointer may sit from a mark and still be hovering it. Marks are 2–3px wide, which is
+ *  far too small a target on its own — the hit area is deliberately much larger than the ink. */
+const HOVER_RADIUS_PX = 12;
 
 type Drag = { kind: "new" | "start" | "end"; anchor: number; x: number; pointerId: number; captured: boolean };
 
 export function TimelineBand(props: TimelineBandProps) {
-  const { events, findings, fileChanges, userPromptUuids, axisMode, onAxisMode, metric, onMetric } = props;
+  const { events, findings, fileChanges, userPromptUuids, turnSeqById, axisMode, onAxisMode, metric, onMetric } = props;
   const { range, onRange, onJump, domain, onDomain } = props;
   const [ref, width] = useMeasuredWidth();
   const svgRef = useRef<SVGSVGElement>(null);
@@ -111,6 +116,9 @@ export function TimelineBand(props: TimelineBandProps) {
   // Where a Shift+arrow extension started, so the selection grows from the anchor rather than from
   // wherever the cursor happens to be now.
   const [keyAnchor, setKeyAnchor] = useState<number | null>(null);
+  // The mark under the pointer. Without it, clicking or brushing is a guess: the marks are only a few
+  // pixels wide, and colour plus height say nothing about which message they are.
+  const [hover, setHover] = useState<{ uuid: string; x: number } | null>(null);
   const { TIMELINE_COLORS, C } = useChartTokens();
 
   const usagePresent = hasUsage(events);
@@ -137,7 +145,7 @@ export function TimelineBand(props: TimelineBandProps) {
     ...(domain ? { domain } : {}),
     expandedGaps,
   });
-  const marks = buildMarks({ events, points: scale.points, findings, fileChanges, metric: effectiveMetric });
+  const marks = buildMarks({ events, points: scale.points, findings, fileChanges, turnSeqById, metric: effectiveMetric });
 
   const rangeX: [number, number] | null = range && !scale.degenerate ? [scale.x(range[0]), scale.x(range[1])] : null;
 
@@ -158,12 +166,12 @@ export function TimelineBand(props: TimelineBandProps) {
   };
 
   const nearestMark = (x: number) => {
-    let best: { uuid: string; d: number } | null = null;
-    for (const m of marks) {
+    let best: { uuid: string; d: number; i: number } | null = null;
+    marks.forEach((m, i) => {
       const d = Math.abs(scale.x(m.t) - x);
-      if (!best || d < best.d) best = { uuid: m.uuid, d };
-    }
-    return best;
+      if (!best || d < best.d) best = { uuid: m.uuid, d, i };
+    });
+    return best as { uuid: string; d: number; i: number } | null;
   };
 
   const cursorMark = marks[Math.min(cursor, marks.length - 1)] ?? null;
@@ -242,10 +250,17 @@ export function TimelineBand(props: TimelineBandProps) {
   };
 
   const onPointerMove = (e: ReactPointerEvent<SVGSVGElement>) => {
-    if (!drag) return;
-    const x = localX(e);
+    const px = localX(e);
+    if (!drag) {
+      const near = nearestMark(px);
+      setHover(near && near.d <= HOVER_RADIUS_PX ? { uuid: near.uuid, x: scale.x(marks[near.i].t) } : null);
+      return;
+    }
+    const x = px;
     const dragging = Math.abs(x - drag.anchor) >= DRAG_THRESHOLD;
-    if (dragging && !drag.captured) e.currentTarget.setPointerCapture(drag.pointerId);
+    // Capture keeps a drag alive when the pointer leaves the band; it is an enhancement, so where it
+    // is unavailable the drag must still work rather than throwing out of the handler.
+    if (dragging && !drag.captured) e.currentTarget.setPointerCapture?.(drag.pointerId);
     setDrag({ ...drag, x, captured: drag.captured || dragging });
     // Live filtering while dragging: the point of a brush is watching the transcript narrow.
     if (dragging) onRange(orderedRange(drag.anchor, x));
@@ -254,8 +269,8 @@ export function TimelineBand(props: TimelineBandProps) {
   const onPointerUp = (e: ReactPointerEvent<SVGSVGElement>) => {
     if (!drag) return;
     const x = localX(e);
-    if (drag.captured && e.currentTarget.hasPointerCapture(drag.pointerId)) {
-      e.currentTarget.releasePointerCapture(drag.pointerId);
+    if (drag.captured && e.currentTarget.hasPointerCapture?.(drag.pointerId)) {
+      e.currentTarget.releasePointerCapture?.(drag.pointerId);
     }
     setDrag(null);
     if (Math.abs(x - drag.anchor) < DRAG_THRESHOLD) {
@@ -306,6 +321,8 @@ export function TimelineBand(props: TimelineBandProps) {
   };
 
   const present = new Set<MarkKind>(marks.map((m) => m.kind));
+  const hoveredMark = hover ? marks.find((m) => m.uuid === hover.uuid) : undefined;
+  const hovered = hover && hoveredMark ? { mark: hoveredMark, x: hover.x } : null;
 
   const fillFor = (k: MarkKind): string =>
     k === "tool-error" ? TIMELINE_COLORS.toolError : k === "meta" ? C.muted : TIMELINE_COLORS[k];
@@ -359,6 +376,7 @@ export function TimelineBand(props: TimelineBandProps) {
           onPointerMove={onPointerMove}
           onPointerUp={onPointerUp}
           onPointerCancel={onPointerUp}
+          onPointerLeave={() => setHover(null)}
         >
           {/* Breaks first, so marks paint over their edges rather than under them. */}
           {scale.breaks.map((b, i) => {
@@ -380,7 +398,7 @@ export function TimelineBand(props: TimelineBandProps) {
                 }}
               >
                 <rect x={b.x0} y={0} width={b.x1 - b.x0} height={PLOT_H} />
-                <title>{breakLabel(b.durationMs, nextIsPrompt)}</title>
+                <title>{breakLabel(b.durationMs, nextIsPrompt)} — double-click to show it to scale</title>
               </g>
             );
           })}
@@ -406,6 +424,9 @@ export function TimelineBand(props: TimelineBandProps) {
           {marks.map((m) => (
             <MarkRect key={m.uuid} m={m} scale={scale} h={barHeight(m.value)} fill={fillFor(m.kind)} />
           ))}
+          {hovered && (
+            <rect className="tl-hover" x={hovered.x - 2} y={0} width={4} height={PLOT_H} />
+          )}
           {cursorMark && (
             <rect
               className="tl-cursor"
@@ -439,6 +460,40 @@ export function TimelineBand(props: TimelineBandProps) {
             })}
           </g>
         </svg>
+      )}
+
+      {hovered && (
+        // Positioned by the mark, not the pointer: it should not jitter while the reader moves along
+        // the band, and it must stay put long enough to read.
+        <div
+          className={"tl-tip" + (hovered.x > width * 0.6 ? " is-right" : "")}
+          style={hovered.x > width * 0.6 ? { right: Math.max(width - hovered.x, 0) } : { left: hovered.x }}
+          aria-hidden="true"
+        >
+          <div className="tl-tip-head">
+            {hovered.mark.turnSeq != null && <span className="tl-tip-turn">turn {hovered.mark.turnSeq}</span>}
+            <span>{hovered.mark.kind === "tool-error" ? "tool error" : hovered.mark.kind}</span>
+          </div>
+          <div className="tl-tip-row muted">
+            {new Date(hovered.mark.t).toLocaleTimeString()}
+            {usagePresent && hovered.mark.value > 0 ? ` · ${fmtTokens(hovered.mark.value)} tok` : ""}
+            {hovered.mark.durationMs > 0 ? ` · ${fmtDuration(hovered.mark.durationMs)}` : ""}
+          </div>
+          {(hovered.mark.error || hovered.mark.finding || hovered.mark.fileChange || hovered.mark.spawn) && (
+            <div className="tl-tip-row">
+              {hovered.mark.error && <span className="tl-tip-flag is-err">tool error</span>}
+              {hovered.mark.finding && (
+                <span className={"tl-tip-flag sev-" + hovered.mark.finding}>{hovered.mark.finding} finding</span>
+              )}
+              {hovered.mark.fileChange && (
+                <span className="tl-tip-flag">
+                  {hovered.mark.fileChangeCount} file{hovered.mark.fileChangeCount === 1 ? "" : "s"}
+                </span>
+              )}
+              {hovered.mark.spawn && <span className="tl-tip-flag">subagent</span>}
+            </div>
+          )}
+        </div>
       )}
 
       {/* The cursor is a visual mark; this is how it reaches a screen reader. Polite, because moving

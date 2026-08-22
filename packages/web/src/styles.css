@@ -431,6 +431,30 @@ table.sessions { width: 100%; border-collapse: collapse; }
 /* The floating match navigator, shown only once the toolbar's search box has scrolled away. Bottom
    right keeps it clear of the sticky turn headers at the top and out of the reading column. No entry
    animation, so there is nothing for prefers-reduced-motion to suppress. */
+/* Back to top. Shares the bottom-right corner with the search navigator, so it lifts out of the way
+   when that one is on screen — they are in different components, hence `:has()` on their ancestor
+   rather than a prop threaded between them. */
+.to-top {
+  position: fixed;
+  right: 18px;
+  bottom: 18px;
+  z-index: 19;
+  width: 38px;
+  height: 38px;
+  border-radius: 50%;
+  border: 1px solid var(--border);
+  background: var(--panel2);
+  color: var(--text);
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+  box-shadow: 0 4px 14px rgb(0 0 0 / 30%);
+}
+.to-top:hover { background: var(--tag); }
+.to-top:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.detail:has(.search-nav) ~ .to-top,
+body:has(.search-nav) .to-top { bottom: 68px; }
+
 .search-nav {
   position: fixed;
   right: 18px;
@@ -1369,6 +1393,38 @@ table.kv .muted { font-size: 12px; margin-top: 4px; }
   margin: -4px 0 10px;
 }
 .tl-pill-range { font-weight: 600; font-variant-numeric: tabular-nums; }
+/* Hover: a highlight on the mark plus a card describing it. The card is positioned by the mark rather
+   than the pointer so it stays still enough to read, and flips to the right edge past the midpoint so
+   it never runs off the band. */
+.tl-hover { fill: var(--text); opacity: 0.28; pointer-events: none; }
+.timeline { position: relative; }
+.tl-tip {
+  position: absolute;
+  bottom: 52px;
+  z-index: 5;
+  pointer-events: none;
+  min-width: 140px;
+  max-width: 260px;
+  padding: 6px 9px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--panel2);
+  box-shadow: 0 6px 18px rgb(0 0 0 / 35%);
+  font-size: 12px;
+  line-height: 1.45;
+}
+.tl-tip.is-right { text-align: right; }
+.tl-tip-head { display: flex; gap: 6px; align-items: baseline; font-weight: 600; }
+.tl-tip.is-right .tl-tip-head { justify-content: flex-end; }
+.tl-tip-turn { color: var(--muted); font-weight: 500; }
+.tl-tip-row { font-variant-numeric: tabular-nums; display: flex; gap: 6px; flex-wrap: wrap; }
+.tl-tip.is-right .tl-tip-row { justify-content: flex-end; }
+.tl-tip-flag { border-radius: 4px; background: var(--tag); padding: 0 5px; font-size: 11px; }
+.tl-tip-flag.is-err { background: color-mix(in srgb, var(--err) 22%, transparent); color: var(--err); }
+.tl-tip-flag.sev-critical { background: color-mix(in srgb, var(--sev-c-critical) 22%, transparent); color: var(--sev-c-critical); }
+.tl-tip-flag.sev-high { background: color-mix(in srgb, var(--sev-c-high) 22%, transparent); color: var(--sev-c-high); }
+.tl-tip-flag.sev-medium { background: color-mix(in srgb, var(--sev-c-medium) 22%, transparent); color: var(--sev-c-medium); }
+.tl-tip-flag.sev-low { background: color-mix(in srgb, var(--sev-c-low) 22%, transparent); color: var(--sev-c-low); }
 .tl-legend { display: flex; flex-wrap: wrap; gap: 10px; font-size: 11px; color: var(--muted); margin-top: 4px; }
 .tl-key { display: inline-flex; align-items: center; gap: 4px; }
 .tl-swatch { width: 8px; height: 8px; border-radius: 2px; display: inline-block; }

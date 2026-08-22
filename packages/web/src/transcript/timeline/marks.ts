@@ -22,6 +22,8 @@ export type TokenMetric = "work" | "output" | "total";
 export interface Mark {
   uuid: string;
   kind: MarkKind;
+  /** 1-based turn number, or null for events outside any turn (leading meta lines). */
+  turnSeq: number | null;
   t: number;
   durationMs: number;
   /** The chosen metric's value; 0 when the event has no usage row. */
@@ -30,6 +32,8 @@ export interface Mark {
   error: boolean;
   finding: Severity | null;
   fileChange: boolean;
+  /** How many file changes this message made — the rail shows one square either way. */
+  fileChangeCount: number;
   spawn: boolean;
 }
 
@@ -61,6 +65,8 @@ export interface BuildMarksInput {
   points: readonly TimelinePoint[];
   findings?: readonly Finding[] | null;
   fileChanges?: readonly FileChangeRow[] | null;
+  /** turn id -> its 0-based `seq`, for the hover label. */
+  turnSeqById?: ReadonlyMap<string, number> | null;
   metric: TokenMetric;
 }
 
@@ -68,7 +74,7 @@ export interface BuildMarksInput {
  * Join placed points back to their events and annotations. Driven by `points` rather than `events`, so
  * ordering and the null-timestamp exclusion stay the scale's business alone.
  */
-export function buildMarks({ events, points, findings, fileChanges, metric }: BuildMarksInput): Mark[] {
+export function buildMarks({ events, points, findings, fileChanges, turnSeqById, metric }: BuildMarksInput): Mark[] {
   const byUuid = new Map(events.map((e) => [e.uuid, e]));
 
   const worstFinding = new Map<string, Severity>();
@@ -80,22 +86,25 @@ export function buildMarks({ events, points, findings, fileChanges, metric }: Bu
     }
   }
 
-  const changed = new Set<string>();
-  for (const c of fileChanges ?? []) if (c.event_uuid) changed.add(c.event_uuid);
+  const changed = new Map<string, number>();
+  for (const c of fileChanges ?? []) if (c.event_uuid) changed.set(c.event_uuid, (changed.get(c.event_uuid) ?? 0) + 1);
 
   const marks: Mark[] = [];
   for (const p of points) {
     const e = byUuid.get(p.uuid);
     if (!e) continue;
+    const turnSeq = e.turn_id != null ? turnSeqById?.get(e.turn_id) : undefined;
     marks.push({
       uuid: p.uuid,
       kind: markKind(e),
+      turnSeq: turnSeq == null ? null : turnSeq + 1,
       t: p.t,
       durationMs: p.durationMs,
       value: metricValue(e, metric),
       error: e.toolCalls.some((t) => t.status === "error"),
       finding: worstFinding.get(p.uuid) ?? null,
-      fileChange: changed.has(p.uuid),
+      fileChange: (changed.get(p.uuid) ?? 0) > 0,
+      fileChangeCount: changed.get(p.uuid) ?? 0,
       spawn: e.toolCalls.some((t) => t.spawned_session_id),
     });
   }

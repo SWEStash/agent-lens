@@ -77,6 +77,64 @@ function setup(over: Partial<Parameters<typeof TimelineBand>[0]> = {}) {
   return { svg, live, onRange, onJump };
 }
 
+describe("timeline band hover", () => {
+  // The marks are 2-3px wide and carry only colour and height, so without this the reader is asked to
+  // click or brush a target they cannot identify.
+  const hoverAt = (svg: SVGSVGElement, clientX: number) => fireEvent.pointerMove(svg, { clientX, clientY: 20 });
+
+  it("names the message under the pointer: turn, type, time and size", () => {
+    const { svg } = setup({ turnSeqById: new Map([["t1", 1]]) });
+    hoverAt(svg, 0);
+    const tip = document.querySelector(".tl-tip") as HTMLElement;
+    expect(tip).toBeTruthy();
+    expect(tip.textContent).toMatch(/turn 2/);
+    expect(tip.textContent).toMatch(/user/);
+  });
+
+  it("shows the token count on a message that has one", () => {
+    const { svg } = setup();
+    // The second mark carries usage; the band is 1000px wide over four evenly spaced messages.
+    hoverAt(svg, 333);
+    expect(document.querySelector(".tl-tip")?.textContent).toMatch(/4\.2k tok/);
+  });
+
+  it("highlights the mark it is describing", () => {
+    const { svg } = setup();
+    hoverAt(svg, 0);
+    expect(document.querySelector(".tl-hover")).toBeTruthy();
+  });
+
+  it("ignores the pointer when it is nowhere near a mark", () => {
+    const { svg } = setup({ events: [EVENTS[0], EVENTS[3]] });
+    hoverAt(svg, 500); // midway between two marks 1000px apart
+    expect(document.querySelector(".tl-tip")).toBeNull();
+  });
+
+  it("clears when the pointer leaves the band", () => {
+    const { svg } = setup();
+    hoverAt(svg, 0);
+    expect(document.querySelector(".tl-tip")).toBeTruthy();
+    fireEvent.pointerLeave(svg);
+    expect(document.querySelector(".tl-tip")).toBeNull();
+  });
+
+  it("flips to the right edge past the midpoint so it cannot run off the band", () => {
+    const { svg } = setup();
+    hoverAt(svg, 1000);
+    expect(document.querySelector(".tl-tip")?.className).toMatch(/is-right/);
+    hoverAt(svg, 0);
+    expect(document.querySelector(".tl-tip")?.className).not.toMatch(/is-right/);
+  });
+
+  it("does not fight a drag for the pointer", () => {
+    const { svg, onRange } = setup();
+    fireEvent.pointerDown(svg, { button: 0, clientX: 0, clientY: 20, pointerId: 1 });
+    fireEvent.pointerMove(svg, { clientX: 600, clientY: 20, pointerId: 1 });
+    expect(document.querySelector(".tl-tip")).toBeNull();
+    expect(onRange).toHaveBeenCalled();
+  });
+});
+
 describe("timeline band degraded states", () => {
   it("with no usage anywhere, falls back to uniform heights and hides the metric control", () => {
     // A newer page served by a server that predates per-event usage. It must still do its navigation
