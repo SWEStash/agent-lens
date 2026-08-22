@@ -323,9 +323,11 @@ export function TimelineBand(props: TimelineBandProps) {
             </select>
           </label>
         )}
-        {/* Hidden when the session has no breaks: the two axes are then byte-identical, which is the
-            normal case for a subagent (96% contain no gap over a minute at all). */}
-        {scale.breaks.length > 0 && (
+        {/* Hidden only when the session has no gap long enough to collapse — then the two axes really
+            are identical, which is the normal case for a subagent (96% contain no gap over a minute).
+            Keyed off the session's gaps, NOT off `breaks`: literal mode collapses nothing by
+            definition, so using `breaks` here would hide the control that switches back. */}
+        {scale.collapsibleGaps > 0 && (
           <button
             type="button"
             className="link-btn tl-axis"

@@ -99,6 +99,11 @@ export interface TimeScale {
   activeMs: number;
   /** Wall-clock swallowed by breaks. */
   idleMs: number;
+  /** How many gaps are long enough to collapse, measured against IDLE_GAP_MS and INDEPENDENT of the
+   *  `gapMs` this scale was laid out with. `breaks` answers "what is collapsed right now", which is
+   *  zero in literal mode and zero once every gap has been opened — so it cannot be used to decide
+   *  whether collapsing is available at all. */
+  collapsibleGaps: number;
   /** Fewer than two distinct timestamps: there is no real range to brush or zoom over. */
   degenerate: boolean;
   /** Time → pixel. Clamped to the domain. */
@@ -264,6 +269,8 @@ export function buildScale(events: readonly ScaleInput[], opts: ScaleOptions): T
 
   const idleMs = gaps.reduce((a, b) => a + b, 0);
   const expanded: ExpandedGap[] = held.map((h) => ({ ...h, x0: x(h.t0), x1: x(h.t1) }));
+  let collapsibleGaps = 0;
+  for (let i = 1; i < placed.length; i++) if (placed[i].t - placed[i - 1].t > IDLE_GAP_MS) collapsibleGaps++;
   return {
     points,
     segments,
@@ -274,6 +281,7 @@ export function buildScale(events: readonly ScaleInput[], opts: ScaleOptions): T
     spanMs: last - first,
     activeMs: Math.max(last - first - idleMs, 0),
     idleMs,
+    collapsibleGaps,
     degenerate,
     x,
     t,
@@ -291,6 +299,7 @@ function emptyScale(width: number): TimeScale {
     spanMs: 0,
     activeMs: 0,
     idleMs: 0,
+    collapsibleGaps: 0,
     degenerate: true,
     x: () => 0,
     t: () => 0,

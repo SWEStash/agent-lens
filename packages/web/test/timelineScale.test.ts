@@ -69,6 +69,29 @@ describe("buildScale — gap compression", () => {
     expect(buildScale(at(0, IDLE_GAP_MS + 1), { width: WIDTH }).breaks).toHaveLength(1);
   });
 
+  it("still reports collapsible gaps in literal mode, where nothing is collapsed", () => {
+    // The axis toggle keys off this. `breaks` is 0 in literal mode by definition, so keying off that
+    // would hide the only control that switches back to compressed.
+    const hour = 60 * 60 * 1000;
+    const evs = at(0, 1000, hour, hour + 1000, 2 * hour);
+    const literal = buildScale(evs, { width: WIDTH, gapMs: Infinity });
+    expect(literal.breaks).toHaveLength(0);
+    expect(literal.collapsibleGaps).toBe(2);
+
+    const compressed = buildScale(evs, { width: WIDTH });
+    expect(compressed.breaks).toHaveLength(2);
+    expect(compressed.collapsibleGaps).toBe(2);
+
+    // Same for a gap the reader has opened in place: it is still a gap that CAN be collapsed.
+    const opened = buildScale(evs, { width: WIDTH, expandedGaps: new Set([T0 + 1000]) });
+    expect(opened.breaks).toHaveLength(1);
+    expect(opened.collapsibleGaps).toBe(2);
+  });
+
+  it("reports no collapsible gaps for a session that has none", () => {
+    expect(buildScale(at(0, 1000, 2000), { width: WIDTH }).collapsibleGaps).toBe(0);
+  });
+
   it("literal mode (gapMs: Infinity) is byte-identical when no gap exceeds the threshold", () => {
     const evs = at(0, 1000, 2000, 30_000);
     const compressed = buildScale(evs, { width: WIDTH });

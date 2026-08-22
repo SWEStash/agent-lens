@@ -197,4 +197,25 @@ describe("timeline band keyboard support", () => {
     setup();
     expect(screen.queryByRole("button", { name: /time/i })).toBeNull();
   });
+
+  it("keeps the axis toggle reachable in literal mode, so the choice is reversible", () => {
+    // Literal mode collapses nothing, so a toggle keyed off the drawn breaks would vanish the moment
+    // it was used, stranding the reader on literal with no way back.
+    const gapped = [ev("a", 0), ev("b", 1), ev("c", 40), ev("d", 41)];
+    for (const mode of ["compressed", "literal"] as const) {
+      cleanup();
+      setup({ events: gapped, axisMode: mode });
+      expect(screen.getByRole("button", { name: /time/i })).toBeTruthy();
+    }
+  });
+
+  it("keeps it reachable when every gap has been opened in place", () => {
+    const gapped = [ev("a", 0), ev("b", 1), ev("c", 40), ev("d", 41)];
+    const { svg } = setup({ events: gapped });
+    const gap = document.querySelector(".tl-break") as SVGGElement;
+    fireEvent.dblClick(gap);
+    expect(document.querySelectorAll(".tl-break")).toHaveLength(0);
+    expect(screen.getByRole("button", { name: /time/i })).toBeTruthy();
+    expect(svg).toBeTruthy();
+  });
 });
