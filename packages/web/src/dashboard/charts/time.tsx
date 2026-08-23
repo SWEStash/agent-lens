@@ -3,7 +3,7 @@ import { ResponsiveContainer, LineChart, Line, BarChart, Bar, XAxis, YAxis, Cart
 import { ChartCard, useChartTokens } from "../../charts/theme";
 import { fmtDuration, fmtTokens, shortModel } from "../../format";
 import { resolveZone, zoneLabel } from "../../tz";
-import { heatCells, rampStep, weeklyBySource, rolling7d, type HeatCell } from "../burn";
+import { burnBySource, heatCells, rampStep, type HeatCell } from "../burn";
 import { CHART_MARGIN, unitLabel, type ChartProps } from "./common";
 
 const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
@@ -121,26 +121,34 @@ export function BurnHeatmap({ hidden, time }: ChartProps) {
   );
 }
 
-/** Weekly work tokens, one line per source. Sources are never summed: they have genuinely different
- *  profiles, and a combined line hides the only thing worth seeing. */
-export function WeeklyBurn({ hidden, time }: ChartProps) {
+/** Work tokens over time, one line per source, at the dashboard's chosen bucket. Sources are never
+ *  summed: they have genuinely different profiles, and a combined line hides the only thing worth
+ *  seeing. */
+export function BurnBySource({ hidden, ts, time }: ChartProps) {
   const { C, PALETTE, axisProps, gridProps, tooltipStyle } = useChartTokens();
   const zone = resolveZone();
-  const { weeks, sources } = useMemo(() => weeklyBySource(time?.burn_hours ?? [], zone), [time, zone]);
-  const data = weeks.map((w) => ({ week: w.week, ...w.bySource }));
+  // Follow the bucket the dashboard actually resolved, so this card and "Tokens over time" always
+  // agree on granularity. Before `ts` lands there is nothing to follow, so fall back to the bucket
+  // this card used when it was pinned to weeks.
+  const bucket = ts?.bucket ?? "week";
+  const { points, sources } = useMemo(() => burnBySource(time?.burn_hours ?? [], zone, bucket), [time, zone, bucket]);
+  const data = points.map((p) => ({ bucket: p.bucket, ...p.bySource }));
 
   return (
     <ChartCard
-      title="Weekly burn by source"
-      hint={`work tokens per local ISO week, ${zoneLabel(zone)}`}
+      title="Burn by source"
+      hint={`work tokens per local ${bucket}, ${zoneLabel(zone)}`}
       guide={
         <>
-          <p>How much each account spent, week by week. Use it to spot a week that broke the pattern.</p>
+          <p>How much each account spent over time. Use it to compare the sources, and to spot a bucket that broke the pattern.</p>
           <dl>
             <dt>x-axis</dt>
-            <dd>ISO week (Monday-start), in {zoneLabel(zone)}.</dd>
+            <dd>
+              local {bucket}, in {zoneLabel(zone)} — it follows the dashboard&apos;s bucket control, so
+              switching to <em>day</em> shows each source&apos;s shape where a month would flatten it.
+            </dd>
             <dt>y-axis</dt>
-            <dd>work tokens — input + output + cache-write, summed over the week. Cache reads are excluded.</dd>
+            <dd>work tokens — input + output + cache-write, summed over the bucket. Cache reads are excluded.</dd>
             <dt>one line per source</dt>
             <dd>
               Sources are <strong>never added together</strong>: they are separate accounts with
@@ -148,59 +156,15 @@ export function WeeklyBurn({ hidden, time }: ChartProps) {
               chart is for.
             </dd>
           </dl>
-          <p>The first and last weeks are usually partial, so their dip is the range boundary, not a change in behaviour.</p>
-        </>
-      }
-      hidden={hidden}
-    >
-      {time && !data.length ? (
-        <div className="empty">No token usage in range.</div>
-      ) : (
-        <ResponsiveContainer width="100%" height="100%">
-          <LineChart data={data} margin={CHART_MARGIN}>
-            <CartesianGrid {...gridProps} />
-            <XAxis dataKey="week" {...axisProps} minTickGap={24} />
-            <YAxis {...axisProps} tickFormatter={(v) => fmtTokens(v as number)} width={48} label={unitLabel("work tokens", C.muted)} />
-            <Tooltip {...tooltipStyle} formatter={(v: number | string, n: string) => [`${fmtTokens(Number(v))} tokens`, n]} />
-            {sources.length > 1 && <Legend wrapperStyle={{ fontSize: 12 }} formatter={mutedLegend(C.muted)} />}
-            {sources.map((src, i) => (
-              <Line key={src} type="monotone" dataKey={src} stroke={PALETTE[i % PALETTE.length]} strokeWidth={2} dot={false} />
-            ))}
-          </LineChart>
-        </ResponsiveContainer>
-      )}
-    </ChartCard>
-  );
-}
-
-/** Rolling 7-day burn per source. A trailing window needs no reset anchor and no notion of a
- *  provider's billing period, which is exactly why it stands in for a quota burn-up. */
-export function Rolling7d({ hidden, time }: ChartProps) {
-  const { C, PALETTE, axisProps, gridProps, tooltipStyle } = useChartTokens();
-  const zone = resolveZone();
-  const { days, sources } = useMemo(() => rolling7d(time?.burn_hours ?? [], zone), [time, zone]);
-  const data = days.map((d) => ({ day: d.day, ...d.bySource }));
-
-  return (
-    <ChartCard
-      title="Rolling 7-day burn"
-      hint={`trailing 7-day total, by day, ${zoneLabel(zone)}`}
-      guide={
-        <>
           <p>
-            Each point answers: <em>how many tokens did this source spend in the seven days ending
-            here?</em> The line rises while a heavy week accumulates and falls as those days age out
-            of the window.
+            The first and last buckets are usually partial, so their dip is the range boundary, not a
+            change in behaviour.
           </p>
-          <dl>
-            <dt>x-axis</dt>
-            <dd>local day, in {zoneLabel(zone)} — every day is plotted, including idle ones, so the window can visibly fall.</dd>
-            <dt>y-axis</dt>
-            <dd>work tokens summed over that day and the six before it. Not a cumulative total: it is a moving window, so it goes down as well as up.</dd>
-          </dl>
           <p>
-            A trailing window is used rather than a quota period because it needs no reset anchor and
-            assumes nothing about any provider's billing model.
+            These totals <strong>deliberately do not match &quot;Tokens over time&quot;</strong> even at
+            the same bucket: this chart places tokens by <em>when they were spent</em>, that one by the
+            start of the session that spent them, so a session straddling a boundary lands differently
+            in each.
           </p>
         </>
       }
@@ -212,7 +176,7 @@ export function Rolling7d({ hidden, time }: ChartProps) {
         <ResponsiveContainer width="100%" height="100%">
           <LineChart data={data} margin={CHART_MARGIN}>
             <CartesianGrid {...gridProps} />
-            <XAxis dataKey="day" {...axisProps} minTickGap={32} />
+            <XAxis dataKey="bucket" {...axisProps} minTickGap={24} />
             <YAxis {...axisProps} tickFormatter={(v) => fmtTokens(v as number)} width={48} label={unitLabel("work tokens", C.muted)} />
             <Tooltip {...tooltipStyle} formatter={(v: number | string, n: string) => [`${fmtTokens(Number(v))} tokens`, n]} />
             {sources.length > 1 && <Legend wrapperStyle={{ fontSize: 12 }} formatter={mutedLegend(C.muted)} />}

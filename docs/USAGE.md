@@ -420,9 +420,11 @@ date range):
     runs mostly idle and often spans hours, so session-start bucketing would drop a whole day's spend
     into the hour it began. It therefore **will not tie out against "Tokens over time"** — that is
     deliberate, see [ADR-033](decisions/ADR-033-time-analytics-bucketing.md).
-  - ***Weekly burn by source*** and ***Rolling 7-day burn*** — sources are plotted separately and
-    never summed; they have genuinely different profiles. The rolling window needs no reset anchor
-    and assumes no provider's quota mechanics.
+  - ***Burn by source*** — work tokens over time, one line per source. Sources are plotted
+    separately and **never summed**; they have genuinely different profiles. It follows the
+    dashboard's bucket control, so switching to *day* shows each source's shape where a month
+    flattens it. Like the heatmap it buckets by the event's own timestamp, so it does not tie out
+    against "Tokens over time" either.
   - ***Model response latency*** — prompt → first assistant token, p50 and p90 per model, main
     sessions only. Weekly at the finest and weeks under five turns are dropped: split by model, a day
     holds one or two turns, and a percentile over one observation is that observation. The p90 tail

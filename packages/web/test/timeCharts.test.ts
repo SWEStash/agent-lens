@@ -15,8 +15,8 @@ describe("TIME_CHART_IDS", () => {
 
   it("covers every chart that reads the time payload", () => {
     // Derived from the registry rather than restated: the tiles fed by /dashboard/time are exactly
-    // the ones this list must hold, so adding a sixth one without gating it fails here.
-    const timeComponents = new Set(["BurnHeatmap", "WeeklyBurn", "Rolling7d", "ModelLatency", "ReviewLatency"]);
+    // the ones this list must hold, so adding a fifth one without gating it fails here.
+    const timeComponents = new Set(["BurnHeatmap", "BurnBySource", "ModelLatency", "ReviewLatency"]);
     const expected = CHART_REGISTRY.filter((c) => timeComponents.has(c.Component.name)).map((c) => c.id);
     expect([...TIME_CHART_IDS].sort()).toEqual(expected.sort());
   });

@@ -3,7 +3,7 @@
  * zone: reading the host zone (UTC-3) would let an off-by-one offset pass unnoticed.
  */
 import { describe, it, expect } from "vitest";
-import { heatCells, rampStep, weeklyBySource, rolling7d, isoWeek, type BurnHour } from "../src/dashboard/burn";
+import { heatCells, rampStep, burnBySource, isoWeek, type BurnHour } from "../src/dashboard/burn";
 
 const row = (hour: string, work: number, source: string | null = "isf"): BurnHour => ({ hour, source, work });
 
@@ -65,49 +65,52 @@ describe("rampStep", () => {
   });
 });
 
-describe("weeklyBySource", () => {
+describe("burnBySource", () => {
   it("keeps sources separate rather than summing them", () => {
-    const { weeks, sources } = weeklyBySource(
+    const { points, sources } = burnBySource(
       [row("2026-03-02T12", 10, "isf"), row("2026-03-03T12", 5, "personal")],
       "UTC",
+      "week",
     );
     expect(sources).toEqual(["isf", "personal"]);
-    expect(weeks).toHaveLength(1);
-    expect(weeks[0].bySource).toEqual({ isf: 10, personal: 5 });
+    expect(points).toHaveLength(1);
+    expect(points[0].bySource).toEqual({ isf: 10, personal: 5 });
   });
 
   it("buckets by the LOCAL week, so a UTC Monday can belong to the previous one", () => {
     // 2026-03-02T01:00Z is Monday W10 in UTC but Sunday W09 in Buenos Aires.
     const rows = [row("2026-03-02T01", 1)];
-    expect(weeklyBySource(rows, "UTC").weeks[0].week).toBe("2026-W10");
-    expect(weeklyBySource(rows, "America/Argentina/Buenos_Aires").weeks[0].week).toBe("2026-W09");
+    expect(burnBySource(rows, "UTC", "week").points[0].bucket).toBe("2026-W10");
+    expect(burnBySource(rows, "America/Argentina/Buenos_Aires", "week").points[0].bucket).toBe("2026-W09");
+  });
+
+  it("splits by day when the dashboard asks for days, instead of flattening into one week", () => {
+    const rows = [row("2026-03-02T12", 10), row("2026-03-03T12", 5)];
+    expect(burnBySource(rows, "UTC", "week").points).toHaveLength(1);
+    const { points } = burnBySource(rows, "UTC", "day");
+    expect(points.map((p) => p.bucket)).toEqual(["2026-03-02", "2026-03-03"]);
+    expect(points.map((p) => p.bySource.isf)).toEqual([10, 5]);
+  });
+
+  it("folds a whole month into one bucket when asked", () => {
+    const { points } = burnBySource([row("2026-03-02T12", 10), row("2026-03-30T12", 5)], "UTC", "month");
+    expect(points).toEqual([{ bucket: "2026-03", bySource: { isf: 15 } }]);
+  });
+
+  it("sorts buckets chronologically at every granularity", () => {
+    const rows = [row("2026-04-01T12", 1), row("2026-03-02T12", 1), row("2026-03-20T12", 1)];
+    for (const bucket of ["day", "week", "month"] as const) {
+      const keys = burnBySource(rows, "UTC", bucket).points.map((p) => p.bucket);
+      expect([...keys].sort()).toEqual(keys);
+    }
   });
 
   it("labels a null source rather than dropping it", () => {
-    expect(weeklyBySource([row("2026-03-02T12", 7, null)], "UTC").sources).toEqual(["(unassigned)"]);
-  });
-});
-
-describe("rolling7d", () => {
-  it("sums a trailing 7-day window per source", () => {
-    const rows = Array.from({ length: 10 }, (_, i) => row(`2026-03-${String(i + 1).padStart(2, "0")}T12`, 10));
-    const { days } = rolling7d(rows, "UTC");
-    expect(days).toHaveLength(10);
-    expect(days[0].bySource.isf).toBe(10); // day 1: only itself
-    expect(days[6].bySource.isf).toBe(70); // day 7: the window is full
-    expect(days[9].bySource.isf).toBe(70); // and stays full
-  });
-
-  it("emits idle days instead of skipping them, so the window can fall", () => {
-    const { days } = rolling7d([row("2026-03-01T12", 100), row("2026-03-10T12", 5)], "UTC");
-    expect(days).toHaveLength(10);
-    expect(days[0].bySource.isf).toBe(100);
-    expect(days[8].bySource.isf).toBe(0); // 2026-03-09: the spike has aged out
-    expect(days[9].bySource.isf).toBe(5);
+    expect(burnBySource([row("2026-03-02T12", 7, null)], "UTC", "week").sources).toEqual(["(unassigned)"]);
   });
 
   it("returns nothing for no rows rather than throwing", () => {
-    expect(rolling7d([], "UTC")).toEqual({ days: [], sources: [] });
+    expect(burnBySource([], "UTC", "day")).toEqual({ points: [], sources: [] });
   });
 });
 

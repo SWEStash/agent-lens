@@ -58,76 +58,54 @@ export function rampStep(mean: number, max: number, steps: number): number {
   return Math.min(steps, Math.max(1, Math.ceil(Math.sqrt(mean / max) * steps)));
 }
 
-export interface WeekPoint {
-  /** Local ISO-ish week key, `YYYY-Www`, sortable as a string. */
-  week: string;
+export interface BurnPoint {
+  /** Local bucket key: `YYYY-MM-DD`, `YYYY-Www` or `YYYY-MM`. Sortable as a string in every case. */
+  bucket: string;
   bySource: Record<string, number>;
 }
 
+/** The granularity a burn fold uses — the same three the dashboard's bucket control offers. */
+export type BurnBucket = "day" | "week" | "month";
+
+/** The local bucket key a day belongs to, at the requested granularity. */
+function bucketKey(dayKey: string, bucket: BurnBucket): string {
+  if (bucket === "day") return dayKey;
+  if (bucket === "month") return dayKey.slice(0, 7);
+  return isoWeek(dayKey);
+}
+
 /**
- * Weekly work tokens per source, in LOCAL weeks, plus a rolling 7-day total per source.
+ * Work tokens per source, bucketed in LOCAL time at the dashboard's chosen granularity.
  *
  * Sources stay separate all the way through — they have genuinely different profiles and summing
  * them into one line hides the only thing the chart is for.
- */
-export function weeklyBySource(rows: readonly BurnHour[], zone: string): { weeks: WeekPoint[]; sources: string[] } {
-  const byWeek = new Map<string, Record<string, number>>();
-  const sources = new Set<string>();
-  for (const r of rows) {
-    const p = localParts(r.hour, zone);
-    if (!p) continue;
-    const src = r.source ?? "(unassigned)";
-    sources.add(src);
-    const wk = isoWeek(p.dayKey);
-    const bucket = byWeek.get(wk) ?? {};
-    bucket[src] = (bucket[src] ?? 0) + r.work;
-    byWeek.set(wk, bucket);
-  }
-  const weeks = [...byWeek.entries()]
-    .sort((a, b) => a[0].localeCompare(b[0]))
-    .map(([week, bySource]) => ({ week, bySource }));
-  return { weeks, sources: [...sources].sort() };
-}
-
-export interface DayPoint {
-  day: string;
-  bySource: Record<string, number>;
-}
-
-/**
- * Rolling 7-day work tokens per source, by local day.
  *
- * A rolling window needs no reset anchor and no notion of a provider's billing period, which is
- * exactly why it replaced the reconstructed 5-hour quota window (see the design doc, §14.3).
- * Days with no activity still get a point, or the window would silently skip over idle stretches.
+ * The granularity is the reader's, not ours: a token sum is a fact at any bucket size, so unlike the
+ * latency tile (which is pinned to weeks because a daily percentile is often a single observation)
+ * this one follows the bucket control. At `day` the two sources' profiles are legible; a week sum
+ * flattens them.
  */
-export function rolling7d(rows: readonly BurnHour[], zone: string): { days: DayPoint[]; sources: string[] } {
-  const perDay = new Map<string, Record<string, number>>();
+export function burnBySource(
+  rows: readonly BurnHour[],
+  zone: string,
+  bucket: BurnBucket,
+): { points: BurnPoint[]; sources: string[] } {
+  const byBucket = new Map<string, Record<string, number>>();
   const sources = new Set<string>();
   for (const r of rows) {
     const p = localParts(r.hour, zone);
     if (!p) continue;
     const src = r.source ?? "(unassigned)";
     sources.add(src);
-    const bucket = perDay.get(p.dayKey) ?? {};
-    bucket[src] = (bucket[src] ?? 0) + r.work;
-    perDay.set(p.dayKey, bucket);
+    const k = bucketKey(p.dayKey, bucket);
+    const acc = byBucket.get(k) ?? {};
+    acc[src] = (acc[src] ?? 0) + r.work;
+    byBucket.set(k, acc);
   }
-  const keys = [...perDay.keys()].sort();
-  if (!keys.length) return { days: [], sources: [] };
-  const all = eachDay(keys[0], keys[keys.length - 1]);
-  const srcList = [...sources].sort();
-  const days: DayPoint[] = [];
-  for (let i = 0; i < all.length; i++) {
-    const bySource: Record<string, number> = {};
-    for (const src of srcList) {
-      let sum = 0;
-      for (let k = Math.max(0, i - 6); k <= i; k++) sum += perDay.get(all[k])?.[src] ?? 0;
-      bySource[src] = sum;
-    }
-    days.push({ day: all[i], bySource });
-  }
-  return { days, sources: srcList };
+  const points = [...byBucket.entries()]
+    .sort((a, b) => a[0].localeCompare(b[0]))
+    .map(([key, bySource]) => ({ bucket: key, bySource }));
+  return { points, sources: [...sources].sort() };
 }
 
 /** ISO-8601 week key for a `YYYY-MM-DD` local day. Weeks start Monday and belong to the year holding
@@ -141,14 +119,4 @@ export function isoWeek(dayKey: string): string {
   const jan1 = new Date(Date.UTC(dt.getUTCFullYear(), 0, 1));
   const week = 1 + Math.round((thursday - jan1.getTime()) / 604_800_000 - ((jan1.getUTCDay() + 6) % 7 > 3 ? -1 : 0));
   return `${dt.getUTCFullYear()}-W${String(week).padStart(2, "0")}`;
-}
-
-/** Every `YYYY-MM-DD` from `from` to `to` inclusive. */
-function eachDay(from: string, to: string): string[] {
-  const out: string[] = [];
-  const end = Date.parse(to + "T00:00:00Z");
-  for (let t = Date.parse(from + "T00:00:00Z"); t <= end; t += 86_400_000) {
-    out.push(new Date(t).toISOString().slice(0, 10));
-  }
-  return out;
 }
