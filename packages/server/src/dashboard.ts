@@ -498,6 +498,8 @@ export function dashboardTime(db: DB, f: DashFilters, bucketParam?: string): Das
  *
  * Buckets holding fewer than MIN_LATENCY_SAMPLES turns are dropped rather than plotted: a percentile
  * over three observations is not a percentile. The drop is visible in `n`, which ships with the row.
+ * This is what makes a fine bucket safe rather than merely sparse — and `n` is also what tells the
+ * reader that a cell holding exactly five turns reports its slowest as "p90".
  *
  * The tail carries real contamination that no query can separate out — a turn whose first assistant
  * event lands hours later is an agent parked on a permission prompt, not a slow model, and the
@@ -507,11 +509,13 @@ export function dashboardTime(db: DB, f: DashFilters, bucketParam?: string): Das
  */
 const MIN_LATENCY_SAMPLES = 5;
 
-function modelLatency(db: DB, mw: Where, chosen: Bucket): DashTime["latency"] {
-  // Never a daily bucket, whatever the dashboard's control says. Split by model, a day holds one or
-  // two turns for most models on the real corpus, and a p90 over a single observation IS that
-  // observation — a chart of noise that reads as a latency spike.
-  const bucket: Bucket = chosen === "day" ? "week" : chosen;
+function modelLatency(db: DB, mw: Where, bucket: Bucket): DashTime["latency"] {
+  // Follows the dashboard's bucket control like every other tile. The thin-sample failure this once
+  // guarded against with a hard weekly floor is handled by MIN_LATENCY_SAMPLES instead, which is the
+  // check that actually bites: it drops a (bucket, model) cell wherever the turns aren't there,
+  // rather than assuming a whole granularity is unusable. On the real corpus a daily bucket still
+  // yields 119 plotted cells against a week's 36 — thinner, and honestly so, since the cells that
+  // cannot support a percentile disappear instead of being drawn.
   const expr = BUCKET_EXPR[bucket];
   const series = queryAll<LatencyRow>(
     db,

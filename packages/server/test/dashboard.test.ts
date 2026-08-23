@@ -242,10 +242,18 @@ describe("dashboardTime", () => {
     expect(row.p90_ms).toBe(100_000);
   });
 
-  it("buckets latency by week even when the dashboard asks for days", () => {
-    // Split by model, a daily bucket holds one or two turns on real data — see modelLatency.
-    expect(dashboardTime(seedLatency(), {}, "day").latency.bucket).toBe("week");
-    expect(dashboardTime(seedLatency(), {}, "month").latency.bucket).toBe("month");
+  it("follows the requested bucket rather than forcing a weekly floor", () => {
+    // A daily bucket used to be silently rewritten to weekly. What keeps a fine bucket honest is
+    // MIN_LATENCY_SAMPLES dropping the cells that cannot carry a percentile (asserted above), not
+    // refusing the granularity outright.
+    for (const bucket of ["day", "week", "month"] as const) {
+      const t = dashboardTime(seedLatency(), {}, bucket);
+      expect(t.latency.bucket).toBe(bucket);
+      // The fixture's turns all hang off one session start, so they share a cell at every
+      // granularity and clear the floor in each.
+      expect(t.latency.series).toHaveLength(1);
+      expect(t.latency.series[0].n).toBe(5);
+    }
   });
 
   it("splits turnaround by whether the turn wrote files", () => {

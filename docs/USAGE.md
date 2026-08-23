@@ -426,10 +426,11 @@ date range):
     flattens it. Like the heatmap it buckets by the event's own timestamp, so it does not tie out
     against "Tokens over time" either.
   - ***Model response latency*** — prompt → first assistant token, p50 and p90 per model, main
-    sessions only. Weekly at the finest and weeks under five turns are dropped: split by model, a day
-    holds one or two turns, and a percentile over one observation is that observation. The p90 tail
+    sessions only. It follows the bucket control, and any bucket holding fewer than five turns for a
+    model is **dropped rather than drawn** — so a finer bucket yields a sparser chart, not a noisier
+    one, and where a cell holds only a handful of turns its p90 is close to its slowest. The p90 tail
     mixes slow models with agents parked on a **permission prompt**, which nothing in the data
-    separates — read it for drift between weeks, not as an absolute.
+    separates — read it for drift between buckets, not as an absolute.
   - ***Turnaround after a turn*** — how fast the next prompt arrived, split by whether that turn
     wrote files. An **audit** view, not a productivity one: it reports that a reply came in four
     seconds and makes no claim about whether that was long enough to read the diff.

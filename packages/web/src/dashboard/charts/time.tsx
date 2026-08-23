@@ -199,6 +199,7 @@ export function BurnBySource({ hidden, ts, time }: ChartProps) {
  */
 export function ModelLatency({ hidden, time }: ChartProps) {
   const { C, PALETTE, axisProps, gridProps, tooltipStyle } = useChartTokens();
+  const bucket = time?.latency.bucket ?? "week";
   const { data, models, dropped } = useMemo(() => {
     const series = time?.latency.series ?? [];
     // Two lines per model, so the categorical palette runs out fast — and a chart carrying sixteen
@@ -230,12 +231,16 @@ export function ModelLatency({ hidden, time }: ChartProps) {
       guide={
         <>
           <p>
-            How long a model took to start replying. <strong>Read it for drift between weeks</strong> —
-            a model whose p90 doubles is the signal — not as an absolute number.
+            How long a model took to start replying. <strong>Read it for drift between buckets</strong>{" "}
+            — a model whose p90 doubles is the signal — not as an absolute number.
           </p>
           <dl>
             <dt>x-axis</dt>
-            <dd>week. Never finer: split by model, a single day holds one or two turns, and a percentile over one observation is just that observation.</dd>
+            <dd>
+              local {bucket}, following the dashboard&apos;s bucket control. Split by model the turns
+              thin out fast, so at a fine bucket <strong>points drop out rather than being drawn</strong>{" "}
+              — see the note below.
+            </dd>
             <dt>y-axis</dt>
             <dd>elapsed time from the prompt to the model's first response. Solid = median (p50), dashed = p90, one colour per model. Never a mean — the tail is the story.</dd>
           </dl>
@@ -244,7 +249,13 @@ export function ModelLatency({ hidden, time }: ChartProps) {
             usually an agent parked on a permission prompt waiting for you, and nothing in the data
             separates that from a genuinely slow response.
           </p>
-          <p>Main sessions only; weeks with fewer than 5 turns are dropped, and only the highest-volume models are plotted.</p>
+          <p>
+            Main sessions only, and only the highest-volume models are plotted. A {bucket} holding
+            fewer than <strong>5 turns for a given model is dropped</strong>, because a percentile over
+            three observations is not a percentile — so a finer bucket gives a sparser chart, not a
+            noisier one. Where a cell holds only a handful of turns its &quot;p90&quot; is close to
+            simply its slowest.
+          </p>
         </>
       }
       hidden={hidden}
