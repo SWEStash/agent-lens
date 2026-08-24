@@ -425,7 +425,13 @@ date range):
 
     They do not draw the same picture, and that is the point: tokens per hour are unbounded, so one
     twelve-minute fan-out of subagents can outweigh a month of evenings and a one-off lands in the
-    same colour as a habit — see [ADR-034](decisions/ADR-034-heatmap-metric.md). Uniquely among the
+    same colour as a habit — see [ADR-034](decisions/ADR-034-heatmap-metric.md).
+
+    Colour is a **continuous gradient**, not a set of bands, and it runs out of the empty cell's own
+    colour — so a barely-used hour is barely coloured rather than jumping to a first band that has to
+    be visible. That does mean a near-zero cell is close to invisible, deliberately
+    ([ADR-035](decisions/ADR-035-heatmap-continuous-scale.md)); hover any cell for its exact figure,
+    and the strip under the grid maps colour to number. Uniquely among the
     charts it buckets by **when the work happened** — the usage event's own timestamp, or the turn's
     start — not the session's start: a session a human sat through runs mostly idle and often spans
     hours, so session-start bucketing would drop a whole day's spend into the hour it began. It

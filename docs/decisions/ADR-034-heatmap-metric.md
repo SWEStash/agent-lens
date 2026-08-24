@@ -90,10 +90,16 @@ distinct problem (17 cells rest on a single day under *every* metric) and does n
   counted once, at 13:00. This is correct for "when did work start" and is why the two metrics do not
   agree cell for cell.
 - **Cell values are fractions.** 0.79 turns per Sunday is harder to read than 64.7k tokens, so the
-  heatmap formats one decimal place below 10 rather than reusing `fmtTokens`, which would round every
-  turn cell to "0".
+  heatmap formats decimals rather than reusing `fmtTokens`, which would round every turn cell to "0".
+  The precision follows the peak rather than the individual value (two places below a peak of 2, one
+  above) so the legend's ticks read as one scale — a fixed single decimal printed the first two ticks
+  on the small demo corpus as "0" and "0.0".
 - **Support is still invisible.** 17 cells rest on a single observed day under every metric tested.
   Turns make that matter less — the value now correlates with frequency — but do not make it visible.
   Putting the support in the tooltip remains open.
 - **`DashTime` gained a key**, which is an exact-key assertion in `packages/server/test/contract.test.ts`
   and a shape the empty-DB test also pins.
+- **The payload roughly doubles**: 71 KB to 104 KB on the full corpus (`burn_hours` 1,011 rows / 56 KB,
+  `turn_hours` 870 rows / 45 KB). [ADR-033](ADR-033-time-analytics-bucketing.md)'s bound still holds —
+  size tracks hours-with-activity × sources, not row count — and its ~1 MB threshold for an explicit,
+  documented coarsening is unchanged; there is simply a second series counting toward it now.
