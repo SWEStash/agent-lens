@@ -69,7 +69,7 @@ const DASH_OVERVIEW_KEYS = [
   "session_duration_ms", "workflows",
 ];
 
-const DASH_TIME_KEYS = ["burn_hours", "latency", "review"];
+const DASH_TIME_KEYS = ["burn_hours", "turn_hours", "latency", "review"];
 const REVIEW_LATENCY_KEYS = ["n", "under_10s", "under_30s", "under_2min"];
 
 const DASH_BREAKDOWN_KEYS = [
@@ -266,6 +266,7 @@ describe("response contracts — populated DB", () => {
     expectKeys(time.review.wrote, REVIEW_LATENCY_KEYS, "review latency (wrote)");
     expectKeys(time.review.none, REVIEW_LATENCY_KEYS, "review latency (none)");
     expectKeys(time.burn_hours[0], ["hour", "source", "work"], "burn hour row");
+    expectKeys(time.turn_hours[0], ["hour", "source", "turns"], "turn hour row");
     await app.close();
   });
 
@@ -430,6 +431,7 @@ describe("response contracts — degraded DBs keep the shape stable", () => {
     const time = (await app.inject({ method: "GET", url: "/api/dashboard/time" })).json();
     expectKeys(time, DASH_TIME_KEYS, "dash time (empty)");
     expect(time.burn_hours).toEqual([]);
+    expect(time.turn_hours).toEqual([]);
     expect(time.latency.series).toEqual([]);
     expectKeys(time.review.wrote, REVIEW_LATENCY_KEYS, "review latency (empty)");
     expect(time.review.wrote.n).toBe(0);

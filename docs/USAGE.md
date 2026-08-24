@@ -415,13 +415,22 @@ date range):
   tiles share one endpoint, and the dashboard skips fetching it entirely while all of them are
   hidden:
 
-  - ***When tokens are spent*** — mean work tokens per weekday × hour, averaged over the **calendar**
-    occurrences of that weekday in range, so a weekday you often skip reads as the quiet one it is
-    rather than as a busy one you rarely reach. Uniquely among the charts it
-    buckets by the **event's own timestamp**, not the session's start: a session a human sat through
-    runs mostly idle and often spans hours, so session-start bucketing would drop a whole day's spend
-    into the hour it began. It therefore **will not tie out against "Tokens over time"** — that is
-    deliberate, see [ADR-033](decisions/ADR-033-time-analytics-bucketing.md).
+  - ***When work happens*** — weekday × hour, averaged over the **calendar** occurrences of that
+    weekday in range, so a weekday you often skip reads as the quiet one it is rather than as a busy
+    one you rarely reach. Two metrics, toggled in the card:
+    - ***turns*** (default) — turns started in that hour, **main sessions only**. A turn is one
+      prompt and its answer, so this is the rhythm of when you actually work.
+    - ***tokens*** — mean work tokens (input + output + cache-write), **both populations**, since a
+      subagent's tokens come off the same quota.
+
+    They do not draw the same picture, and that is the point: tokens per hour are unbounded, so one
+    twelve-minute fan-out of subagents can outweigh a month of evenings and a one-off lands in the
+    same colour as a habit — see [ADR-034](decisions/ADR-034-heatmap-metric.md). Uniquely among the
+    charts it buckets by **when the work happened** — the usage event's own timestamp, or the turn's
+    start — not the session's start: a session a human sat through runs mostly idle and often spans
+    hours, so session-start bucketing would drop a whole day's spend into the hour it began. It
+    therefore **will not tie out against "Tokens over time"** — that is deliberate, see
+    [ADR-033](decisions/ADR-033-time-analytics-bucketing.md).
   - ***Burn by source*** — work tokens over time, one line per source. Sources are plotted
     separately and **never summed**; they have genuinely different profiles. It follows the
     dashboard's bucket control, so switching to *day* shows each source's shape where a month

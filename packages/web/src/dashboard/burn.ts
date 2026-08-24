@@ -9,11 +9,29 @@ import type { DashTime } from "../api";
 import { localParts } from "../tz";
 
 export type BurnHour = DashTime["burn_hours"][number];
+export type TurnHour = DashTime["turn_hours"][number];
+
+/** What the heatmap plots. The two are not interchangeable readings of one thing — see `heatCells`. */
+export type HeatMetric = "turns" | "tokens";
+
+/** One hour's contribution, whichever metric is selected. */
+export interface HeatRow {
+  hour: string;
+  value: number;
+}
+
+/** Rows for the selected metric, in the shape `heatCells` folds. */
+export function heatRows(time: DashTime | null, metric: HeatMetric): HeatRow[] {
+  if (!time) return [];
+  return metric === "tokens"
+    ? time.burn_hours.map((r) => ({ hour: r.hour, value: r.work }))
+    : time.turn_hours.map((r) => ({ hour: r.hour, value: r.turns }));
+}
 
 export interface HeatCell {
   weekday: number;
   hour: number;
-  /** Mean work tokens per calendar occurrence of this weekday in range (an unworked day is a zero). */
+  /** Mean of the metric per calendar occurrence of this weekday in range (an unworked day is a zero). */
   mean: number;
   total: number;
 }
@@ -46,7 +64,7 @@ function weekdayOccurrences(startDay: string, endDay: string): number[] {
 }
 
 /**
- * Mean work tokens per local weekday × hour.
+ * Mean of the selected metric per local weekday × hour.
  *
  * Normalized per *calendar occurrence* of that weekday in range, not per day the weekday was worked:
  * a Sunday nobody touched is a real zero and has to count as one, or the mean answers "how much on a
@@ -57,7 +75,7 @@ function weekdayOccurrences(startDay: string, endDay: string): number[] {
  * row sums to that weekday's real daily mean.
  */
 export function heatCells(
-  rows: readonly BurnHour[],
+  rows: readonly HeatRow[],
   zone: string,
   range?: HeatRange,
 ): { cells: HeatCell[]; max: number } {
@@ -70,7 +88,7 @@ export function heatCells(
     if (firstDay === null || p.dayKey < firstDay) firstDay = p.dayKey;
     if (lastDay === null || p.dayKey > lastDay) lastDay = p.dayKey;
     const k = `${p.weekday}:${p.hour}`;
-    totals.set(k, (totals.get(k) ?? 0) + r.work);
+    totals.set(k, (totals.get(k) ?? 0) + r.value);
   }
 
   // The dashboard's range wins when it is complete, because it knows about the empty days at the

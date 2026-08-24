@@ -14,6 +14,7 @@ import type {
   BucketErrorRow,
   BucketUsageAggRow,
   BurnHourRow,
+  TurnHourRow,
   CountRow,
   LatencyRow,
   ModelBreakdownRow,
@@ -485,7 +486,31 @@ export function dashboardTime(db: DB, f: DashFilters, bucketParam?: string): Das
     .filter((r): r is BurnHourRow & { h: string } => r.h != null)
     .map((r) => ({ hour: r.h, source: r.src, work: r.work ?? 0 }));
 
-  return { burn_hours, latency: modelLatency(db, mw, bucketParam ? bucketFor(bucketParam) : chooseBucket(db, f)), review: reviewLatency(db, mw) };
+  // Turns started per UTC hour, MAIN sessions only — the heatmap's other metric. Two reasons it is a
+  // separate series rather than a column on the one above: the population rule differs (mainOnly),
+  // and a turn's time is its own `started_at`, not an event join.
+  //
+  // It exists because tokens per hour are unbounded — one 12-minute subagent fan-out burned 1.8M
+  // work tokens, which rendered the same as a Sunday evening worked five weeks running. A turn count
+  // is bounded per hour, so the cell scales with how often that hour is worked, which is what a
+  // heatmap reader takes a cell to mean.
+  const turn_hours = queryAll<TurnHourRow>(
+    db,
+    `SELECT strftime('%Y-%m-%dT%H', t.started_at) h, s.source_id src, COUNT(*) turns
+     FROM turns t
+     JOIN sessions s ON s.id = t.session_id
+     ${mw.sql} GROUP BY h, src ORDER BY h`,
+    ...mw.params,
+  )
+    .filter((r): r is TurnHourRow & { h: string } => r.h != null)
+    .map((r) => ({ hour: r.h, source: r.src, turns: r.turns ?? 0 }));
+
+  return {
+    burn_hours,
+    turn_hours,
+    latency: modelLatency(db, mw, bucketParam ? bucketFor(bucketParam) : chooseBucket(db, f)),
+    review: reviewLatency(db, mw),
+  };
 }
 
 

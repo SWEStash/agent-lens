@@ -25,7 +25,9 @@ export const CHART_REGISTRY: Array<{ id: string; label: string; Component: FC<Ch
   { id: "tool-frequency", label: "Tool frequency", Component: ToolFrequency },
   { id: "skill-activation", label: "Skill activation", Component: SkillActivation },
   { id: "subagent-fanout", label: "Subagent fan-out", Component: SubagentFanout },
-  { id: "burn-heatmap", label: "When tokens are spent", Component: BurnHeatmap },
+  // Label follows the card title; the id does NOT change — it is persisted per reader, and renaming
+  // it would un-hide the card for anyone who had hidden it.
+  { id: "burn-heatmap", label: "When work happens", Component: BurnHeatmap },
   // Id kept as `weekly-burn` though the card no longer pins itself to weeks: ids are persisted per
   // user, and renaming one would un-hide the card for anyone who hid it. The label is what changed.
   { id: "weekly-burn", label: "Burn by source", Component: BurnBySource },
