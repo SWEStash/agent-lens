@@ -430,7 +430,12 @@ date range):
     model is **dropped rather than drawn** — so a finer bucket yields a sparser chart, not a noisier
     one, and where a cell holds only a handful of turns its p90 is close to its slowest. The p90 tail
     mixes slow models with agents parked on a **permission prompt**, which nothing in the data
-    separates — read it for drift between buckets, not as an absolute.
+    separates — read it for drift between buckets, not as an absolute. Replies Claude Code generated
+    *without* calling a model (its `<synthetic>` marker) are excluded: that elapsed time is not a
+    model response time. **Every model is in the legend** and can be switched on or off, with only
+    the highest-volume few on by default — a model you do not see is off, not absent. The y-axis is
+    linear until the visible series span more than 100×, at which point it goes logarithmic and says
+    so, because below that a linear axis flattens the fastest lines onto the baseline.
   - ***Turnaround after a turn*** — how fast the next prompt arrived, split by whether that turn
     wrote files. An **audit** view, not a productivity one: it reports that a reply came in four
     seconds and makes no claim about whether that was long enough to read the diff.

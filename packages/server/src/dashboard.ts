@@ -501,6 +501,11 @@ export function dashboardTime(db: DB, f: DashFilters, bucketParam?: string): Das
  * This is what makes a fine bucket safe rather than merely sparse — and `n` is also what tells the
  * reader that a cell holding exactly five turns reports its slowest as "p90".
  *
+ * `<synthetic>` turns are excluded outright. That marker is Claude Code's for a reply it generated
+ * WITHOUT calling a model, so the elapsed time is not a model response time at all — and on the real
+ * corpus it carried an 87-minute p90 that flattened every genuine model against the axis. `IS NOT`
+ * rather than `<>` because turns with a NULL model must survive as `(unknown)`.
+ *
  * The tail carries real contamination that no query can separate out — a turn whose first assistant
  * event lands hours later is an agent parked on a permission prompt, not a slow model, and the
  * corpus analysis (§4.2) established that those are indistinguishable from long tool calls. p90 is
@@ -525,7 +530,7 @@ function modelLatency(db: DB, mw: Where, bucket: Bucket): DashTime["latency"] {
        FROM turns tn
        JOIN sessions s ON s.id = tn.session_id
        JOIN events e ON e.turn_id = tn.id AND e.role = 'assistant'
-       ${mw.sql} AND tn.started_at IS NOT NULL
+       ${mw.sql} AND tn.started_at IS NOT NULL AND tn.model IS NOT '<synthetic>'
        GROUP BY tn.id
      ),
      ranked AS (

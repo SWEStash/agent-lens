@@ -8,8 +8,20 @@ import { CHART_MARGIN, decadeDomain, unitLabel, type ChartProps } from "./common
 
 const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
-/** How many models the latency tile plots. Two lines each, so this is the real series budget. */
+/** How many models the latency tile shows BY DEFAULT. Two lines each, so this is the real series
+ *  budget — but every other model is still offered in the legend rather than dropped, so a reader
+ *  looking for a low-volume model can switch it on instead of concluding the data is missing. */
 const TOP_MODELS = 4;
+
+/**
+ * Above this ratio between the largest and smallest visible value, the axis goes logarithmic.
+ *
+ * Linear is the easier axis to read and stays the default. But at 100x the smallest series sits at
+ * one percent of the plot height — indistinguishable from the baseline — and a chart where half the
+ * lines are flat against the bottom shows nothing at all. The caption always names which scale is in
+ * force, so the switch is never silent.
+ */
+const LOG_SCALE_RATIO = 100;
 
 /** Legend labels wear the text token, never the series colour — the swatch beside them carries the
  *  identity, and coloured text reads as emphasis the data does not mean. */
@@ -191,14 +203,22 @@ export function BurnBySource({ hidden, ts, time }: ChartProps) {
 }
 
 /**
- * Duration for the latency tile, which is the one place sub-second values have to survive.
+ * Duration for the latency tile, which needs more resolution than `fmtDuration` offers.
  *
- * `fmtDuration` rounds to whole seconds — correct everywhere it is used for session and turn
- * durations, and wrong on a log axis whose bottom decade is milliseconds, where it renders a 100ms
- * gridline as "0s" and a 633ms median as "1s".
+ * `fmtDuration` rounds to whole seconds and then whole minutes — correct everywhere it is used for
+ * session and turn durations, and wrong on this axis at both ends. At the bottom it renders a 100ms
+ * gridline as "0s"; at the top it collapses 150s and 183s to the same "3m", so a linear axis prints
+ * the same label on two different gridlines. One decimal place in the minute range keeps adjacent
+ * ticks distinct without widening the axis.
  */
 function fmtLatency(ms: number): string {
-  return ms < 1000 ? `${Math.round(ms)}ms` : fmtDuration(ms);
+  if (ms <= 0) return "0";
+  if (ms < 1000) return `${Math.round(ms)}ms`;
+  if (ms < 60_000) {
+    const s = ms / 1000;
+    return `${s < 10 ? s.toFixed(1).replace(/\.0$/, "") : Math.round(s)}s`;
+  }
+  return `${(ms / 60_000).toFixed(1).replace(/\.0$/, "")}m`;
 }
 
 /**
@@ -216,14 +236,14 @@ function fmtLatency(ms: number): string {
 function LatencyLegend({
   models,
   colorFor,
-  hiddenModels,
+  shows,
   onToggle,
   muted,
 }: {
   models: string[];
   colorFor: (m: string) => string;
-  hiddenModels: Set<string>;
-  onToggle: (m: string) => void;
+  shows: (m: string) => boolean;
+  onToggle: (m: string, on: boolean) => void;
   muted: string;
 }) {
   const swatch = (color: string, dashed?: boolean) => (
@@ -234,16 +254,16 @@ function LatencyLegend({
   return (
     <div className="lat-legend">
       {models.map((m) => {
-        const off = hiddenModels.has(m);
+        const on = shows(m);
         return (
           <button
             key={m}
             type="button"
             className="lat-chip"
-            aria-pressed={!off}
-            onClick={() => onToggle(m)}
-            title={`${off ? "Show" : "Hide"} ${shortModel(m)}`}
-            style={{ opacity: off ? 0.4 : 1 }}
+            aria-pressed={on}
+            onClick={() => onToggle(m, !on)}
+            title={`${on ? "Hide" : "Show"} ${shortModel(m)}`}
+            style={{ opacity: on ? 1 : 0.4 }}
           >
             {swatch(colorFor(m))}
             <span style={{ color: muted }}>{shortModel(m)}</span>
@@ -267,26 +287,21 @@ function LatencyLegend({
 export function ModelLatency({ hidden, time }: ChartProps) {
   const { C, PALETTE, axisProps, gridProps, tooltipStyle } = useChartTokens();
   const bucket = time?.latency.bucket ?? "week";
-  const [hiddenModels, setHiddenModels] = useState<Set<string>>(new Set());
-  const toggleModel = (m: string) =>
-    setHiddenModels((prev) => {
-      const next = new Set(prev);
-      if (next.has(m)) next.delete(m);
-      else next.add(m);
-      return next;
-    });
-  const { data, models, dropped } = useMemo(() => {
+  // Explicit choices only. The default (top N by volume) depends on data that arrives after mount, so
+  // seeding a hidden-set from it would either race the fetch or freeze whatever the first payload
+  // said; keeping overrides separate lets the default follow the data until the reader overrides it.
+  const [picked, setPicked] = useState<Map<string, boolean>>(new Map());
+  const toggleModel = (m: string, on: boolean) => setPicked((prev) => new Map(prev).set(m, on));
+  const { data, models, offByDefault } = useMemo(() => {
     const series = time?.latency.series ?? [];
-    // Two lines per model, so the categorical palette runs out fast — and a chart carrying sixteen
-    // near-flat lines communicates nothing anyway. Keep the models that actually did the work and
-    // say in the hint how many were folded away; a silent cut would read as "these are all of them".
+    // Every model is plotted into the rows and offered in the legend; only the highest-volume few are
+    // ON at the start, because two lines each means sixteen would read as noise. Ranked by turns so
+    // the models that did the work are the ones you see first.
     const volume = new Map<string, number>();
     for (const r of series) volume.set(r.model, (volume.get(r.model) ?? 0) + r.n);
-    const ranked = [...volume.entries()].sort((a, b) => b[1] - a[1]);
-    const kept = new Set(ranked.slice(0, TOP_MODELS).map(([m]) => m));
+    const ranked = [...volume.entries()].sort((a, b) => b[1] - a[1]).map(([m]) => m);
     const byBucket = new Map<string, Record<string, number | string>>();
     for (const r of series) {
-      if (!kept.has(r.model)) continue;
       const row = byBucket.get(r.bucket) ?? { bucket: r.bucket };
       row[`${r.model} p50`] = r.p50_ms;
       row[`${r.model} p90`] = r.p90_ms;
@@ -294,13 +309,14 @@ export function ModelLatency({ hidden, time }: ChartProps) {
     }
     return {
       data: [...byBucket.values()].sort((a, b) => String(a.bucket).localeCompare(String(b.bucket))),
-      models: [...kept].sort(),
-      dropped: Math.max(0, ranked.length - TOP_MODELS),
+      models: ranked,
+      offByDefault: new Set(ranked.slice(TOP_MODELS)),
     };
   }, [time]);
 
   const colorFor = (m: string) => PALETTE[Math.max(0, models.indexOf(m)) % PALETTE.length];
-  const visible = models.filter((m) => !hiddenModels.has(m));
+  const shows = (m: string) => picked.get(m) ?? !offByDefault.has(m);
+  const visible = models.filter(shows);
 
   /**
    * A log axis, with the domain taken from the VISIBLE series only.
@@ -315,25 +331,32 @@ export function ModelLatency({ hidden, time }: ChartProps) {
    * Recomputing it from the visible series is what makes hiding a model worth doing: drop the series
    * that owns the axis and the rest expand into the space it was using.
    */
-  const { domain, ticks } = useMemo(() => {
+  const { logScale, domain, ticks } = useMemo(() => {
     const vals: number[] = [];
     for (const row of data) {
       for (const m of visible) {
         for (const p of ["p50", "p90"]) {
           const v = row[`${m} ${p}`];
-          if (typeof v === "number") vals.push(v);
+          if (typeof v === "number" && v > 0) vals.push(v);
         }
       }
     }
+    // Linear unless the visible spread is wide enough that linear would flatten the small series.
+    // Measured on what is VISIBLE, so hiding the slow model can bring the axis back to linear.
+    const ratio = vals.length ? Math.max(...vals) / Math.min(...vals) : 1;
+    if (ratio < LOG_SCALE_RATIO) return { logScale: false, domain: undefined, ticks: undefined };
     // With every series hidden decadeDomain falls back, so the axis stays plausible rather than
     // collapsing to nothing.
-    return decadeDomain(vals);
+    return { logScale: true, ...decadeDomain(vals) };
   }, [data, visible.join("|")]);
 
   return (
     <ChartCard
       title="Model response latency"
-      hint={"prompt → first assistant token, per model" + (dropped ? ` · ${dropped} lower-volume model${dropped > 1 ? "s" : ""} not shown` : "")}
+      hint={
+        "prompt → first assistant token, per model" +
+        (offByDefault.size ? ` · ${offByDefault.size} lower-volume model${offByDefault.size > 1 ? "s" : ""} off by default — switch on in the legend` : "")
+      }
       guide={
         <>
           <p>
@@ -351,21 +374,26 @@ export function ModelLatency({ hidden, time }: ChartProps) {
             <dd>
               elapsed time from the prompt to the model&apos;s first response. Solid = median (p50),
               dashed = p90, one colour per model. Never a mean — the tail is the story.{" "}
-              <strong>The scale is logarithmic</strong>: each gridline is ten times the one below, so
-              equal vertical distances are equal <em>ratios</em>, not equal seconds. A linear axis
-              cannot show these together — the slowest tenth runs a hundred times the median, which
-              flattens every median onto the baseline.
+              <strong>Linear normally.</strong> If the visible series span more than {LOG_SCALE_RATIO}×
+              the axis switches to logarithmic — each gridline ten times the one below, equal distances
+              meaning equal <em>ratios</em> rather than equal seconds — because at that spread a linear
+              axis puts the smallest line at one percent of the plot and flattens it onto the baseline.
+              The caption says which is in force, and hiding the widest series can bring it back to
+              linear.
             </dd>
           </dl>
           <p>
             <strong>The p90 is not pure model latency.</strong> A turn whose reply lands hours later is
             usually an agent parked on a permission prompt waiting for you, and nothing in the data
-            separates that from a genuinely slow response. <em>local</em>, if present, is not a model
-            at all — it marks replies Claude Code generated without calling one.
+            separates that from a genuinely slow response. Replies Claude Code generated{" "}
+            <em>without</em> calling a model at all (its <code>&lt;synthetic&gt;</code> marker) are
+            excluded here — their elapsed time is not a model response time.
           </p>
           <p>
-            <strong>Click a model in the legend to hide it</strong>, and the axis rescales around what
-            is left — the way to read the fast models when one slow series owns the range.
+            <strong>Every model is in the legend; click one to show or hide it</strong>, and the axis
+            rescales around what is left. Only the highest-volume few start switched on, so a model
+            you do not see is off rather than absent — though a low-volume one may plot as a point or
+            two, since a bucket under 5 turns is dropped.
           </p>
           <p>
             Main sessions only, and only the highest-volume models are plotted. A {bucket} holding
@@ -387,13 +415,10 @@ export function ModelLatency({ hidden, time }: ChartProps) {
             <XAxis dataKey="bucket" {...axisProps} minTickGap={24} />
             <YAxis
               {...axisProps}
-              scale="log"
-              domain={domain}
-              ticks={ticks}
-              allowDataOverflow
+              {...(logScale ? { scale: "log" as const, domain, ticks, allowDataOverflow: true } : {})}
               tickFormatter={(v) => fmtLatency(v as number)}
               width={52}
-              label={unitLabel("time to first token (log)", C.muted)}
+              label={unitLabel(`time to first token${logScale ? " (log)" : ""}`, C.muted)}
             />
             <Tooltip
               {...tooltipStyle}
@@ -409,7 +434,7 @@ export function ModelLatency({ hidden, time }: ChartProps) {
                 <LatencyLegend
                   models={models}
                   colorFor={colorFor}
-                  hiddenModels={hiddenModels}
+                  shows={shows}
                   onToggle={toggleModel}
                   muted={C.muted}
                 />
@@ -420,7 +445,7 @@ export function ModelLatency({ hidden, time }: ChartProps) {
                 key={m}
                 type="monotone"
                 dataKey={`${m} p50`}
-                hide={hiddenModels.has(m)}
+                hide={!shows(m)}
                 stroke={colorFor(m)}
                 strokeWidth={2}
                 dot={false}
@@ -432,7 +457,7 @@ export function ModelLatency({ hidden, time }: ChartProps) {
                 key={`${m}-p90`}
                 type="monotone"
                 dataKey={`${m} p90`}
-                hide={hiddenModels.has(m)}
+                hide={!shows(m)}
                 stroke={colorFor(m)}
                 strokeWidth={2}
                 strokeDasharray="4 3"

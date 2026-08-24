@@ -242,6 +242,36 @@ describe("dashboardTime", () => {
     expect(row.p90_ms).toBe(100_000);
   });
 
+  it("excludes <synthetic> turns, which are replies generated without calling a model", () => {
+    const db = seedLatency();
+    // Same shape as the fixture's turns, but marked synthetic and far slower — exactly the row that
+    // used to own the whole y-axis. Five of them, so it would clear MIN_LATENCY_SAMPLES if counted.
+    const rows = [0, 1, 2, 3, 4]
+      .map((i) => {
+        const start = `2026-03-0${i + 2}T12:00:00Z`;
+        const reply = new Date(Date.parse(start) + 3_600_000).toISOString().replace(".000Z", "Z");
+        return {
+          turn: `('s${i}','lat',${i + 10},'<synthetic>','${start}','${reply}')`,
+          event: `('se${i}','lat','s${i}','assistant','assistant','${reply}',x'')`,
+        };
+      });
+    db.exec(`
+      INSERT INTO turns (id, session_id, seq, model, started_at, ended_at) VALUES ${rows.map((r) => r.turn).join(",")};
+      INSERT INTO events (uuid, session_id, turn_id, type, role, timestamp, raw_json) VALUES ${rows.map((r) => r.event).join(",")};
+    `);
+    const models = dashboardTime(db, {}).latency.series.map((r) => r.model);
+    expect(models).not.toContain("<synthetic>");
+    expect(models).toEqual(["claude-opus-5"]);
+  });
+
+  it("keeps turns whose model is unknown rather than dropping them with the synthetic ones", () => {
+    // `IS NOT '<synthetic>'` and `<> '<synthetic>'` differ exactly here: NULL <> 'x' is NULL, so the
+    // plain comparison would silently discard every unattributed turn.
+    const db = seedLatency();
+    db.exec("UPDATE turns SET model = NULL");
+    expect(dashboardTime(db, {}).latency.series.map((r) => r.model)).toEqual(["(unknown)"]);
+  });
+
   it("follows the requested bucket rather than forcing a weekly floor", () => {
     // A daily bucket used to be silently rewritten to weekly. What keeps a fine bucket honest is
     // MIN_LATENCY_SAMPLES dropping the cells that cannot carry a percentile (asserted above), not
