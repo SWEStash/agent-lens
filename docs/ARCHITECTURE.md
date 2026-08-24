@@ -172,5 +172,4 @@ erDiagram
 | [031](decisions/ADR-031-transcript-text-is-stored.md) | Transcript text is stored, not re-derived on read (`events.thinking`; shared markup vocabulary) |
 | [032](decisions/ADR-032-per-event-token-attribution.md) | Per-event token usage is attributed to the message that renders it, not the raw `token_usage` row |
 | [033](decisions/ADR-033-time-analytics-bucketing.md) | Time analytics bucket token burn by event time, and the browser localizes the hours |
-| [034](decisions/ADR-034-heatmap-metric.md) | The weekday × hour heatmap plots turns by default, not tokens; the population rule flips with the metric |
-| [035](decisions/ADR-035-heatmap-continuous-scale.md) | The heatmap encodes value as a continuous gradient, dropping the minimum-visible floor on the lowest cell |
+| [034](decisions/ADR-034-heatmap-metric.md) | The weekday × hour heatmap counts turns, not tokens, and encodes them as a continuous gradient |

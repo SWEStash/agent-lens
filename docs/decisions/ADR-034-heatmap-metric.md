@@ -1,105 +1,101 @@
-# ADR-034 — The weekday × hour heatmap plots turns by default, not tokens
+# ADR-034 — The weekday × hour heatmap: what a cell counts, and how it becomes a colour
 
 - Status: Accepted
 - Date: 2026-08-24
 - Deciders: project owner
 - Extends [ADR-033](ADR-033-time-analytics-bucketing.md), which settled how this tile buckets and
-  localizes its hours but not *what quantity* a cell holds
+  localizes its hours but neither what quantity a cell holds nor how that value is encoded
 
 ## Context
 
 The tile shipped plotting mean work tokens per local weekday × hour. Reading it against the real
-corpus turned up a cell nobody could explain: Sunday 07:00 and 08:00 carried real spend with zeros
-on either side of them, on a row that was otherwise a quiet evening profile.
+corpus turned up a cell nobody could explain: Sunday 07:00 and 08:00 carrying spend with zeros either
+side.
 
-The data was correct. Both cells come from a single Sunday, 2026-08-16, whose entire usage falls
-between 10:54 and 11:06 UTC — twelve minutes, in which one parent session fanned out **258
-subagents** and burned 1.8M work tokens. It straddles the hour boundary, which is why exactly two
-adjacent cells light up. 353 usage rows with 353 distinct timestamps: not duplicated data, not a
-bucketing artefact.
+The data was correct, denominator included. Both cells come from one Sunday whose entire usage falls
+in twelve minutes, during which a single parent session fanned out **258 subagents** for 1.8M work
+tokens, straddling the hour boundary.
 
-The arithmetic was also correct, including the denominator: [ADR-033](ADR-033-time-analytics-bucketing.md)'s
-fold divides by the calendar occurrences of each weekday, and all 14 Sundays in range were counted,
-6 of them empty.
+What was wrong was the reading, in two independent ways.
 
-What was wrong was the **reading**. That cell rendered at 62,951 tokens/h. A different cell — Sunday
-21:00, worked on 5 of the 14 Sundays — rendered at 64,732. Within 3% of each other, so the same
-colour step: a twelve-minute accident and a five-week habit, indistinguishable.
+**The quantity.** That cell rendered at 62,951 tokens/h; Sunday 21:00 — worked 5 of 14 Sundays —
+rendered at 64,732. Same colour, with the accident ranking above the habit. Tokens per hour are
+unbounded, so a cell's value is independent of how often the hour is worked, which is the one thing a
+reader takes a heatmap cell to mean.
 
-The cause is a property of the quantity, not of the fold. **Tokens per hour are unbounded.** A
-fan-out can put a month of evenings into one cell, so a cell's value is independent of how often
-that hour is worked — while a heatmap reader takes intensity to mean exactly that frequency.
+**The encoding.** Values were binned into seven colour steps, and under binning every non-zero cell
+takes the lowest step's full colour however small the value. So empty→lowest was necessarily the
+largest jump on the scale — ΔL 0.179 against ~0.065 between every other adjacent pair, and the only
+pair also crossing from neutral into colour. Two rounds of re-picking colours each helped and neither
+resolved it, because the cause is structural.
 
 ## Decision
 
-**1. The default metric is turns started, main sessions only.** A turn count is bounded per hour —
-there is a limit to how many times a person can prompt in sixty minutes — so a cell's value tracks
-how often the hour is worked. On the corpus this separates the two cells above by **11×** (0.07
-against 0.79 turns/day) where tokens separated them by 3%, and it reverses their order to the
-correct one.
+**1. The default metric is turns started, main sessions only**, with tokens behind a toggle. A turn
+count is bounded per hour, so a cell tracks how often the hour is worked; on the corpus this separates
+the two cells above by 11× and reverses their order to the correct one. "When did the spend happen" is
+still a real question — just not the one a reader assumes a heatmap answers.
 
-**2. Tokens remain available behind a metric toggle.** "When did the spend happen" is a real
-question; it is simply not the one a reader assumes a heatmap answers. The toggle follows the
-existing per-card pattern (`TokensByModel`): ephemeral `useState`, a `.seg` control in `actions`.
+**2. The population rule flips with the metric** (§13.1): tokens are spend and count both populations,
+because a subagent's tokens come off the same quota; turns are human behaviour and restrict to
+`is_sidechain = 0`. This is *why* a fan-out can no longer inflate a cell.
 
-**3. The population rule flips with the metric,** per §13.1 of the design: tokens are a spend metric
-and count both populations, because a subagent's tokens come off the same quota; turns are a
-human-behaviour metric and restrict to `is_sidechain = 0`, because a subagent has nobody in it. This
-is not incidental — it is *why* a fan-out can no longer inflate a cell.
+**3. `turn_hours` is a second raw-hourly series on `/api/dashboard/time`**, shaped like `burn_hours`.
+Separate rather than a column on it because the population rule differs and a turn's time is its own
+`started_at`, not an event join.
 
-**4. `turn_hours` is a second raw-hourly series on `/api/dashboard/time`,** shaped like `burn_hours`
-and folded in the browser the same way. Separate rather than a column on the existing series because
-the population rule differs and a turn's time is its own `started_at`, not an event join.
+**4. Cells interpolate along the `--burn-*` stops rather than snapping to one**, and the gradient
+starts at the empty cell's own colour, so a value 1% up the scale renders 1% up. Distinct cell colours
+went from 8 to 71 (turns) / 104 (tokens). The vars are gradient anchors now, not a palette; what still
+governs their shape is recorded in `styles.css`.
 
-**5. The card is retitled "When work happens".** The chart id stays `burn-heatmap` — ids are
-persisted per reader in `dashboard.layout`, and renaming one would un-hide the card for anyone who
-had hidden it.
+**5. The transform follows the metric**: `sqrt` for tokens (276× from smallest active cell to peak),
+`linear` for turns (3.5× over the median). It is a property of the distribution, not of the chart.
+
+**6. The legend is a gradient bar with value ticks**, positions even and values bending with the
+transform. The card is retitled "When work happens"; the id stays `burn-heatmap`, because ids are
+persisted per reader and renaming one would un-hide the card for anyone who had hidden it.
+
+## What this gives up
+
+**A cell with any work no longer clears 2:1 against an empty one.** That floor had been treated as an
+accessibility requirement and was held through two rounds of re-colouring.
+
+It was dropped because it is incompatible with the complaint rather than merely in tension with it: a
+value of 0.07 against a peak of 5.0 cannot simultaneously look proportionally tiny and be clearly
+visible. Four candidate ramps were rendered against the real corpus, and every one that softened the
+jump enough also fell below the floor. The owner chose proportionality after seeing them side by side.
+
+Value is never carried by colour alone — every cell has a hover tooltip with its exact figure, and the
+legend's ticks map colour to number. **This does not generalise**: it is a judgement about a 168-cell
+overview grid, not licence to drop contrast floors on marks a reader must identify individually.
 
 ## Alternatives rejected
 
-**Median instead of the mean.** Tested against the corpus in both forms, and both are worse:
-
-- *Median over every calendar occurrence* blanks **110 of 168 cells**, up from 36. A specific hour on
-  a specific weekday is worked on a minority of its occurrences almost everywhere, and a median needs
-  majority support to be non-zero. The entire Sunday row goes dark — no Sunday hour is worked on more
-  than half of the 14 Sundays — so the chart would assert weekends are never worked, when 8 of 14
-  Sundays were. That is a worse falsehood than the one being fixed.
-- *Median over worked days only* keeps all 132 cells but **amplifies** the problem: the one-off rises
-  to 881,313 and outranks the recurring hour outright. It also reintroduces the divide-by-days-worked
-  bias that the calendar denominator exists to remove.
-
-**Session counts instead of turns.** Works — it collapses the fan-out identically — but discriminates
-less (2.7× peak-over-median against turns' 3.5×), and a session spanning six hours counts in every
-one of them, which turns do not.
-
-**Rolling a subagent's activity up to its parent session.** Changed exactly one cell in the whole
-grid: subagents almost always run inside an hour their parent is already active in. Not worth the
-join.
-
-**Keeping tokens and marking thin cells.** Considered and left open — it addresses a related but
-distinct problem (17 cells rest on a single day under *every* metric) and does not fix the ordering.
+- **Median over every calendar occurrence** — blanks 110 of 168 cells and darkens the whole Sunday
+  row, asserting weekends are never worked when 8 of 14 were.
+- **Median over worked days only** — lifts the one-off to 881,313, the loudest cell on the row, and
+  reintroduces the divide-by-days-worked bias the calendar denominator exists to remove.
+- **Session counts** — collapse the fan-out identically but discriminate less (2.7× peak-over-median
+  against turns' 3.5×), and a six-hour session counts in every hour it touches.
+- **Rolling subagent activity up to the parent** — changed exactly one cell in the grid.
 
 ## Consequences
 
-- **The tile answers a different question than it was specified for.** §14.2 justified it as
-  token-weighted and provider-neutral. Turns are still provider-neutral, and the "when do I usually
-  have headroom" motivation is served better by a rhythm than by a spend total — but this is a
-  deliberate change of question, and the guide says which metric is showing and what each counts.
-- **Turns cover slightly fewer cells: 126 of 168, against tokens' 132.** Six hours carry token usage
-  but no main-session turn *starting* in them — a turn that began at 13:50 and ran past 14:00 is
-  counted once, at 13:00. This is correct for "when did work start" and is why the two metrics do not
-  agree cell for cell.
-- **Cell values are fractions.** 0.79 turns per Sunday is harder to read than 64.7k tokens, so the
-  heatmap formats decimals rather than reusing `fmtTokens`, which would round every turn cell to "0".
-  The precision follows the peak rather than the individual value (two places below a peak of 2, one
-  above) so the legend's ticks read as one scale — a fixed single decimal printed the first two ticks
-  on the small demo corpus as "0" and "0.0".
-- **Support is still invisible.** 17 cells rest on a single observed day under every metric tested.
-  Turns make that matter less — the value now correlates with frequency — but do not make it visible.
-  Putting the support in the tooltip remains open.
-- **`DashTime` gained a key**, which is an exact-key assertion in `packages/server/test/contract.test.ts`
-  and a shape the empty-DB test also pins.
-- **The payload roughly doubles**: 71 KB to 104 KB on the full corpus (`burn_hours` 1,011 rows / 56 KB,
-  `turn_hours` 870 rows / 45 KB). [ADR-033](ADR-033-time-analytics-bucketing.md)'s bound still holds —
-  size tracks hours-with-activity × sources, not row count — and its ~1 MB threshold for an explicit,
-  documented coarsening is unchanged; there is simply a second series counting toward it now.
+- **Near-zero cells are close to invisible, deliberately.** Anyone "fixing" that by restoring a minimum
+  step colour reintroduces the complaint this ADR answers.
+- **The tile answers a different question than §14.2 specified.** Turns are still provider-neutral and
+  the "when do I have headroom" motivation is served better by a rhythm than a spend total, but the
+  change of question is deliberate and the guide says which metric is showing.
+- **Turns cover 126 of 168 cells against tokens' 132** — six hours carry usage but no main-session turn
+  *starting* in them (one beginning 13:50 and running past 14:00 counts once, at 13:00).
+- **Support is still invisible.** 17 cells rest on a single observed day under every metric tested. The
+  gradient makes that matter less; it does not make it visible. Putting it in the tooltip stays open.
+- **The ordinal palette validator no longer governs the ramp end to end** — it checks discrete steps.
+  The anchors still pass it, which is a cheap way to keep the curve well-formed, but that is no longer
+  the reason they are shaped as they are.
+- **Cell values are fractions**, so the heatmap formats decimals with precision following the peak
+  rather than the value; `fmtTokens` would round every turn cell to "0".
+- **`DashTime` gained a key** — an exact-key assertion in `packages/server/test/contract.test.ts` — and
+  the payload roughly doubles, 71 KB to 104 KB on the full corpus. ADR-033's bound and its ~1 MB
+  coarsening threshold are unchanged; there is simply a second series counting toward it.
