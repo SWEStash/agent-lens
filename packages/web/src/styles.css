@@ -34,14 +34,23 @@
      SEVEN steps, not five: under sqrt the first of five spanned 0–33k tokens/h against a 841k peak,
      which put an idle hour and a busy one in the same colour. Adding steps rather than switching to
      log was measured — log separates the low end but collapses 47 of 132 real cells into one
-     near-maximum step. Each step's chroma is the most the sRGB gamut holds at its lightness, since
-     clipping an out-of-gamut blue pulls its lightness back and closes the gap to its neighbour. */
-  --burn-1: #28527f;
-  --burn-2: #386596;
-  --burn-3: #4879ae;
-  --burn-4: #588dc7;
-  --burn-5: #69a1e0;
-  --burn-6: #7bb7f9;
+     near-maximum step. Seven is also the ceiling: the band is bounded below by step 1's contrast
+     floor and above by where a blue stops reading as blue, and eight steps fall under the ΔL 0.06
+     the eye needs between neighbours.
+     Step 1 is near-NEUTRAL, and that is the point. An empty cell (--panel2) to a chromatic step 1
+     jumped ΔL 0.179 AND chroma 0.070, against ~0.065 and ~0.005 between every other pair — so the
+     scale's first increment read as a category change, and an hour worked once in three months
+     shouted louder than the step from a busy hour to a busier one. Holding step 1's LIGHTNESS (it
+     still clears 2:1, so a worked hour stays visible) and taking its CHROMA to ~0 removes the jump
+     that was actually being seen. Chroma then climbs with lightness, at the most the sRGB gamut
+     holds at each step — clipping an out-of-gamut blue pulls its lightness back toward its
+     neighbour, which is what failed the ordinal ΔL check on the first candidates. */
+  --burn-1: #48515b;
+  --burn-2: #536478;
+  --burn-3: #5d7896;
+  --burn-4: #688cb6;
+  --burn-5: #72a1d6;
+  --burn-6: #7cb6f7;
   --burn-7: #96ccff;
   --code-bg: var(--bg);
 }
@@ -68,12 +77,13 @@
   --tl-assistant: #2649c0;
   --tl-thinking: #8d1a89;
   --tl-tool: #a1790c;
-  --burn-1: #8cb0d8;
-  --burn-2: #719ccb;
-  --burn-3: #5687bf;
-  --burn-4: #3973b2;
-  --burn-5: #175fa4;
-  --burn-6: #004b96;
+  /* Same derivation as the dark ramp: palest step holds its lightness and drops to near-neutral. */
+  --burn-1: #a4aeb9;
+  --burn-2: #859ab3;
+  --burn-3: #6787ac;
+  --burn-4: #4874a4;
+  --burn-5: #26609c;
+  --burn-6: #004c93;
   --burn-7: #003979;
   --code-bg: #eef1f5;
 }
