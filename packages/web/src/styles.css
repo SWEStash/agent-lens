@@ -1474,6 +1474,12 @@ table.kv .muted { font-size: 12px; margin-top: 4px; }
 .burn-cell { flex: 1 1 0; height: 14px; border-radius: 2px; }
 .burn-tick { flex: 1 1 0; font-size: 10px; color: var(--muted); font-style: normal; text-align: left; }
 .burn-hours { margin-top: 2px; }
+/* Enlarged: bigger cells, but a fixed size rather than "fill the body". Stretching seven rows over
+   700px turns each hour into a tall column and the grid stops reading as a weekday × hour map at
+   all — at this width a cell is ~43px across, so 40px tall keeps it about square. */
+.burn-lg .burn-cell { height: 40px; }
+.burn-lg .burn-day, .burn-lg .burn-tick { font-size: 12px; }
+.burn-lg .burn-day { width: 36px; }
 .burn-legend { display: flex; flex-direction: column; gap: 2px; font-size: 11px; color: var(--muted); }
 .burn-legend-cap { align-self: flex-start; }
 /* Swatches and their boundary numbers share one flex track, so each number lands under the step it
@@ -1481,6 +1487,33 @@ table.kv .muted { font-size: 12px; margin-top: 4px; }
 .burn-scale { display: flex; gap: 2px; }
 .burn-scale i { flex: 1 1 0; height: 10px; border-radius: 2px; }
 .burn-scale span { flex: 1 1 0; text-align: right; font-size: 10px; font-variant-numeric: tabular-nums; }
+
+/* Enlarged chart view. Above every other layer in the app (the highest is 20) because it is modal:
+   nothing may paint over it while it is open. */
+.chart-modal-backdrop {
+  position: fixed; inset: 0; z-index: 50;
+  background: rgba(0, 0, 0, 0.6);
+  display: flex; align-items: center; justify-content: center; padding: 24px;
+}
+.chart-modal { position: relative; width: min(1100px, 100%); max-height: 100%; overflow: auto; }
+.chart-modal > .card { margin: 0; }
+.chart-modal-close {
+  position: absolute; top: 10px; right: 10px;
+  background: none; border: none; color: var(--muted); font-size: 14px; line-height: 1; cursor: pointer;
+  padding: 4px 6px; border-radius: 4px;
+}
+.chart-modal-close:hover { color: var(--text); background: var(--tag); }
+/* The enlarged body is capped by viewport height rather than given a fixed size: the point is to use
+   whatever room the reader's screen has, and a chart taller than the screen is not more readable.
+   A definite height is what Recharts' ResponsiveContainer needs — the heatmap is plain CSS with its
+   own cell size, so it takes the height its content asks for instead of floating in a tall box. */
+.chart-body-lg { height: min(70vh, 720px); }
+.chart-body-lg:has(.burn) { height: auto; }
+.card-expand { background: none; border: none; color: var(--muted); font-size: 12px; line-height: 1; cursor: pointer; padding: 2px 4px; border-radius: 4px; }
+.card-expand:hover { color: var(--accent); background: var(--tag); }
+/* Placeholder left in the grid while the chart is in the dialog — the card keeps its height so the
+   grid behind the backdrop does not reflow, and reflow again on close. */
+.chart-moved { display: flex; align-items: center; justify-content: center; height: 100%; color: var(--muted); font-size: 12px; }
 
 /* "How to read this" disclosure in a chart card header. A panel rather than a hover tooltip: the
    content is multi-sentence reference text, hover does not exist on touch, and it has to stay open

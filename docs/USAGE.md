@@ -449,6 +449,9 @@ date range):
   what the axes are in, how the number is computed, and the caveats that decide whether a reading is
   fair — which population it counts, what a heuristic label is worth, where a tail is contaminated.
   Axis units are also printed above each axis, so "15.0M" is never left ambiguous.
+- **Enlarging a chart** — the **⤢** beside a card's title opens it full-width in a dialog, where a
+  chart with more to say uses the room for it (the burn heatmap labels every other hour instead of
+  every sixth). Escape or the ✕ closes it and returns focus to the card.
 - **Views** — a switcher above the strips picks a curated layout: **All** (everything), **Cost**,
   **Reliability**, **Activity**. Presets are defined in code, so they never grow silently when a new
   chart ships — `All` always has everything.

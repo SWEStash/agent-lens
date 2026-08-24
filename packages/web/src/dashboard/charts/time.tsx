@@ -70,10 +70,13 @@ export function BurnHeatmap({ hidden, time, range }: ChartProps) {
       }
       hidden={hidden}
     >
-      {time && max === 0 ? (
+      {/* Enlarged, the cells grow and the hour axis labels every other hour instead of every sixth:
+          the extra room buys cells big enough to compare and precision about *which* hour each one
+          is, which is the question a 168-cell grid raises. */}
+      {(expanded) => (time && max === 0 ? (
         <div className="empty">No token usage in range.</div>
       ) : (
-        <div className="burn">
+        <div className={expanded ? "burn burn-lg" : "burn"}>
           <div className="burn-grid" role="img" aria-label={`Token burn by weekday and hour, ${zoneLabel(zone)}`}>
             {WEEKDAYS.map((label, weekday) => (
               <div className="burn-row" key={label}>
@@ -101,7 +104,7 @@ export function BurnHeatmap({ hidden, time, range }: ChartProps) {
             <div className="burn-row burn-hours">
               <span className="burn-day" />
               {Array.from({ length: 24 }, (_, h) => (
-                <i key={h} className="burn-tick">{h % 6 === 0 ? h : ""}</i>
+                <i key={h} className="burn-tick">{h % (expanded ? 2 : 6) === 0 ? h : ""}</i>
               ))}
             </div>
           </div>
@@ -141,7 +144,7 @@ export function BurnHeatmap({ hidden, time, range }: ChartProps) {
             </div>
           )}
         </div>
-      )}
+      ))}
     </ChartCard>
   );
 }
