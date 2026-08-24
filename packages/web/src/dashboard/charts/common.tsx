@@ -41,6 +41,11 @@ export interface ChartProps {
  * before it is read, and it is pushed further from the plot.
  */
 export function unitLabel(value: string, fill: string) {
+  // "count" is not a unit — it says the numbers are numbers. The caption exists to answer "15.0M of
+  // WHAT", and a label that cannot answer it is just clutter above the axis, so it is dropped. The
+  // margin above the plot is deliberately kept, so this card's gridlines still line up with the
+  // captioned cards beside it in the grid.
+  if (value === "count") return undefined;
   // `position: "top"` alone lands the text ABOVE the svg's top edge, where it is clipped and
   // invisible — hence the explicit offset back into the canvas, and CHART_MARGIN's top reservation.
   return {
