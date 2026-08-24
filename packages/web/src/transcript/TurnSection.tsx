@@ -14,12 +14,15 @@ export function TurnSection({
   turn,
   events,
   matches = 0,
+  total,
   open,
   onToggle,
 }: {
   turn: any;
   events: EventNode[];
   matches?: number;
+  /** The turn's message count BEFORE the timeline's range filter, when one is active. */
+  total?: number;
   open: boolean;
   onToggle: () => void;
 }) {
@@ -36,7 +39,8 @@ export function TurnSection({
           </span>
         )}
         <span className="turn-stats muted">
-          {events.length} msg{events.length === 1 ? "" : "s"}
+          {total != null && total > events.length ? `${events.length} of ${total}` : events.length} msg
+          {(total ?? events.length) === 1 ? "" : "s"}
           {turn.duration_ms ? " · " + fmtDuration(turn.duration_ms) : ""}
         </span>
       </button>

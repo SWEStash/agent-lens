@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { Link, NavLink, Outlet, useLocation } from "react-router-dom";
+import BackToTop from "./BackToTop";
 import logoUrl from "./assets/logo.png";
 import { api, apiPost, SNAPSHOT, type HealthResponse } from "./api";
 import { useTheme } from "./theme";
@@ -148,6 +149,9 @@ export default function App() {
       <main className={"content" + (wide ? " wide" : "")} id="main" tabIndex={-1}>
         <Outlet />
       </main>
+      {/* Every page here can run long — a transcript of hundreds of messages, a thousand-row session
+          list, the files index. It shows itself only once there is somewhere to go back to. */}
+      <BackToTop />
     </div>
   );
 }

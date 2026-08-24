@@ -242,6 +242,11 @@ export interface EventNode {
   text: string | null;
   thinking: string | null;
   toolCalls: ToolCall[];
+  /** Token usage for the assistant RESPONSE this event belongs to — NOT the raw `token_usage` row
+   *  keyed by this uuid (ADR-032; session and dashboard totals are unaffected).
+   *
+   *  OMITTED, not null, when no usage reaches this event — which is most user and meta events. */
+  usage?: TokenSplit;
 }
 
 /** The evidence blob behind a classification, written verbatim by the heuristic classifier
@@ -691,6 +696,34 @@ export interface TimeseriesPoint extends TokenSplit {
 export interface DashTimeseries {
   bucket: "day" | "week" | "month";
   series: TimeseriesPoint[];
+}
+
+/**
+ * Time analytics: when work happened, rather than how much of it there was.
+ *
+ * `burn_hours` is the one series in the whole dashboard bucketed by **event** time rather than by
+ * `sessions.started_at` — see ADR-033. It is deliberately raw hourly UTC rows: the browser folds
+ * them into local weekday/hour, so one exported snapshot reads correctly in every viewer's zone and
+ * across DST transitions, neither of which a server-side offset could manage.
+ */
+export interface DashTime {
+  /** Work tokens (input + output + cache-creation) per UTC hour per source. `hour` is `YYYY-MM-DDTHH`. */
+  burn_hours: Array<{ hour: string; source: string | null; work: number }>;
+  /** Prompt to first assistant token, per bucket per model. Main sessions only. Never a mean. */
+  latency: {
+    bucket: "day" | "week" | "month";
+    series: Array<{ bucket: string; model: string; p50_ms: number; p90_ms: number; n: number }>;
+  };
+  /** How fast the next prompt arrived after a turn ended, split by whether that turn wrote files.
+   *  Main sessions only. Raw counts — the share is computed for display, not stored here. */
+  review: { wrote: ReviewLatency; none: ReviewLatency };
+}
+
+export interface ReviewLatency {
+  n: number;
+  under_10s: number;
+  under_30s: number;
+  under_2min: number;
 }
 
 export interface DashBreakdowns {

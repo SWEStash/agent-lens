@@ -47,7 +47,11 @@ const SESSION_DETAIL_KEYS = [
   "file_changes",
 ];
 
+// `usage` is deliberately OMITTED rather than null on an event with no token_usage row (most user and
+// meta events), so the two shapes are pinned separately: the base set below must stay exact for a
+// usage-less event, and USAGE adds the one key for an event that has a row.
 const EVENT_NODE_KEYS = ["uuid", "type", "role", "timestamp", "model", "is_sidechain", "turn_id", "text", "thinking", "toolCalls"];
+const EVENT_NODE_KEYS_WITH_USAGE = [...EVENT_NODE_KEYS, "usage"];
 
 // No event_uuid (the server already used it to nest this call), no error_type (server-side split
 // only), no total_tokens (nothing reads it) — see ToolCallProjection in server/src/rows.ts.
@@ -64,6 +68,9 @@ const DASH_OVERVIEW_KEYS = [
   "tokens", "total_tokens", "cache_read_ratio", "cost", "unpriced_models", "turn_duration_ms",
   "session_duration_ms", "workflows",
 ];
+
+const DASH_TIME_KEYS = ["burn_hours", "latency", "review"];
+const REVIEW_LATENCY_KEYS = ["n", "under_10s", "under_30s", "under_2min"];
 
 const DASH_BREAKDOWN_KEYS = [
   "by_model", "by_source", "by_category", "by_complexity", "tools", "skills", "skill_versions",
@@ -174,7 +181,14 @@ describe("response contracts — populated DB", () => {
       expect(body.session, `session detail is missing ${k}`).toHaveProperty(k);
     }
 
-    expectKeys(body.events[0], EVENT_NODE_KEYS, "event node");
+    // e1 is the user event and has no token_usage row: the key must be ABSENT, not null, which an
+    // exact-key assertion against the base set is precisely what proves.
+    expectKeys(body.events[0], EVENT_NODE_KEYS, "event node (no usage row)");
+    const withUsage = body.events.find((e: { uuid: string }) => e.uuid === "e2");
+    expectKeys(withUsage, EVENT_NODE_KEYS_WITH_USAGE, "event node (with usage row)");
+    expectKeys(withUsage.usage, TOKEN_SPLIT_KEYS, "event usage split");
+    expect(withUsage.usage).toEqual({ input: 100, output: 50, cache_creation: 0, cache_read: 0 });
+
     const withTool = body.events.find((e: { toolCalls: unknown[] }) => e.toolCalls.length > 0);
     expectKeys(withTool.toolCalls[0], TOOL_CALL_KEYS, "tool call");
     await app.close();
@@ -244,6 +258,14 @@ describe("response contracts — populated DB", () => {
       "subagent_fanout",
     );
     expectKeys(bd.error_types, ["by_type", "failures", "rejections"], "error_types");
+
+    const time = (await app.inject({ method: "GET", url: "/api/dashboard/time" })).json();
+    expectKeys(time, DASH_TIME_KEYS, "dash time");
+    expectKeys(time.latency, ["bucket", "series"], "dash time latency");
+    expectKeys(time.review, ["wrote", "none"], "dash time review");
+    expectKeys(time.review.wrote, REVIEW_LATENCY_KEYS, "review latency (wrote)");
+    expectKeys(time.review.none, REVIEW_LATENCY_KEYS, "review latency (none)");
+    expectKeys(time.burn_hours[0], ["hour", "source", "work"], "burn hour row");
     await app.close();
   });
 
@@ -405,6 +427,12 @@ describe("response contracts — degraded DBs keep the shape stable", () => {
     expectKeys((await app.inject({ method: "GET", url: "/api/dashboard/overview" })).json(), DASH_OVERVIEW_KEYS, "dash overview (empty)");
     expectKeys((await app.inject({ method: "GET", url: "/api/dashboard/breakdowns" })).json(), DASH_BREAKDOWN_KEYS, "dash breakdowns (empty)");
     expectKeys((await app.inject({ method: "GET", url: "/api/dashboard/timeseries" })).json(), ["bucket", "series"], "dash timeseries (empty)");
+    const time = (await app.inject({ method: "GET", url: "/api/dashboard/time" })).json();
+    expectKeys(time, DASH_TIME_KEYS, "dash time (empty)");
+    expect(time.burn_hours).toEqual([]);
+    expect(time.latency.series).toEqual([]);
+    expectKeys(time.review.wrote, REVIEW_LATENCY_KEYS, "review latency (empty)");
+    expect(time.review.wrote.n).toBe(0);
     await app.close();
   });
 });

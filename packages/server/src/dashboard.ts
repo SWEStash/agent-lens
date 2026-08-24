@@ -6,16 +6,19 @@
  * "tokens" number because it dominates and misleads. Cost is derived via the shared pricing table.
  */
 import { costForUsage, rateForModel, errorKind, type ToolErrorType } from "@agent-lens/core";
-import type { DashBreakdowns, DashOverview, DashTimeseries, TimeseriesPoint } from "@agent-lens/contracts";
+import type { DashBreakdowns, DashOverview, DashTime, DashTimeseries, ReviewLatency, TimeseriesPoint } from "@agent-lens/contracts";
 import type { DB } from "./db.js";
 import { tableExists, pushDateRange, queryAll, queryGet } from "./sql-util.js";
 import type {
   BucketCountRow,
   BucketErrorRow,
   BucketUsageAggRow,
+  BurnHourRow,
   CountRow,
+  LatencyRow,
   ModelBreakdownRow,
   OverviewCountsRow,
+  ReviewLatencyRow,
   SpanRow,
   UsageAggRow,
   WorkflowStatusAggRow,
@@ -40,6 +43,17 @@ function sessionWhere(f: DashFilters): Where {
   pushDateRange(where, params, "s.started_at", f.from, f.to);
   return { sql: where.length ? `WHERE ${where.join(" AND ")}` : "", params };
 }
+
+/** Extend a session WHERE clause with one more condition, opening the clause when it is empty. */
+const andWhere = (w: Where) => (w.sql ? w.sql + " AND" : "WHERE");
+
+/**
+ * Restrict an aggregate to MAIN sessions. 95% of `sessions` rows are subagents, and they behave
+ * nothing like a session a human sat through — no human turnaround, no idle, their own turn
+ * sequence — so anything measuring human behaviour or session shape counts main sessions only.
+ * Spend metrics deliberately do NOT use this: a subagent's tokens are real tokens.
+ */
+const mainOnly = (w: Where): Where => ({ sql: `${andWhere(w)} s.is_sidechain = 0`, params: w.params });
 
 interface Split {
   input: number;
@@ -188,12 +202,8 @@ export function dashboardOverview(db: DB, f: DashFilters): DashOverview {
 
   // Session-length percentiles over MAIN sessions only (subagents share the parent's wall clock),
   // excluding null durations. Complements the per-turn cadence with an end-to-end task-length view.
-  const sessDur = percentiles(
-    db,
-    `SELECT s.duration_ms v FROM sessions s
-     ${w.sql ? w.sql + " AND" : "WHERE"} s.is_sidechain = 0 AND s.duration_ms IS NOT NULL`,
-    w.params,
-  );
+  const mw = mainOnly(w);
+  const sessDur = percentiles(db, `SELECT s.duration_ms v FROM sessions s ${mw.sql} AND s.duration_ms IS NOT NULL`, mw.params);
 
   return {
     range: { from: f.from ?? null, to: f.to ?? null, source: f.source ?? null },
@@ -290,9 +300,6 @@ export function dashboardTimeseries(db: DB, f: DashFilters, bucketParam?: string
   return { bucket, series };
 }
 
-/** Extend a session WHERE clause with one more condition, opening the clause when it is empty. */
-const andWhere = (w: Where) => (w.sql ? w.sql + " AND" : "WHERE");
-
 function modelBreakdown(db: DB, w: Where): DashBreakdowns["by_model"] {
   const modelRows = queryAll<ModelBreakdownRow>(
     db,
@@ -330,7 +337,7 @@ function classificationBreakdowns(db: DB, w: Where): {
   byCategory: DashBreakdowns["by_category"];
   byComplexity: DashBreakdowns["by_complexity"];
 } {
-  const mainW: Where = { sql: w.sql ? w.sql + " AND s.is_sidechain = 0" : "WHERE s.is_sidechain = 0", params: w.params };
+  const mainW = mainOnly(w);
   const byCategory = queryAll<DashBreakdowns["by_category"][number]>(
     db,
     `SELECT c.category, COUNT(*) n FROM classifications c JOIN sessions s ON s.id = c.target_id
@@ -394,7 +401,7 @@ function subagentFanoutBreakdown(db: DB, w: Where): DashBreakdowns["subagent_fan
   const perSession = queryAll<CountRow>(
     db,
     `SELECT COUNT(*) n FROM tool_calls tc JOIN sessions s ON s.id = tc.session_id
-     ${andWhere(w)} s.is_sidechain = 0 AND tc.tool_name IN ('Agent','Task')
+     ${mainOnly(w).sql} AND tc.tool_name IN ('Agent','Task')
      GROUP BY tc.session_id`,
     ...w.params,
   );
@@ -447,4 +454,138 @@ export function dashboardBreakdowns(db: DB, f: DashFilters): DashBreakdowns {
     subagent_fanout: subagentFanoutBreakdown(db, w),
     error_types: errorTypeBreakdown(db, w),
   };
+}
+
+/**
+ * Time analytics (ADR-033): when the work happened.
+ *
+ * The three series here answer questions the rest of the dashboard cannot — every other aggregate
+ * buckets by `sessions.started_at`, which for a population running at median 92% idle drops a
+ * six-hour session's entire spend into the hour it began.
+ */
+const bucketFor = (b: string): Bucket => (b === "day" || b === "week" || b === "month" ? b : "day");
+
+export function dashboardTime(db: DB, f: DashFilters, bucketParam?: string): DashTime {
+  const w = sessionWhere(f);
+  const mw = mainOnly(w);
+
+  // Work tokens per UTC hour per source, bucketed by the usage event's OWN timestamp. token_usage
+  // carries no time of its own, so this joins events on the usage PK. Both populations: a subagent's
+  // tokens come off the same quota. Cache-read is excluded, matching the band's default metric.
+  const burn_hours = queryAll<BurnHourRow>(
+    db,
+    `SELECT strftime('%Y-%m-%dT%H', e.timestamp) h, s.source_id src,
+            SUM(t.input_tokens + t.output_tokens + t.cache_creation_input_tokens) work
+     FROM token_usage t
+     JOIN events e ON e.uuid = t.event_uuid
+     JOIN sessions s ON s.id = t.session_id
+     ${w.sql} GROUP BY h, src ORDER BY h`,
+    ...w.params,
+  )
+    .filter((r): r is BurnHourRow & { h: string } => r.h != null)
+    .map((r) => ({ hour: r.h, source: r.src, work: r.work ?? 0 }));
+
+  return { burn_hours, latency: modelLatency(db, mw, bucketParam ? bucketFor(bucketParam) : chooseBucket(db, f)), review: reviewLatency(db, mw) };
+}
+
+
+/**
+ * Prompt to first assistant token, p50 and p90 per (bucket, model), main sessions only.
+ *
+ * Percentiles are nearest-rank at the same offset `percentiles()` uses, so the two agree; that
+ * helper takes a single value set and this needs one per group, hence the window functions. Never a
+ * mean — the tail is the story, and this tile exists to show drift between buckets.
+ *
+ * Buckets holding fewer than MIN_LATENCY_SAMPLES turns are dropped rather than plotted: a percentile
+ * over three observations is not a percentile. The drop is visible in `n`, which ships with the row.
+ * This is what makes a fine bucket safe rather than merely sparse — and `n` is also what tells the
+ * reader that a cell holding exactly five turns reports its slowest as "p90".
+ *
+ * `<synthetic>` turns are excluded outright. That marker is Claude Code's for a reply it generated
+ * WITHOUT calling a model, so the elapsed time is not a model response time at all — and on the real
+ * corpus it carried an 87-minute p90 that flattened every genuine model against the axis. `IS NOT`
+ * rather than `<>` because turns with a NULL model must survive as `(unknown)`.
+ *
+ * The tail carries real contamination that no query can separate out — a turn whose first assistant
+ * event lands hours later is an agent parked on a permission prompt, not a slow model, and the
+ * corpus analysis (§4.2) established that those are indistinguishable from long tool calls. p90 is
+ * still reported, because "the slowest tenth took this long" is a fact; the tile says what it
+ * includes rather than pretending the number is pure model latency.
+ */
+const MIN_LATENCY_SAMPLES = 5;
+
+function modelLatency(db: DB, mw: Where, bucket: Bucket): DashTime["latency"] {
+  // Follows the dashboard's bucket control like every other tile. The thin-sample failure this once
+  // guarded against with a hard weekly floor is handled by MIN_LATENCY_SAMPLES instead, which is the
+  // check that actually bites: it drops a (bucket, model) cell wherever the turns aren't there,
+  // rather than assuming a whole granularity is unusable. On the real corpus a daily bucket still
+  // yields 119 plotted cells against a week's 36 — thinner, and honestly so, since the cells that
+  // cannot support a percentile disappear instead of being drawn.
+  const expr = BUCKET_EXPR[bucket];
+  const series = queryAll<LatencyRow>(
+    db,
+    `WITH lat AS MATERIALIZED (
+       SELECT ${expr} b, COALESCE(tn.model, '(unknown)') model,
+              (julianday(MIN(e.timestamp)) - julianday(tn.started_at)) * 86400000.0 ms
+       FROM turns tn
+       JOIN sessions s ON s.id = tn.session_id
+       JOIN events e ON e.turn_id = tn.id AND e.role = 'assistant'
+       ${mw.sql} AND tn.started_at IS NOT NULL AND tn.model IS NOT '<synthetic>'
+       GROUP BY tn.id
+     ),
+     ranked AS (
+       SELECT b, model, ms,
+              ROW_NUMBER() OVER (PARTITION BY b, model ORDER BY ms) rn,
+              COUNT(*) OVER (PARTITION BY b, model) c
+       FROM lat WHERE ms IS NOT NULL AND ms >= 0
+     )
+     SELECT b, model, MAX(c) n,
+            MAX(CASE WHEN rn = MAX(1, CAST(ceil(0.5 * c) AS INTEGER)) THEN ms END) p50,
+            MAX(CASE WHEN rn = MAX(1, CAST(ceil(0.9 * c) AS INTEGER)) THEN ms END) p90
+     FROM ranked GROUP BY b, model HAVING MAX(c) >= ${MIN_LATENCY_SAMPLES} ORDER BY b, model`,
+    ...mw.params,
+  )
+    .filter((r): r is LatencyRow & { b: string } => r.b != null)
+    .map((r) => ({
+      bucket: r.b,
+      model: r.model ?? "(unknown)",
+      p50_ms: Math.round(r.p50 ?? 0),
+      p90_ms: Math.round(r.p90 ?? 0),
+      n: r.n,
+    }));
+  return { bucket, series };
+}
+
+/**
+ * How fast the next prompt arrived after a turn ended, split by whether that turn wrote files.
+ * Main sessions only — a subagent has no human to turn it around.
+ *
+ * Raw counts, not shares: the reader divides. This reports that a reply arrived in four seconds; it
+ * does not claim that was too fast to have read anything.
+ */
+function reviewLatency(db: DB, mw: Where): DashTime["review"] {
+  const empty = (): ReviewLatency => ({ n: 0, under_10s: 0, under_30s: 0, under_2min: 0 });
+  const out = { wrote: empty(), none: empty() };
+  for (const r of queryAll<ReviewLatencyRow>(
+    db,
+    // `wrote` is resolved against a materialized set of turn ids rather than a correlated EXISTS:
+    // file_changes has no index on turn_id, so the per-turn subquery rescanned the table once per
+    // turn and cost 5.7s on the real corpus against 0.02s for this. Same counts either way.
+    `WITH wrote_turns AS MATERIALIZED (SELECT DISTINCT turn_id FROM file_changes WHERE turn_id IS NOT NULL),
+     turnaround AS MATERIALIZED (
+       SELECT (tn.id IN (SELECT turn_id FROM wrote_turns)) wrote,
+              (julianday(LEAD(tn.started_at) OVER (PARTITION BY tn.session_id ORDER BY tn.seq))
+               - julianday(tn.ended_at)) * 86400000.0 d
+       FROM turns tn JOIN sessions s ON s.id = tn.session_id ${mw.sql}
+     )
+     SELECT wrote, COUNT(*) n,
+            SUM(CASE WHEN d <= 10000 THEN 1 ELSE 0 END) u10,
+            SUM(CASE WHEN d <= 30000 THEN 1 ELSE 0 END) u30,
+            SUM(CASE WHEN d <= 120000 THEN 1 ELSE 0 END) u120
+     FROM turnaround WHERE d IS NOT NULL AND d >= 0 GROUP BY wrote`,
+    ...mw.params,
+  )) {
+    out[r.wrote ? "wrote" : "none"] = { n: r.n, under_10s: r.u10 ?? 0, under_30s: r.u30 ?? 0, under_2min: r.u120 ?? 0 };
+  }
+  return out;
 }

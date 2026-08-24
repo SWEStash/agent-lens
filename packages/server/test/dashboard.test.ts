@@ -8,7 +8,7 @@
 import { describe, it, expect, beforeAll } from "vitest";
 import { DatabaseSync } from "node:sqlite";
 import { SCHEMA_SQL } from "@agent-lens/core";
-import { dashboardOverview, dashboardBreakdowns, dashboardTimeseries } from "../dist/dashboard.js";
+import { dashboardOverview, dashboardBreakdowns, dashboardTimeseries, dashboardTime } from "../dist/dashboard.js";
 
 function seed(): DatabaseSync {
   const db = new DatabaseSync(":memory:");
@@ -146,5 +146,163 @@ describe("source filter scopes every aggregate", () => {
     expect(o.cost).toBe(0);
     expect(o.workflows.total).toBe(1); // only the personal 'running' run; success_rate 0 (none decided)
     expect(o.workflows.success_rate).toBe(0);
+  });
+});
+
+/**
+ * A second, purpose-built corpus for the time analytics. It exists separately because those queries
+ * need what the aggregate seed above deliberately omits: real event timestamps, turn spans, and a
+ * session whose events run for hours after it started.
+ *
+ * `long` is the whole point — it starts at 22:00 and spends tokens at 22:00, 23:00 and 01:00 the
+ * next day. Every other dashboard series would attribute all of it to the 22:00 hour.
+ */
+function seedTime(): DatabaseSync {
+  const db = new DatabaseSync(":memory:");
+  db.exec(SCHEMA_SQL);
+  db.exec("PRAGMA foreign_keys = OFF");
+  db.exec(`
+    INSERT INTO sessions (id, agent_id, source_id, is_sidechain, started_at) VALUES
+      ('long','claude-code','isf',0,'2026-03-01T22:00:00Z'),
+      ('sub','claude-code','isf',1,'2026-03-01T22:00:00Z');
+    INSERT INTO events (uuid, session_id, turn_id, type, role, timestamp, raw_json) VALUES
+      ('e1','long','long:0','assistant','assistant','2026-03-01T22:00:30Z',x''),
+      ('e2','long','long:0','assistant','assistant','2026-03-01T23:10:00Z',x''),
+      ('e3','long','long:1','assistant','assistant','2026-03-02T01:30:00Z',x''),
+      ('s1','sub','sub:0','assistant','assistant','2026-03-01T22:05:00Z',x'');
+    INSERT INTO token_usage (event_uuid, session_id, model, input_tokens, output_tokens, cache_creation_input_tokens, cache_read_input_tokens) VALUES
+      ('e1','long','claude-opus-5',10,20,30,9999),
+      ('e2','long','claude-opus-5',1,1,1,9999),
+      ('e3','long','claude-opus-5',100,100,100,9999),
+      ('s1','sub','claude-opus-5',5,5,5,9999);
+    INSERT INTO turns (id, session_id, seq, model, started_at, ended_at) VALUES
+      ('long:0','long',0,'claude-opus-5','2026-03-01T22:00:00Z','2026-03-01T23:10:00Z'),
+      ('long:1','long',1,'claude-opus-5','2026-03-01T23:10:05Z','2026-03-02T01:30:00Z'),
+      ('sub:0','sub',0,'claude-opus-5','2026-03-01T22:04:00Z','2026-03-01T22:05:00Z');
+    INSERT INTO tool_calls (id, session_id, turn_id, tool_name) VALUES ('tc1','long','long:0','Edit');
+    INSERT INTO file_changes (id, tool_call_id, session_id, turn_id, file_path, tool_name) VALUES
+      ('fc1','tc1','long','long:0','a.ts','Edit');
+  `);
+  return db;
+}
+
+/** Five main-session turns in one week, with hand-picked latencies (1s, 2s, 3s, 4s, 100s) so the
+ *  nearest-rank percentiles are checkable by eye. Just clears MIN_LATENCY_SAMPLES. */
+function seedLatency(): DatabaseSync {
+  const db = new DatabaseSync(":memory:");
+  db.exec(SCHEMA_SQL);
+  db.exec("PRAGMA foreign_keys = OFF");
+  const secs = [1, 2, 3, 4, 100];
+  const rows = secs
+    .map((sec, i) => {
+      const start = `2026-03-0${i + 2}T10:00:00Z`;
+      const reply = new Date(Date.parse(start) + sec * 1000).toISOString().replace(".000Z", "Z");
+      return {
+        turn: `('t${i}','lat',${i},'claude-opus-5','${start}','${reply}')`,
+        event: `('e${i}','lat','t${i}','assistant','assistant','${reply}',x'')`,
+      };
+    });
+  db.exec(`
+    INSERT INTO sessions (id, agent_id, source_id, is_sidechain, started_at) VALUES
+      ('lat','claude-code','isf',0,'2026-03-02T10:00:00Z');
+    INSERT INTO turns (id, session_id, seq, model, started_at, ended_at) VALUES ${rows.map((r) => r.turn).join(",")};
+    INSERT INTO events (uuid, session_id, turn_id, type, role, timestamp, raw_json) VALUES ${rows.map((r) => r.event).join(",")};
+  `);
+  return db;
+}
+
+describe("dashboardTime", () => {
+  it("buckets burn by the usage event's own hour, not the session's start hour", () => {
+    const t = dashboardTime(seedTime(), {});
+    const isf = t.burn_hours.filter((r: any) => r.source === "isf");
+    expect(isf.map((r: any) => r.hour)).toEqual(["2026-03-01T22", "2026-03-01T23", "2026-03-02T01"]);
+    // 22:00 holds e1 (60) plus the subagent's s1 (15) — spend counts both populations.
+    expect(isf.map((r: any) => r.work)).toEqual([75, 3, 300]);
+  });
+
+  it("excludes cache-read from work tokens", () => {
+    const t = dashboardTime(seedTime(), {});
+    expect(t.burn_hours.reduce((a: number, r: any) => a + r.work, 0)).toBe(378); // not 40k-odd
+  });
+
+  it("drops a bucket holding too few turns to have a percentile", () => {
+    // `long` has two turns. A p90 over two observations is just the larger one, so the row is not
+    // reported at all rather than plotted as if it meant something.
+    expect(dashboardTime(seedTime(), {}).latency.series).toEqual([]);
+  });
+
+  it("measures prompt to first assistant token per model, main sessions only", () => {
+    const t = dashboardTime(seedLatency(), {});
+    expect(t.latency.series).toHaveLength(1); // one bucket, one model — the subagent is excluded
+    const row = t.latency.series[0];
+    expect(row.model).toBe("claude-opus-5");
+    expect(row.n).toBe(5);
+    // Latencies are 1s, 2s, 3s, 4s, 100s. Nearest-rank over n=5: p50 is the 3rd, p90 the 5th.
+    expect(row.p50_ms).toBe(3_000);
+    expect(row.p90_ms).toBe(100_000);
+  });
+
+  it("excludes <synthetic> turns, which are replies generated without calling a model", () => {
+    const db = seedLatency();
+    // Same shape as the fixture's turns, but marked synthetic and far slower — exactly the row that
+    // used to own the whole y-axis. Five of them, so it would clear MIN_LATENCY_SAMPLES if counted.
+    const rows = [0, 1, 2, 3, 4]
+      .map((i) => {
+        const start = `2026-03-0${i + 2}T12:00:00Z`;
+        const reply = new Date(Date.parse(start) + 3_600_000).toISOString().replace(".000Z", "Z");
+        return {
+          turn: `('s${i}','lat',${i + 10},'<synthetic>','${start}','${reply}')`,
+          event: `('se${i}','lat','s${i}','assistant','assistant','${reply}',x'')`,
+        };
+      });
+    db.exec(`
+      INSERT INTO turns (id, session_id, seq, model, started_at, ended_at) VALUES ${rows.map((r) => r.turn).join(",")};
+      INSERT INTO events (uuid, session_id, turn_id, type, role, timestamp, raw_json) VALUES ${rows.map((r) => r.event).join(",")};
+    `);
+    const models = dashboardTime(db, {}).latency.series.map((r) => r.model);
+    expect(models).not.toContain("<synthetic>");
+    expect(models).toEqual(["claude-opus-5"]);
+  });
+
+  it("keeps turns whose model is unknown rather than dropping them with the synthetic ones", () => {
+    // `IS NOT '<synthetic>'` and `<> '<synthetic>'` differ exactly here: NULL <> 'x' is NULL, so the
+    // plain comparison would silently discard every unattributed turn.
+    const db = seedLatency();
+    db.exec("UPDATE turns SET model = NULL");
+    expect(dashboardTime(db, {}).latency.series.map((r) => r.model)).toEqual(["(unknown)"]);
+  });
+
+  it("follows the requested bucket rather than forcing a weekly floor", () => {
+    // A daily bucket used to be silently rewritten to weekly. What keeps a fine bucket honest is
+    // MIN_LATENCY_SAMPLES dropping the cells that cannot carry a percentile (asserted above), not
+    // refusing the granularity outright.
+    for (const bucket of ["day", "week", "month"] as const) {
+      const t = dashboardTime(seedLatency(), {}, bucket);
+      expect(t.latency.bucket).toBe(bucket);
+      // The fixture's turns all hang off one session start, so they share a cell at every
+      // granularity and clear the floor in each.
+      expect(t.latency.series).toHaveLength(1);
+      expect(t.latency.series[0].n).toBe(5);
+    }
+  });
+
+  it("splits turnaround by whether the turn wrote files", () => {
+    const t = dashboardTime(seedTime(), {});
+    // long:0 wrote a.ts and long:1 started 5s later; long:1 has no successor.
+    expect(t.review.wrote).toEqual({ n: 1, under_10s: 1, under_30s: 1, under_2min: 1 });
+    expect(t.review.none.n).toBe(0);
+  });
+
+  it("returns the same shape with no rows at all", () => {
+    const db = new DatabaseSync(":memory:");
+    db.exec(SCHEMA_SQL);
+    const t = dashboardTime(db, {});
+    expect(t.burn_hours).toEqual([]);
+    expect(t.latency.series).toEqual([]);
+    expect(t.review.wrote).toEqual({ n: 0, under_10s: 0, under_30s: 0, under_2min: 0 });
+  });
+
+  it("scopes to the source filter", () => {
+    expect(dashboardTime(seedTime(), { source: "personal" }).burn_hours).toEqual([]);
   });
 });

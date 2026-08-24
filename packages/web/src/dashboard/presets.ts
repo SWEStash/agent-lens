@@ -44,6 +44,12 @@ export const PRESETS: readonly Preset[] = [
     charts: ["tool-errors", "error-types", "activity"],
   },
   {
+    id: "time",
+    label: "Time",
+    kpis: ["sessions", "total-tokens", "cost", "turn-duration", "session-duration"],
+    charts: ["burn-heatmap", "weekly-burn", "model-latency", "review-latency"],
+  },
+  {
     id: "activity",
     label: "Activity",
     kpis: ["sessions", "projects", "turns", "session-duration"],

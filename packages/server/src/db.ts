@@ -26,6 +26,7 @@ import type {
   SkillSession,
   SkillVersion,
   Source,
+  TokenSplit,
   ToolCall,
   TurnRow,
   WorkflowAgent,
@@ -42,6 +43,7 @@ import type {
   ClassificationProjectionRow,
   CountRow,
   EventProjectionRow,
+  EventUsageRow,
   FindingProjectionRow,
   FileTimelineRow,
   ModelRow,
@@ -407,10 +409,66 @@ function toResponseToolCall({ event_uuid: _e, error_type: _t, ...call }: ToolCal
   return call;
 }
 
+/** Does this event put anything on screen? Mirrors EventBlock's body check on the web side. */
+function rendersSomething(e: EventProjectionRow, toolsByEvent: Map<string, ToolCallProjection[]>): boolean {
+  return !!(e.text || e.thinking || toolsByEvent.get(e.uuid)?.length);
+}
+
+function addSplit(a: TokenSplit | null, b: TokenSplit | undefined): TokenSplit | null {
+  if (!b) return a;
+  if (!a) return { ...b };
+  return {
+    input: a.input + b.input,
+    output: a.output + b.output,
+    cache_creation: a.cache_creation + b.cache_creation,
+    cache_read: a.cache_read + b.cache_read,
+  };
+}
+
+/**
+ * Attribute each usage row to the event a reader can actually see (ADR-032).
+ *
+ * A response's `token_usage` row is anchored to a transcript line that renders nothing, so this walks
+ * each turn in `seq` order, carries usage forward from the non-rendering events, and attaches the
+ * accumulated total to the next event that renders. Trailing usage folds back onto the turn's last
+ * rendering event. Usage never crosses a turn boundary.
+ */
+function foldUsage(
+  eventRows: EventProjectionRow[],
+  toolsByEvent: Map<string, ToolCallProjection[]>,
+  usageByEvent: Map<string, TokenSplit>,
+): Map<string, TokenSplit> {
+  const out = new Map<string, TokenSplit>();
+  if (usageByEvent.size === 0) return out;
+
+  const byTurn = new Map<string, EventProjectionRow[]>();
+  for (const e of eventRows) pushGrouped(byTurn, e.turn_id ?? "", e);
+
+  for (const group of byTurn.values()) {
+    const ordered = [...group].sort((a, b) => a.seq - b.seq);
+    let pending: TokenSplit | null = null;
+    let lastRendering: string | null = null;
+    for (const e of ordered) {
+      const own = usageByEvent.get(e.uuid);
+      if (rendersSomething(e, toolsByEvent)) {
+        const total = addSplit(pending, own);
+        if (total) out.set(e.uuid, total);
+        pending = null;
+        lastRendering = e.uuid;
+      } else {
+        pending = addSplit(pending, own);
+      }
+    }
+    // Trailing usage with no rendering event after it: fold back onto the last one there was.
+    if (pending && lastRendering) out.set(lastRendering, addSplit(out.get(lastRendering) ?? null, pending)!);
+  }
+  return out;
+}
+
 function loadEvents(db: DB, id: string, toolRows: ToolCallProjection[]): EventNode[] {
   const eventRows = queryAll<EventProjectionRow>(
     db,
-    `SELECT uuid, type, role, timestamp, model, is_sidechain, turn_id, text, thinking
+    `SELECT uuid, seq, type, role, timestamp, model, is_sidechain, turn_id, text, thinking
      FROM events WHERE session_id = ? ORDER BY timestamp, seq`,
     id,
   );
@@ -421,18 +479,37 @@ function loadEvents(db: DB, id: string, toolRows: ToolCallProjection[]): EventNo
     pushGrouped(toolsByEvent, t.event_uuid, t);
   }
 
-  return eventRows.map((e) => ({
-    uuid: e.uuid,
-    type: e.type,
-    role: e.role,
-    timestamp: e.timestamp,
-    model: e.model,
-    is_sidechain: e.is_sidechain,
-    turn_id: e.turn_id,
-    text: e.text,
-    thinking: e.thinking,
-    toolCalls: (toolsByEvent.get(e.uuid) ?? []).map(toResponseToolCall),
-  }));
+  // Per-event usage in ONE query for the session, mapped in memory — the alternative, a lookup per
+  // event, is a query per message on a 1 600-event transcript.
+  const usageByEvent = new Map<string, TokenSplit>();
+  for (const u of queryAll<EventUsageRow>(
+    db,
+    `SELECT event_uuid, input_tokens i, output_tokens o, cache_creation_input_tokens cw,
+            cache_read_input_tokens cr
+     FROM token_usage WHERE session_id = ?`,
+    id,
+  )) {
+    usageByEvent.set(u.event_uuid, { input: u.i, output: u.o, cache_creation: u.cw, cache_read: u.cr });
+  }
+  const folded = foldUsage(eventRows, toolsByEvent, usageByEvent);
+
+  return eventRows.map((e) => {
+    const usage = folded.get(e.uuid);
+    return {
+      uuid: e.uuid,
+      type: e.type,
+      role: e.role,
+      timestamp: e.timestamp,
+      model: e.model,
+      is_sidechain: e.is_sidechain,
+      turn_id: e.turn_id,
+      text: e.text,
+      thinking: e.thinking,
+      toolCalls: (toolsByEvent.get(e.uuid) ?? []).map(toResponseToolCall),
+      // Spread so the key is ABSENT, not null, on the majority of events that carry no usage row.
+      ...(usage ? { usage } : {}),
+    };
+  });
 }
 
 /** Heuristic classification: category + complexity + the signals that produced them

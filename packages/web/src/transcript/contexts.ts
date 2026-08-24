@@ -1,6 +1,6 @@
-/** The five contexts the transcript tree reads: message format, the Workflow tool-use -> run-id map,
- * the hide-tools toggle, the deep-link flash target, and the active search. Provided once by
- * SessionView. */
+/** The six contexts the transcript tree reads: message format, the Workflow tool-use -> run-id map,
+ * the hide-tools toggle, the flash target, the message being jumped to, and the active search.
+ * Provided once by SessionView. */
 import { createContext } from "react";
 
 /** How message bodies render: "markdown" (formatted, the default) or "raw" (verbatim text).
@@ -23,6 +23,13 @@ export const HideToolsContext = createContext<boolean>(false);
 // event uuid of a deep-linked message to flash (from #ev-<uuid>); null = none. Owned by SessionView so
 // the highlight survives re-renders (e.g. expanding the target's turn).
 export const FlashContext = createContext<string | null>(null);
+
+/** The message the reader is being taken to — a timeline mark click, a `#ev-<uuid>` deep link, or a
+ * find-in-session step. Distinct from FlashContext, which is set only AFTER the jump lands: this one
+ * is read on the way there, so a message that "hide tool messages" is burying can un-bury itself and
+ * give the jump something to scroll to. Same reasoning as SearchContext below — the toggle is about
+ * reading the conversation, not about narrowing where you can navigate. */
+export const JumpTargetContext = createContext<string | null>(null);
 
 /** The live find-in-session term and the message ◂/▸ currently sit on. Read by the two components
  * that hide text a match could be buried in — the thinking toggle and the long-body clamp — so they

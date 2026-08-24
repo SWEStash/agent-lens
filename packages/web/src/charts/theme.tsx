@@ -27,6 +27,18 @@ export function useChartTokens() {
       violet: v("--violet"),
       teal: v("--teal"),
     };
+    // Timeline band message-type steps — a validated categorical set of their own (see styles.css).
+    // tool-error is NOT a fifth entry: it is the status red, and always pairs with the rail tick.
+    const TIMELINE_COLORS = {
+      user: v("--tl-user"),
+      assistant: v("--tl-assistant"),
+      thinking: v("--tl-thinking"),
+      tool: v("--tl-tool"),
+      toolError: C.red,
+    };
+    // Burn-heatmap ramp, low→high. Sequential (magnitude), so one hue with monotone lightness —
+    // see the derivation note in styles.css.
+    const BURN_RAMP = [v("--burn-1"), v("--burn-2"), v("--burn-3"), v("--burn-4"), v("--burn-5")];
     // Token series colors. Cache-read is intentionally muted — it dominates and misleads.
     const TOKEN_COLORS = {
       input: C.green,
@@ -43,7 +55,7 @@ export function useChartTokens() {
       labelStyle: { color: C.text },
       itemStyle: { color: C.text },
     };
-    return { C, TOKEN_COLORS, PALETTE, axisProps, gridProps, tooltipStyle };
+    return { C, TOKEN_COLORS, TIMELINE_COLORS, BURN_RAMP, PALETTE, axisProps, gridProps, tooltipStyle };
   }, [theme]);
 }
 
@@ -54,6 +66,7 @@ export function useChartTokens() {
 export function ChartCard({
   title,
   hint,
+  guide,
   actions,
   bodyHeight,
   hidden,
@@ -61,6 +74,10 @@ export function ChartCard({
 }: {
   title: string;
   hint?: ReactNode;
+  /** "How to read this" — units, method, and the caveats that decide whether a reading is fair.
+   *  Behind a disclosure rather than a hover tooltip: it is multi-sentence reference text, hover
+   *  does not exist on touch, and a reader wants it open WHILE looking at the chart. */
+  guide?: ReactNode;
   actions?: ReactNode;
   bodyHeight?: number | string;
   hidden?: boolean;
@@ -71,6 +88,18 @@ export function ChartCard({
     <div className="card">
       <div className="card-head">
         <h3>{title}</h3>
+        {/* Before the hint, not after it: the header wraps, and a hint of any length would otherwise
+            push the ⓘ onto a line of its own, orphaned from the title it belongs to. */}
+        {guide && (
+          // <details> rather than a custom popover: keyboard, focus and screen-reader behaviour come
+          // for free, and it is the same idiom the strip customizers already use.
+          <details className="card-guide">
+            <summary aria-label={`How to read "${title}"`} title="How to read this chart">
+              ⓘ
+            </summary>
+            <div className="card-guide-body">{guide}</div>
+          </details>
+        )}
         {hint && <span className="card-hint">{hint}</span>}
         {actions && <span className="card-actions">{actions}</span>}
       </div>

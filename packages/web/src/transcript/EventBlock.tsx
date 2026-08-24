@@ -1,8 +1,8 @@
 import { useContext, useId, useState } from "react";
 import type { EventNode, ToolCall } from "../api";
-import { fmtDate, shortModel } from "../format";
+import { fmtDate, fmtTokens, shortModel, tokenSplitTitle, workTokens } from "../format";
 import CopyButton from "../CopyButton";
-import { FlashContext, HideToolsContext, SearchContext } from "./contexts";
+import { FlashContext, HideToolsContext, JumpTargetContext, SearchContext } from "./contexts";
 import { parseCommand, parseTaskNotification } from "./parse";
 import { CollapsibleText, CommandBlock, TaskNotificationBlock } from "./Message";
 import { fieldMatches, toolMatches } from "./search";
@@ -14,6 +14,7 @@ export function EventBlock({ e }: { e: EventNode }) {
   const hideTools = useContext(HideToolsContext);
   const flashUuid = useContext(FlashContext);
   const search = useContext(SearchContext);
+  const jumpTarget = useContext(JumpTargetContext);
   // Thinking is collapsed by default, so a match inside it is invisible until opened. Open it when
   // find-in-session navigates here and the term is actually in the thinking text — same reasoning as
   // the clamped body in CollapsibleText.
@@ -24,7 +25,11 @@ export function EventBlock({ e }: { e: EventNode }) {
   // let ▸ land on a message with nothing to show — or, when a tool call is its only content, on a card
   // that doesn't render at all. A tool holding the active match overrides the toggle, the same way a
   // flagged one does; the toggle is about reading the conversation, not about narrowing a search.
-  const revealed = (t: ToolCall) => search.activeUuid === e.uuid && toolMatches(t, search.query);
+  // A jump target reveals its tools for the same reason a search hit does: otherwise clicking a
+  // timeline mark for a tool-only message scrolls to an element that "hide tool messages" never
+  // rendered, and the jump silently does nothing.
+  const revealed = (t: ToolCall) =>
+    jumpTarget === e.uuid || (search.activeUuid === e.uuid && toolMatches(t, search.query));
   const visibleTools = e.toolCalls.filter((t) => toolVisible(t, hideTools) || revealed(t));
   const hasBody = e.text || e.thinking || visibleTools.length;
   if (!hasBody) return null;
@@ -41,6 +46,14 @@ export function EventBlock({ e }: { e: EventNode }) {
         </span>
         {e.model && <span className="tag">{shortModel(e.model)}</span>}
         {e.is_sidechain ? <span className="tag subagent">subagent</span> : null}
+        {/* Only events with a token_usage row carry `usage` at all — most user and meta events have
+            none, and get no chip rather than a "0 tok" one. The label is WORK tokens (see
+            workTokens); the hover carries the full four-way split including cache-read. */}
+        {e.usage && (
+          <span className="muted ev-tokens" title={tokenSplitTitle(e.usage)}>
+            {fmtTokens(workTokens(e.usage))} tok
+          </span>
+        )}
         <span className="muted ev-time">{fmtDate(e.timestamp)}</span>
         {copyText && <CopyButton text={copyText} className="ev-copy copy-hover" title="Copy message" />}
       </div>

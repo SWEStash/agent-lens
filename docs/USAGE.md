@@ -320,10 +320,43 @@ corpus by `node scripts/screenshots.mjs`.
   (show/hide, persisted per browser). Sortable **Security** (worst-severity + finding count) and
   **Errors** (failed-tool-call count) columns are shown by default; **Cost** is hidden by default
   (it still shows on the session detail page).
-- Open a session for the **transcript viewer**: turn-segmented, collapsible thinking, expandable
+- Open a session for the **transcript viewer**: turn-segmented, expandable
   tool calls, model/subagent tags, a **classification badge** (category + complexity) with a
   collapsible signals panel, and an **error summary** in the header — *"X failed · Y declined/blocked
   of N tool calls"* (the failed-vs-declined split is a heuristic; see [ADR-019](decisions/ADR-019-tool-error-observability.md)).
+- Read the session's shape from the **timeline** under the header — a minimap of the whole session,
+  not a second dashboard:
+
+  - **Idle gaps are collapsed by default.** A session a human sat through is mostly waiting, so a
+    literal wall-clock axis would spend nearly all of its width on almost none of the messages. Gaps
+    over a minute collapse to a marker; `time ⇄` switches to literal wall-clock, and is hidden
+    entirely when a session has no such gaps (usual for subagents). **Double-click a gap marker** to
+    open just that one at its real duration, and double-click it again to collapse it back.
+  - A gap's label says only what **bounds** it — *"4h 02m before your next message"*, *"12m
+    mid-turn"*. Which side was waiting is in the data; **why** is not, so the label does not guess.
+  - **Bar height** is the tokens behind that message — *work* (input + output + cache-write) by
+    default, switchable to output only or to the total including cache reads. Cache reads are an
+    order of magnitude larger than the rest and would flatten every message to the same size.
+  - **Colour** is the message type, and the rail beneath the baseline marks the audit-worthy events:
+    failed tool calls, security findings, file changes, and subagent spawns.
+  - **Hover** a mark to see which message it is — turn, type, time, size and any flags on it. The
+    marks are only a few pixels wide, so the hover target is much larger than the mark itself.
+  - **Click** a mark to jump to that message (its turn expands and the message is highlighted, the
+    same as following a deep link). **Drag** across the band to filter the transcript to that time
+    range; the range shows in a bar underneath with the surviving message count, a **zoom** control,
+    and **clear**. Partly-filtered turns show *"3 of 11 msgs"* on their header.
+  - The range lives in the URL as `?from=` / `?to=`, so a narrowed view is shareable and survives a
+    reload. Messages with no timestamp are never filtered out — they cannot be placed on the axis, so
+    hiding them would make them unreachable — and a `#ev-…` deep link into a message outside the
+    range clears the range rather than failing to land.
+  - **Keyboard**: the band is a single tab stop. `←`/`→` move between messages and `Home`/`End` jump
+    to the ends, `Enter` opens the message under the cursor, `Shift`+`←`/`→` selects a range, and
+    `Esc` clears it. The cursor's position, type, size and time are announced as it moves.
+
+  Each message also shows its **token count** next to the model tag, with the full
+  input/output/cache-write/cache-read split on hover. That number is the usage of the response the
+  message belongs to, which is not the same as the raw usage row stored against it — see
+  [ADR-032](decisions/ADR-032-per-event-token-attribution.md).
 - **Find in session** (`/` to focus, or the box above the transcript) — searches the open session
   ([ADR-030](decisions/ADR-030-in-session-search.md)). Unlike the list's FTS above, this is a literal
   case-insensitive **substring** match, so it hits mid-word (`AWS_SECRET` inside
@@ -342,6 +375,9 @@ corpus by `node scripts/screenshots.mjs`.
   suppressed tool card for as long as it is the active match. Since the term is in the URL (`?q=`), a
   search is shareable.
 - **Export** any session to Markdown (⬇ button, or `GET /api/sessions/:id/export.md`).
+
+On every page, a **back-to-top** control appears once you scroll away from the top, and returns
+keyboard focus there as well as the scroll position.
 
 **Files** (`/files`) — file-modification provenance ([ADR-022](decisions/ADR-022-file-modification-provenance.md)):
 which sessions (and which turns) changed which files, derived deterministically from every
@@ -375,6 +411,42 @@ date range):
   failure-vs-rejection split are a heuristic over the tool result text — see [ADR-019](decisions/ADR-019-tool-error-observability.md).
 - **Unpriced models** (e.g. `claude-fable-5`) are surfaced explicitly, not silently zeroed, so cost
   reads as a lower bound rather than a wrong number.
+- **Time analytics** — *when* the work happened, rather than how much of it there was. These five
+  tiles share one endpoint, and the dashboard skips fetching it entirely while all of them are
+  hidden:
+
+  - ***When tokens are spent*** — mean work tokens per weekday × hour. Uniquely among the charts it
+    buckets by the **event's own timestamp**, not the session's start: a session a human sat through
+    runs mostly idle and often spans hours, so session-start bucketing would drop a whole day's spend
+    into the hour it began. It therefore **will not tie out against "Tokens over time"** — that is
+    deliberate, see [ADR-033](decisions/ADR-033-time-analytics-bucketing.md).
+  - ***Burn by source*** — work tokens over time, one line per source. Sources are plotted
+    separately and **never summed**; they have genuinely different profiles. It follows the
+    dashboard's bucket control, so switching to *day* shows each source's shape where a month
+    flattens it. Like the heatmap it buckets by the event's own timestamp, so it does not tie out
+    against "Tokens over time" either.
+  - ***Model response latency*** — prompt → first assistant token, p50 and p90 per model, main
+    sessions only. It follows the bucket control, and any bucket holding fewer than five turns for a
+    model is **dropped rather than drawn** — so a finer bucket yields a sparser chart, not a noisier
+    one, and where a cell holds only a handful of turns its p90 is close to its slowest. The p90 tail
+    mixes slow models with agents parked on a **permission prompt**, which nothing in the data
+    separates — read it for drift between buckets, not as an absolute. Replies Claude Code generated
+    *without* calling a model (its `<synthetic>` marker) are excluded: that elapsed time is not a
+    model response time. **Every model is in the legend** and can be switched on or off, with only
+    the highest-volume few on by default — a model you do not see is off, not absent. The y-axis is
+    linear until the visible series span more than 100×, at which point it goes logarithmic and says
+    so, because below that a linear axis flattens the fastest lines onto the baseline.
+  - ***Turnaround after a turn*** — how fast the next prompt arrived, split by whether that turn
+    wrote files. An **audit** view, not a productivity one: it reports that a reply came in four
+    seconds and makes no claim about whether that was long enough to read the diff.
+
+  **Timezone:** hour-of-day and weekday are *local*, resolved from your browser and named on each
+  tile. The server computes and returns UTC; the browser localizes, so an exported snapshot reads
+  correctly in every viewer's zone and across daylight-saving changes.
+- **Reading a chart** — every card carries an **ⓘ** beside its title. It opens a short panel saying
+  what the axes are in, how the number is computed, and the caveats that decide whether a reading is
+  fair — which population it counts, what a heuristic label is worth, where a tail is contaminated.
+  Axis units are also printed above each axis, so "15.0M" is never left ambiguous.
 - **Views** — a switcher above the strips picks a curated layout: **All** (everything), **Cost**,
   **Reliability**, **Activity**. Presets are defined in code, so they never grow silently when a new
   chart ships — `All` always has everything.
@@ -561,6 +633,7 @@ below is relative to `<dataDir>`; run `agent-lens config` to print the resolved 
 | `GET /api/dashboard/overview` | KPI aggregates (sessions, split token totals, cost) |
 | `GET /api/dashboard/timeseries` | tokens/cost/activity over time (adaptive buckets) |
 | `GET /api/dashboard/breakdowns` | by model / category / complexity / tool / skill / subagent / error type |
+| `GET /api/dashboard/time` | when work happened: hourly token burn, model latency, review latency |
 | `GET /api/workflows/:run_id` | workflow run detail (phase graph, returned result, run log, per-agent rows) |
 | `GET /api/skills` | skills list (optional `q`, `source`, `project` filters) |
 | `GET /api/skills/:name` | skill detail (content-addressed versions + firings) |

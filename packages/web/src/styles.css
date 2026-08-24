@@ -15,6 +15,27 @@
   --gold: #e0b85a;
   --violet: #b98cff;
   --teal: #4fd1c5;
+  /* Timeline band message-type steps. These are NOT the vars above: as a categorical set those fail
+     validation on a dark surface (--violet against --accent measures ΔE 0.4 for deuteranopes, and the
+     whole set sits above the dark lightness band). Derived from the same hue families and validated
+     with the dataviz palette checker against both --panel and --bg: worst CVD ΔE 9.4, worst
+     normal-vision ΔE 18.5, all four at or above 3:1 contrast. Re-run the validator before changing
+     any of them. tool-error is deliberately absent — it is a status colour (--err) that always ships
+     with the annotation-rail tick, never colour alone. */
+  --tl-user: #3fa270;
+  --tl-assistant: #058dfa;
+  --tl-thinking: #b343ad;
+  --tl-tool: #a86819;
+  /* Burn-heatmap ramp — SEQUENTIAL, not categorical: one hue, monotone lightness, low→high. Derived
+     from the --tl-assistant blue (OKLCH hue 252) and validated as an ordinal ramp against both
+     --panel and --bg; the lightest step clears 2:1 on the surface so a cell with any spend at all is
+     never invisible. Blue rather than a heat ramp on purpose: amber/red would read as a warning, and
+     this chart reports when tokens were spent, not whether that was good. */
+  --burn-1: #27527f;
+  --burn-2: #3a6ca3;
+  --burn-3: #4d88c8;
+  --burn-4: #62a5ee;
+  --burn-5: #77c2ff;
   --code-bg: var(--bg);
 }
 /* Light theme: same tokens, WCAG-AA palette. Applied via <html data-theme="light">. */
@@ -34,6 +55,17 @@
   --gold: #b7791f;
   --violet: #7c3aed;
   --teal: #0d9488;
+  /* Light-theme timeline steps — separately derived and validated, not a flip of the dark set:
+     worst CVD ΔE 9.8, worst normal-vision ΔE 18.3, all four at or above 3:1. */
+  --tl-user: #226929;
+  --tl-assistant: #2649c0;
+  --tl-thinking: #8d1a89;
+  --tl-tool: #a1790c;
+  --burn-1: #8cb0d8;
+  --burn-2: #6695cb;
+  --burn-3: #3d7bbc;
+  --burn-4: #0160ae;
+  --burn-5: #00449e;
   --code-bg: #eef1f5;
 }
 * { box-sizing: border-box; }
@@ -414,6 +446,29 @@ table.sessions { width: 100%; border-collapse: collapse; }
 /* The floating match navigator, shown only once the toolbar's search box has scrolled away. Bottom
    right keeps it clear of the sticky turn headers at the top and out of the reading column. No entry
    animation, so there is nothing for prefers-reduced-motion to suppress. */
+/* Back to top. Shares the bottom-right corner with the search navigator, so it lifts out of the way
+   when that one is on screen — they are in different components, hence `:has()` on their ancestor
+   rather than a prop threaded between them. */
+.to-top {
+  position: fixed;
+  right: 18px;
+  bottom: 18px;
+  z-index: 19;
+  width: 38px;
+  height: 38px;
+  border-radius: 50%;
+  border: 1px solid var(--border);
+  background: var(--panel2);
+  color: var(--text);
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+  box-shadow: 0 4px 14px rgb(0 0 0 / 30%);
+}
+.to-top:hover { background: var(--tag); }
+.to-top:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.app:has(.search-nav) .to-top { bottom: 68px; }
+
 .search-nav {
   position: fixed;
   right: 18px;
@@ -529,6 +584,7 @@ table.sessions { width: 100%; border-collapse: collapse; }
 }
 .ev-meta { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; font-size: 12px; }
 .ev-who { font-weight: 600; }
+.ev-tokens { white-space: nowrap; }
 .ev-time { margin-left: auto; }
 .text { white-space: pre-wrap; word-break: break-word; }
 /* Collapsible long message bodies: clamp to a preview with a fade + show-more toggle. */
@@ -694,10 +750,23 @@ table.sessions { width: 100%; border-collapse: collapse; }
   grid-template-columns: repeat(auto-fit, minmax(380px, 1fr));
   gap: 14px;
 }
-.card { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 14px; min-width: 0; display: flex; flex-direction: column; }
+.card { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 14px; min-width: 0; display: flex; flex-direction: column; position: relative; }
 .card-head { display: flex; align-items: baseline; gap: 10px; margin-bottom: 10px; flex-wrap: wrap; }
 .card-head h3 { margin: 0; font-size: 14px; }
 .card-hint { font-size: 11px; color: var(--muted); }
+
+/* Latency legend: model chips that toggle their series, plus the solid/dashed key. Laid out as one
+   centred wrapping row so it behaves like the recharts legend it replaces. */
+.lat-legend { display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 4px 12px; font-size: 12px; }
+.lat-chip {
+  display: inline-flex; align-items: center; gap: 5px;
+  background: none; border: 1px solid transparent; border-radius: 5px;
+  padding: 1px 5px; cursor: pointer; font: inherit; line-height: 1.4;
+}
+.lat-chip:hover { border-color: var(--border); }
+.lat-chip:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+/* The key is a caption, not a control — it must not read as another clickable chip. */
+.lat-key { display: inline-flex; align-items: center; gap: 5px; padding-left: 4px; }
 /* Actions on the right of a card header: metric toggles, "show all" buttons. Pushed to the far edge. */
 .card-actions { margin-left: auto; display: flex; align-items: center; gap: 8px; }
 .link-btn { background: none; border: none; color: var(--accent); font-size: 11px; cursor: pointer; padding: 0; white-space: nowrap; }
@@ -1128,16 +1197,25 @@ button.small { padding: 2px 8px; font-size: 12px; }
 /* Sessions-list Security cell: worst-severity dot + total finding count (kept visually distinct so
  * "critical 40" can't be misread as 40 criticals). Dot uses the vivid per-severity color. */
 .sec-count { display: inline-flex; align-items: center; gap: 6px; justify-content: flex-end; }
+/* The vivid per-severity mark colour, shared by the sessions-list dot and the timeline rail. */
+:root {
+  --sev-c-critical: #ff8f8f;
+  --sev-c-high: #f0a860;
+  --sev-c-medium: #e0b85a;
+  --sev-c-low: #79c0ff;
+}
+:root[data-theme="light"] {
+  --sev-c-critical: #b12626;
+  --sev-c-high: #b5651d;
+  --sev-c-medium: #8a6d1f;
+  --sev-c-low: #1a5fa8;
+}
 .sev-dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; background: var(--muted); flex: none; }
-.sev-dot.sev-critical { background: #ff8f8f; }
-.sev-dot.sev-high { background: #f0a860; }
-.sev-dot.sev-medium { background: #e0b85a; }
-.sev-dot.sev-low { background: #79c0ff; }
+.sev-dot.sev-critical { background: var(--sev-c-critical); }
+.sev-dot.sev-high { background: var(--sev-c-high); }
+.sev-dot.sev-medium { background: var(--sev-c-medium); }
+.sev-dot.sev-low { background: var(--sev-c-low); }
 .sev-dot.sev-info { background: var(--muted); }
-:root[data-theme="light"] .sev-dot.sev-critical { background: #b12626; }
-:root[data-theme="light"] .sev-dot.sev-high { background: #b5651d; }
-:root[data-theme="light"] .sev-dot.sev-medium { background: #8a6d1f; }
-:root[data-theme="light"] .sev-dot.sev-low { background: #1a5fa8; }
 /* Framework anchor chip (OWASP/MITRE) — a subtle outlined variant. */
 .tag.framework { background: transparent; border: 1px solid var(--border); color: var(--muted); }
 
@@ -1284,3 +1362,146 @@ table.kv .muted { font-size: 12px; margin-top: 4px; }
   padding: 1px 6px;
   white-space: nowrap;
 }
+
+
+/* ---- Session timeline band (minimap under the classification row) -----------
+   Marks are drawn in SVG; everything positional comes from the piecewise scale in
+   transcript/timeline/scale.ts, so this file owns only colour, chrome and spacing. */
+.timeline {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel);
+  padding: 8px 10px 6px;
+  margin: 10px 0;
+}
+.tl-head { display: flex; align-items: center; gap: 10px; font-size: 12px; margin-bottom: 4px; }
+.tl-caption { margin-left: auto; }
+.tl-ctl select { font: inherit; background: var(--panel2); color: var(--text); border: 1px solid var(--border); border-radius: 5px; padding: 1px 4px; }
+.tl-axis { font-variant-numeric: tabular-nums; }
+.tl-svg { display: block; width: 100%; }
+/* A break is a hole in the axis, not data: recessive fill plus a hatch so it never reads as a mark. */
+.tl-break rect { fill: var(--panel2); stroke: var(--border); stroke-dasharray: 2 2; }
+.tl-mark { shape-rendering: crispEdges; }
+/* An opened gap reads as the same kind of thing as a collapsed one — just at its real width. */
+.tl-expanded { cursor: zoom-out; }
+.tl-expanded rect { fill: var(--panel2); stroke: var(--border); stroke-dasharray: 2 2; opacity: 0.75; }
+.tl-err { fill: var(--err); }
+.tl-file { fill: var(--muted); }
+.tl-spawn { fill: var(--muted); }
+.tl-find.sev-critical { fill: var(--sev-c-critical); }
+.tl-find.sev-high { fill: var(--sev-c-high); }
+.tl-find.sev-medium { fill: var(--sev-c-medium); }
+.tl-find.sev-low { fill: var(--sev-c-low); }
+.tl-find.sev-info { fill: var(--muted); }
+/* Selection: everything OUTSIDE the range is shaded back, so the selected span reads as the
+   subject rather than as a highlight laid over it. */
+.tl-svg { cursor: crosshair; }
+.tl-svg.is-dragging { cursor: ew-resize; }
+.tl-break { cursor: zoom-in; }
+/* The keyboard cursor. Only shown while the band has keyboard focus — a permanently visible marker
+   would read as a second selection to everyone navigating with a pointer. */
+.tl-cursor { fill: var(--text); opacity: 0; pointer-events: none; }
+.tl-svg:focus-visible .tl-cursor { opacity: 0.9; }
+.tl-svg:focus { outline: none; }
+.tl-svg:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 4px; }
+.tl-sel-shade { fill: var(--bg); opacity: 0.62; pointer-events: none; }
+.tl-sel-box { fill: var(--accent); opacity: 0.10; pointer-events: none; }
+.tl-sel-handle { fill: var(--accent); pointer-events: none; }
+.tl-pill {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  font-size: 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel);
+  padding: 5px 10px;
+  margin: -4px 0 10px;
+}
+.tl-pill-range { font-weight: 600; font-variant-numeric: tabular-nums; }
+/* Hover: a highlight on the mark plus a card describing it. The card is positioned by the mark rather
+   than the pointer so it stays still enough to read, and flips to the right edge past the midpoint so
+   it never runs off the band. */
+.tl-hover { fill: var(--text); opacity: 0.28; pointer-events: none; }
+.timeline { position: relative; }
+.tl-tip {
+  position: absolute;
+  bottom: 52px;
+  z-index: 5;
+  pointer-events: none;
+  min-width: 140px;
+  max-width: 260px;
+  padding: 6px 9px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--panel2);
+  box-shadow: 0 6px 18px rgb(0 0 0 / 35%);
+  font-size: 12px;
+  line-height: 1.45;
+}
+.tl-tip.is-right { text-align: right; }
+.tl-tip-head { display: flex; gap: 6px; align-items: baseline; font-weight: 600; }
+.tl-tip.is-right .tl-tip-head { justify-content: flex-end; }
+.tl-tip-turn { color: var(--muted); font-weight: 500; }
+.tl-tip-row { font-variant-numeric: tabular-nums; display: flex; gap: 6px; flex-wrap: wrap; }
+.tl-tip.is-right .tl-tip-row { justify-content: flex-end; }
+.tl-tip-flag { border-radius: 4px; background: var(--tag); padding: 0 5px; font-size: 11px; }
+.tl-tip-flag.is-err { background: color-mix(in srgb, var(--err) 22%, transparent); color: var(--err); }
+.tl-tip-flag.sev-critical { background: color-mix(in srgb, var(--sev-c-critical) 22%, transparent); color: var(--sev-c-critical); }
+.tl-tip-flag.sev-high { background: color-mix(in srgb, var(--sev-c-high) 22%, transparent); color: var(--sev-c-high); }
+.tl-tip-flag.sev-medium { background: color-mix(in srgb, var(--sev-c-medium) 22%, transparent); color: var(--sev-c-medium); }
+.tl-tip-flag.sev-low { background: color-mix(in srgb, var(--sev-c-low) 22%, transparent); color: var(--sev-c-low); }
+.tl-legend { display: flex; flex-wrap: wrap; gap: 10px; font-size: 11px; color: var(--muted); margin-top: 4px; }
+.tl-key { display: inline-flex; align-items: center; gap: 4px; }
+.tl-swatch { width: 8px; height: 8px; border-radius: 2px; display: inline-block; }
+
+/* Burn heatmap — a plain CSS grid rather than a charting library: 7x24 fixed cells, no scales to
+   compute, and the cell colours come straight from the validated --burn-* ramp. */
+.burn { display: flex; flex-direction: column; gap: 8px; height: 100%; justify-content: center; }
+.burn-grid { display: flex; flex-direction: column; gap: 2px; }
+.burn-row { display: flex; align-items: center; gap: 2px; }
+.burn-day { width: 30px; flex: none; font-size: 11px; color: var(--muted); }
+.burn-cell { flex: 1 1 0; height: 14px; border-radius: 2px; }
+.burn-tick { flex: 1 1 0; font-size: 10px; color: var(--muted); font-style: normal; text-align: left; }
+.burn-hours { margin-top: 2px; }
+.burn-legend { display: flex; align-items: center; gap: 4px; font-size: 11px; color: var(--muted); }
+.burn-legend i { width: 14px; height: 10px; border-radius: 2px; }
+
+/* "How to read this" disclosure in a chart card header. A panel rather than a hover tooltip: the
+   content is multi-sentence reference text, hover does not exist on touch, and it has to stay open
+   while the reader looks back at the chart. */
+.card-guide { margin-left: 2px; }
+.card-guide > summary {
+  list-style: none; cursor: help; color: var(--muted); font-size: 12px;
+  border-radius: 50%; width: 16px; height: 16px; display: inline-flex;
+  align-items: center; justify-content: center; line-height: 1;
+}
+.card-guide > summary::-webkit-details-marker { display: none; }
+.card-guide > summary:hover, .card-guide[open] > summary { color: var(--accent); background: var(--tag); }
+/* Anchored to the CARD, not to the ⓘ: spanning the card's own width means the panel can never
+   spill over a neighbouring card or off the right edge of the grid, whatever column it lands in. */
+.card-guide-body {
+  position: absolute; z-index: 6; top: 40px; left: 10px; right: 10px;
+  padding: 10px 12px; border: 1px solid var(--border); border-radius: 7px;
+  background: var(--panel2); box-shadow: 0 6px 18px rgb(0 0 0 / 35%);
+  font-size: 12px; line-height: 1.5; color: var(--text); font-weight: 400;
+}
+.card-guide-body p { margin: 0 0 7px; }
+.card-guide-body p:last-child { margin-bottom: 0; }
+.card-guide-body dt { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: 0.03em; }
+.card-guide-body dd { margin: 1px 0 7px; }
+.card-guide-body dd:last-child { margin-bottom: 0; }
+
+/* Heatmap cell tooltip — hover IS right here: one short fact, tied to one mark. */
+.burn { position: relative; }
+.burn-tip {
+  position: absolute; z-index: 6; pointer-events: none;
+  padding: 5px 8px; border: 1px solid var(--border); border-radius: 7px;
+  background: var(--panel2); box-shadow: 0 6px 18px rgb(0 0 0 / 35%);
+  font-size: 12px; line-height: 1.45; white-space: nowrap;
+}
+.burn-tip-head { font-weight: 600; }
+.burn-tip-row { color: var(--muted); font-variant-numeric: tabular-nums; }
+.burn-cell { cursor: default; }
+.burn-cell:hover { outline: 2px solid var(--text); outline-offset: -1px; }

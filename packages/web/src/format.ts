@@ -1,3 +1,5 @@
+import type { TokenSplit } from "./api";
+
 export function fmtDuration(ms: number | null): string {
   if (!ms || ms < 0) return "—";
   const s = Math.round(ms / 1000);
@@ -33,9 +35,24 @@ export function costTitle(unpriced?: string[] | null): string {
 }
 
 /** Hover breakdown of a token total into its four categories (cache kept, not hidden). */
-export function tokenSplitTitle(s?: { input: number; output: number; cache_creation: number; cache_read: number } | null): string {
+export function tokenSplitTitle(s?: TokenSplit | null): string {
   if (!s) return "";
   return `input ${fmtTokens(s.input)} · output ${fmtTokens(s.output)} · cache-write ${fmtTokens(s.cache_creation)} · cache-read ${fmtTokens(s.cache_read)}`;
+}
+
+/** Work tokens: input + output + cache-write, EXCLUDING cache-read. Cache-read is an order of
+ *  magnitude larger than the rest and would make every message read as roughly the same size, which
+ *  is the same reason the dashboard mutes that series. The full split stays available via
+ *  {@link tokenSplitTitle}. */
+export function workTokens(s?: TokenSplit | null): number {
+  if (!s) return 0;
+  return s.input + s.output + s.cache_creation;
+}
+
+/** Wall-clock time only — for labels inside a single session, where the date is the same throughout
+ *  and repeating it is noise. */
+export function fmtClock(ms: number): string {
+  return new Date(ms).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
 }
 
 export function fmtDate(iso: string | null): string {

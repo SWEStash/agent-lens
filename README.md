@@ -89,10 +89,20 @@ agent-lens-ingest: files=312 skipped=298 new_events=1840 malformed=0
 - **Live `watch` mode** — `agent-lens watch` collects + ingests whenever a source changes (debounced).
 - **Normalized store** — sessions / turns / events / tool-calls / token-usage in SQLite with **FTS5**
   full-text search. The archive is the source of truth; the DB is a rebuildable projection.
-- **Rich transcript viewer** — turn-segmented sessions, collapsible thinking, and purpose-built
+- **Rich transcript viewer** — turn-segmented sessions, a navigable timeline band, and purpose-built
   rendering per tool: Bash as a shell console, `Edit`/`MultiEdit`/`Write` as colored diffs, plans and
   `AskUserQuestion` as cards, workflow runs with a phase graph. One-click **Markdown export** and a
   **light/dark theme toggle** (dark by default).
+- **Session timeline** — a minimap under each session's header showing where the work, the waiting and
+  the audit-worthy moments are. Idle gaps are collapsed by default (a real session is mostly waiting —
+  gaps over a minute are a fraction of the events but almost all of the wall-clock), with a toggle
+  back to literal wall-clock. Bar height is the tokens behind each message; colour is the message
+  type; and a rail underneath marks failed tool calls, security findings, file changes and subagent
+  spawns. Hover a mark to see which message it is, click to jump to it, drag to filter the transcript
+  to a time range (the range is in the URL, so it is shareable), or drive the whole thing from the
+  keyboard. Each message
+  also carries its own **token count**, attributed to the message you can actually see
+  ([ADR-032](docs/decisions/ADR-032-per-event-token-attribution.md)).
 - **Find in session** (`/`) — searches message bodies, thinking, and tool inputs/results, highlights
   every hit and steps through them with `Enter`/`Shift+Enter`, reaching what the browser's own find
   can't: matches inside collapsed turns (counted on the turn header), below a long message's fold, and
@@ -134,9 +144,11 @@ A live, **corpus-only** demo (synthetic data, no real sessions) is published via
 generated from the same committed corpus by `node scripts/screenshots.mjs` — fully reproducible.
 
 **Dashboard** — token breakdown, estimated cost, cache-read ratio, and breakdowns by model, category,
-complexity, tool, skill, and subagent fan-out:
+complexity, tool, skill, and subagent fan-out — plus **time analytics**: a weekday × hour heatmap of
+when tokens are actually spent (in your own timezone), weekly and rolling-7-day burn kept separate
+per source, model response latency, and how fast turns that wrote files were answered:
 
-![Agent Lens dashboard showing KPI cards (token breakdown, estimated cost, cache-read ratio, total tokens), tokens/cost/activity-over-time charts, and breakdown charts by model, task category, complexity band, tool frequency, skill activation, and subagent fan-out](docs/img/dashboard.png)
+![Agent Lens dashboard showing KPI cards (token breakdown, estimated cost, cache-read ratio, total tokens), tokens/cost/activity-over-time charts, breakdown charts by model, task category, complexity band, tool frequency, skill activation and subagent fan-out, and time-analytics tiles: a weekday-by-hour token burn heatmap, weekly and rolling 7-day burn per source, model response latency, and turnaround after a turn](docs/img/dashboard.png)
 
 **Session transcript** — turn-segmented, with purpose-built rendering per tool. Here, `Bash` as a
 shell console: a `$` prompt per logical command (a heredoc's body correctly left unprefixed), the

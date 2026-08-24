@@ -58,8 +58,10 @@ pnpm sandbox                                # Layer 5 end-to-end over the corpus
     severity model, and the command sanitizer stage by stage (including the
     regex-as-tokenizer holes we knowingly accept).
   - `web/test/*.test.ts(x)` — the SPA's pure transcript logic (shell/diff/parse/
-    tree) and its hooks and components (`useFetch`, `useQueryState`,
-    `useOutsideClick`, `FilterSelect`, `AgentRow`). `packages/web/vitest.config.ts`
+    tree/timeline scale) and its hooks and components (`useFetch`, `useQueryState`,
+    `useOutsideClick`, `FilterSelect`, `AgentRow`, and the session view's
+    deep-link, search, time-range and keyboard behaviour).
+    `packages/web/vitest.config.ts`
     defines the web project (jsdom, source resolved by vite); the root config
     references it, so a package-local run and the repo-wide run execute the same
     tests.
@@ -85,7 +87,7 @@ pnpm sandbox                                # Layer 5 end-to-end over the corpus
 > ~630-session DB — Layer 2 runs against your own `data/agent-lens.db`, so the numbers scale with
 > your data. Layers 1/3/4/5 run on the committed corpus and are deterministic.
 
-**Layer 1/3/4-unit + corpus scenarios + web — `pnpm test`:** 474 tests pass (39 files).
+**Layer 1/3/4-unit + corpus scenarios + web — `pnpm test`:** 799 tests pass (65 files).
 
 **Layer 2 — invariants on the live corpus (~632-session snapshot):** all hard invariants PASS.
 

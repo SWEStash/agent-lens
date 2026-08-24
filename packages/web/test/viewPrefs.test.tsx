@@ -78,7 +78,26 @@ describe("fetchViewPrefs", () => {
 
   it("coerces a stored value rather than trusting it", async () => {
     api.mockResolvedValue({ value: "nonsense" });
-    expect(await fetchViewPrefs()).toEqual({ format: "markdown", hideTools: false });
+    expect(await fetchViewPrefs()).toEqual({
+      format: "markdown",
+      hideTools: false,
+      axisMode: "compressed",
+      metric: "work",
+    });
+  });
+
+  it("reads the timeline prefs, and defaults the axis to compressed", async () => {
+    // Compressed is the default because a main session runs at a median 92% idle; literal is the
+    // niche. A stored value the server doesn't have must not invent one.
+    api.mockImplementation((p: string) =>
+      p === "/prefs/timelineAxis" ? Promise.resolve({ value: "literal" }) : Promise.resolve({ value: null }),
+    );
+    expect(await fetchViewPrefs()).toEqual({ axisMode: "literal" });
+
+    api.mockImplementation((p: string) =>
+      p === "/prefs/timelineMetric" ? Promise.resolve({ value: "total" }) : Promise.resolve({ value: null }),
+    );
+    expect(await fetchViewPrefs()).toEqual({ metric: "total" });
   });
 
   it("returns nothing when the server is unreachable or has no writable store", async () => {

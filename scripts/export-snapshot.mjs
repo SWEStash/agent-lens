@@ -92,6 +92,7 @@ async function main() {
   writeSnap("dashboard/overview.json", await getJson("/api/dashboard/overview"));
   writeSnap("dashboard/timeseries.json", await getJson("/api/dashboard/timeseries"));
   writeSnap("dashboard/breakdowns.json", await getJson("/api/dashboard/breakdowns"));
+  writeSnap("dashboard/time.json", await getJson("/api/dashboard/time"));
 
   // Security findings (ADR-017): the summary + the full findings list. In snapshot mode api.ts strips
   // the query, so the list collapses to one default file — limit=1000 keeps every finding in it (the
