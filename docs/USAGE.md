@@ -411,7 +411,7 @@ date range):
   failure-vs-rejection split are a heuristic over the tool result text — see [ADR-019](decisions/ADR-019-tool-error-observability.md).
 - **Unpriced models** (e.g. `claude-fable-5`) are surfaced explicitly, not silently zeroed, so cost
   reads as a lower bound rather than a wrong number.
-- **Time analytics** — *when* the work happened, rather than how much of it there was. These five
+- **Time analytics** — *when* the work happened, rather than how much of it there was. These four
   tiles share one endpoint, and the dashboard skips fetching it entirely while all of them are
   hidden:
 
