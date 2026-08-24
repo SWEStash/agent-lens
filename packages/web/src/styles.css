@@ -26,25 +26,20 @@
   --tl-assistant: #058dfa;
   --tl-thinking: #b343ad;
   --tl-tool: #a86819;
-  /* Burn-heatmap ramp — SEQUENTIAL, not categorical: one hue, monotone lightness, low→high. Derived
-     from the --tl-assistant blue (OKLCH hue 252) and validated as an ordinal ramp against both
-     --panel and --bg; the lightest step clears 2:1 on the surface so a cell with any spend at all is
-     never invisible. Blue rather than a heat ramp on purpose: amber/red would read as a warning, and
-     this chart reports when tokens were spent, not whether that was good.
-     SEVEN steps, not five: under sqrt the first of five spanned 0–33k tokens/h against a 841k peak,
-     which put an idle hour and a busy one in the same colour. Adding steps rather than switching to
-     log was measured — log separates the low end but collapses 47 of 132 real cells into one
-     near-maximum step. Seven is also the ceiling: the band is bounded below by step 1's contrast
-     floor and above by where a blue stops reading as blue, and eight steps fall under the ΔL 0.06
-     the eye needs between neighbours.
-     Step 1 is near-NEUTRAL, and that is the point. An empty cell (--panel2) to a chromatic step 1
-     jumped ΔL 0.179 AND chroma 0.070, against ~0.065 and ~0.005 between every other pair — so the
-     scale's first increment read as a category change, and an hour worked once in three months
-     shouted louder than the step from a busy hour to a busier one. Holding step 1's LIGHTNESS (it
-     still clears 2:1, so a worked hour stays visible) and taking its CHROMA to ~0 removes the jump
-     that was actually being seen. Chroma then climbs with lightness, at the most the sRGB gamut
-     holds at each step — clipping an out-of-gamut blue pulls its lightness back toward its
-     neighbour, which is what failed the ordinal ΔL check on the first candidates. */
+  /* Burn-heatmap ramp — SEQUENTIAL: one hue (the --tl-assistant blue, OKLCH 252), monotone lightness,
+     low→high. Blue rather than a heat ramp on purpose: amber/red would read as a warning, and this
+     chart reports when work happened, not whether that was good.
+     These are GRADIENT ANCHORS, not a palette of discrete steps — the heatmap interpolates between
+     them (see rampColor in dashboard/burn.ts) and prepends --panel2, so the scale runs continuously
+     out of an empty cell. Binning them was the earlier design and it failed on its own first step:
+     every non-zero cell took the lowest step's full colour however small the value, so empty→lowest
+     was the biggest jump on the scale (ΔL 0.179 against ~0.065 between neighbours) and an hour worked
+     once in three months read louder than a busy hour against a busier one.
+     Two properties still matter and are worth preserving if these are ever re-derived. The first
+     anchor is near-NEUTRAL, so the run out of the grey empty cell is a change in lightness only, not
+     a jump from neutral into colour. And each anchor's chroma is the most the sRGB gamut holds at its
+     lightness — asking for more clips, and clipping drags lightness back toward the next anchor,
+     which bends the curve. Validated as an ordinal ramp against both --panel and --bg. */
   --burn-1: #48515b;
   --burn-2: #536478;
   --burn-3: #5d7896;
@@ -77,7 +72,8 @@
   --tl-assistant: #2649c0;
   --tl-thinking: #8d1a89;
   --tl-tool: #a1790c;
-  /* Same derivation as the dark ramp: palest step holds its lightness and drops to near-neutral. */
+  /* Same derivation as the dark anchors: the palest one is near-neutral, so the run out of an
+     empty cell changes lightness only. */
   --burn-1: #a4aeb9;
   --burn-2: #859ab3;
   --burn-3: #6787ac;
@@ -1490,13 +1486,19 @@ table.kv .muted { font-size: 12px; margin-top: 4px; }
 .burn-lg .burn-cell { height: 40px; }
 .burn-lg .burn-day, .burn-lg .burn-tick { font-size: 12px; }
 .burn-lg .burn-day { width: 36px; }
-.burn-legend { display: flex; flex-direction: column; gap: 2px; font-size: 11px; color: var(--muted); }
+.burn-legend { display: flex; flex-direction: column; gap: 3px; font-size: 11px; color: var(--muted); }
 .burn-legend-cap { align-self: flex-start; }
-/* Swatches and their boundary numbers share one flex track, so each number lands under the step it
-   bounds however wide the card is. */
-.burn-scale { display: flex; gap: 2px; }
-.burn-scale i { flex: 1 1 0; height: 10px; border-radius: 2px; }
-.burn-scale span { flex: 1 1 0; text-align: right; font-size: 10px; font-variant-numeric: tabular-nums; }
+/* A continuous bar rather than swatches: the cells are a gradient, so the key has to be one too. */
+.burn-bar { height: 10px; border-radius: 2px; }
+/* Ticks are positioned along the bar rather than flowed, so each number sits under the point it
+   labels; the first and last are pulled inside so they do not overhang the card. */
+.burn-ticks { position: relative; height: 12px; }
+.burn-ticks span {
+  position: absolute; transform: translateX(-50%);
+  font-size: 10px; font-variant-numeric: tabular-nums; white-space: nowrap;
+}
+.burn-ticks span:first-child { transform: none; }
+.burn-ticks span:last-child { transform: translateX(-100%); }
 
 /* Enlarged chart view. Above every other layer in the app (the highest is 20) because it is modal:
    nothing may paint over it while it is open. */

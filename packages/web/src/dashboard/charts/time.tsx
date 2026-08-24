@@ -3,7 +3,7 @@ import { ResponsiveContainer, LineChart, Line, BarChart, Bar, XAxis, YAxis, Cart
 import { ChartCard, useChartTokens } from "../../charts/theme";
 import { fmtDuration, fmtTokens, shortModel } from "../../format";
 import { resolveZone, zoneLabel } from "../../tz";
-import { burnBySource, heatCells, heatRows, rampBounds, rampStep, type HeatCell, type HeatMetric } from "../burn";
+import { burnBySource, heatCells, heatRows, rampColor, rampPosition, rampTicks, type HeatCell, type HeatMetric } from "../burn";
 import { CHART_MARGIN, decadeDomain, unitLabel, type ChartProps } from "./common";
 
 const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
@@ -55,6 +55,15 @@ export function BurnHeatmap({ hidden, time, range }: ChartProps) {
   const dp = isTokens ? 0 : max < 2 ? 2 : 1;
   const fmtVal = (n: number) => (isTokens ? fmtTokens(Math.round(n)) : n.toFixed(dp));
   const unit = isTokens ? "work tokens" : "turns";
+  // Linear for turns, sqrt for tokens — see `rampPosition`. Compressing a 3.5x spread is what put a
+  // one-off cell a tenth of the way up the scale.
+  const scale = isTokens ? "sqrt" : "linear";
+  // The gradient runs from the EMPTY cell's own colour, so a cell's colour is continuous with having
+  // no work at all rather than starting at a step that must be visible however small the value is.
+  // The cost is deliberate and was the point: one turn in three months is meant to look like almost
+  // nothing, and the tooltip carries the number.
+  const stops = [C.panel2, ...BURN_RAMP];
+  const gradient = `linear-gradient(to right, ${stops.join(", ")})`;
 
   return (
     <ChartCard
@@ -124,12 +133,12 @@ export function BurnHeatmap({ hidden, time, range }: ChartProps) {
                 {cells
                   .filter((c) => c.weekday === weekday)
                   .map((c) => {
-                    const step = rampStep(c.mean, max, BURN_RAMP.length);
+                    const t = rampPosition(c.mean, max, scale);
                     return (
                       <i
                         key={c.hour}
                         className="burn-cell"
-                        style={{ background: step ? BURN_RAMP[step - 1] : C.panel2 }}
+                        style={{ background: t === null ? C.panel2 : rampColor(t, stops) }}
                         onPointerEnter={(e) => {
                           const cell = e.currentTarget.getBoundingClientRect();
                           const box = e.currentTarget.closest(".burn")!.getBoundingClientRect();
@@ -148,22 +157,18 @@ export function BurnHeatmap({ hidden, time, range }: ChartProps) {
               ))}
             </div>
           </div>
-          {/* The step boundaries are on the legend, not just "less ▪▪▪▪ more": without them a colour
-              can only be compared to another colour, and answering "what is this cell worth" meant
-              hovering all 168 of them. The empty swatch leads the scale because a blank cell is a
-              real reading — no spend — rather than missing data. */}
+          {/* A gradient bar with the values written under it, not "less ▪▪▪▪ more": a reader has to be
+              able to lay a cell against the strip and get a number, and hovering 168 cells is not
+              that. It starts at the empty colour because a blank cell is a reading — no work — and
+              the scale should run continuously out of it. */}
           <div className="burn-legend">
-            <span className="burn-legend-cap">{unit} per hour, up to</span>
-            <div className="burn-scale">
-              <i style={{ background: C.panel2 }} />
-              {BURN_RAMP.map((c, i) => (
-                <i key={i} style={{ background: c }} />
-              ))}
-            </div>
-            <div className="burn-scale">
-              <span>0</span>
-              {rampBounds(max, BURN_RAMP.length).map((b, i) => (
-                <span key={i}>{fmtVal(b)}</span>
+            <span className="burn-legend-cap">{unit} per hour</span>
+            <div className="burn-bar" style={{ background: gradient }} />
+            <div className="burn-ticks">
+              {rampTicks(max, scale).map(([pos, value]) => (
+                <span key={pos} style={{ left: `${pos * 100}%` }}>
+                  {fmtVal(value)}
+                </span>
               ))}
             </div>
           </div>

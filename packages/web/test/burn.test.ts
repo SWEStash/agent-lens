@@ -3,7 +3,7 @@
  * zone: reading the host zone (UTC-3) would let an off-by-one offset pass unnoticed.
  */
 import { describe, it, expect } from "vitest";
-import { heatCells, heatRows, rampBounds, rampStep, burnBySource, isoWeek, type BurnHour, type HeatRow } from "../src/dashboard/burn";
+import { heatCells, heatRows, rampColor, rampPosition, rampTicks, burnBySource, isoWeek, type BurnHour, type HeatRow } from "../src/dashboard/burn";
 
 const row = (hour: string, work: number, source: string | null = "isf"): BurnHour => ({ hour, source, work });
 /** heatCells folds whichever metric is selected, so its rows carry a bare `value`, not `work`. */
@@ -101,7 +101,7 @@ describe("the metric a heatmap cell is read through", () => {
 
   it("lets one burst of tokens look like a habit", () => {
     const rows = [cellRow(oneOff, 881_313), ...habit.map((h) => cellRow(h, 64_732 * 14 / 5))];
-    // Within a few percent of each other, so they land in the same colour step.
+    // Within a few percent of each other, so they render as the same colour.
     expect(Math.abs(meanAt(rows, 0, 7) / meanAt(rows, 0, 21) - 1)).toBeLessThan(0.05);
   });
 
@@ -111,56 +111,66 @@ describe("the metric a heatmap cell is read through", () => {
   });
 });
 
-describe("rampStep", () => {
-  it("reserves step 0 for no spend at all", () => {
-    expect(rampStep(0, 100, 5)).toBe(0);
+describe("rampPosition", () => {
+  it("gives an empty cell no position at all — it is not the bottom of the scale", () => {
+    expect(rampPosition(0, 100, "linear")).toBeNull();
+    expect(rampPosition(-1, 100, "linear")).toBeNull();
+    expect(rampPosition(5, 0, "linear")).toBeNull();
   });
 
-  it("gives any non-zero spend at least the first step", () => {
-    expect(rampStep(0.0001, 1_000_000, 5)).toBe(1);
+  it("places a small value where its size says, once the scale stops compressing", () => {
+    // The cell that started this: 0.07 turns against a 5.0 peak. Under sqrt it sat a tenth of the way
+    // up the ramp; it is 1.4% of the peak and should look like it.
+    expect(rampPosition(0.07, 5, "linear")).toBeCloseTo(0.014, 3);
+    expect(rampPosition(0.07, 5, "sqrt")).toBeCloseTo(0.118, 3);
   });
 
-  it("puts the maximum in the last step and never past it", () => {
-    expect(rampStep(100, 100, 5)).toBe(5);
-    expect(rampStep(200, 100, 5)).toBe(5);
+  it("still compresses tokens, where the spread genuinely is extreme", () => {
+    expect(rampPosition(6_000, 840_594, "sqrt")).toBeGreaterThan(rampPosition(6_000, 840_594, "linear")!);
   });
 
-  it("is compressive, so a skewed distribution is not all first-step", () => {
-    // A cell at 1/4 of the peak sits mid-ramp under sqrt; linear would floor it at step 2.
-    expect(rampStep(25, 100, 5)).toBe(3);
-  });
-
-  it("degrades to 0 when there is no maximum", () => {
-    expect(rampStep(5, 0, 5)).toBe(0);
+  it("never runs past the top of the ramp", () => {
+    expect(rampPosition(200, 100, "linear")).toBe(1);
+    expect(rampPosition(200, 100, "sqrt")).toBe(1);
   });
 });
 
-describe("rampBounds", () => {
-  it("names the top of every step, ending at the maximum", () => {
-    const b = rampBounds(700, 7);
-    expect(b).toHaveLength(7);
-    expect(b[b.length - 1]).toBe(700);
+describe("rampColor", () => {
+  const stops = ["#000000", "#808080", "#ffffff"];
+
+  it("lands exactly on a stop at its own position", () => {
+    expect(rampColor(0, stops)).toBe("#000000");
+    expect(rampColor(0.5, stops)).toBe("#808080");
+    expect(rampColor(1, stops)).toBe("#ffffff");
   });
 
-  it("agrees with rampStep — the legend's numbers are the colours' boundaries", () => {
-    const max = 840_594;
-    const steps = 7;
-    for (const [i, top] of rampBounds(max, steps).entries()) {
-      expect(rampStep(top, max, steps)).toBe(i + 1);
-      expect(rampStep(top + 1, max, steps)).toBe(Math.min(steps, i + 2));
-    }
+  it("interpolates between them rather than snapping to one", () => {
+    expect(rampColor(0.25, stops)).toBe("#404040");
+    expect(rampColor(0.75, stops)).toBe("#c0c0c0");
   });
 
-  it("separates the low end that five steps could not", () => {
-    // The complaint this ramp exists to answer: at five steps 6k and 30k tokens/h were one colour.
-    const max = 840_594;
-    expect(rampStep(6_000, max, 5)).toBe(rampStep(30_000, max, 5));
-    expect(rampStep(6_000, max, 7)).toBeLessThan(rampStep(30_000, max, 7));
+  it("is continuous at the bottom — a barely-there value is barely coloured", () => {
+    // The whole point of the gradient: 1.4% up the ramp renders 1.4% up, not at a fixed first step.
+    // 0x04 of 0xff is 1.4% — the cell is a hair off the empty colour, which is what it is worth.
+    expect(rampColor(0.014, stops)).toBe("#040404");
   });
 
-  it("has nothing to describe without a maximum", () => {
-    expect(rampBounds(0, 7)).toEqual([]);
-    expect(rampBounds(700, 0)).toEqual([]);
+  it("clamps rather than throwing when a caller hands it something out of range", () => {
+    expect(rampColor(-5, stops)).toBe("#000000");
+    expect(rampColor(5, stops)).toBe("#ffffff");
+    expect(rampColor(0.5, ["#123456"])).toBe("#123456");
+  });
+});
+
+describe("rampTicks", () => {
+  it("spaces ticks evenly along the bar and bends the values instead", () => {
+    expect(rampTicks(100, "linear", 5)).toEqual([[0, 0], [0.25, 25], [0.5, 50], [0.75, 75], [1, 100]]);
+    // Under sqrt the same even positions mean squared values — which is what makes the strip readable.
+    expect(rampTicks(100, "sqrt", 5)).toEqual([[0, 0], [0.25, 6.25], [0.5, 25], [0.75, 56.25], [1, 100]]);
+  });
+
+  it("has nothing to label without a maximum", () => {
+    expect(rampTicks(0, "linear")).toEqual([]);
   });
 });
 

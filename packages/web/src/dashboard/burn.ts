@@ -113,24 +113,62 @@ export function heatCells(
   return { cells, max };
 }
 
-/** Which ramp step a value takes, 0 = no spend at all (rendered as bare surface, not as a step). */
-export function rampStep(mean: number, max: number, steps: number): number {
-  if (mean <= 0 || max <= 0) return 0;
-  // sqrt, for the same reason the timeline band uses it: burn is heavily skewed, and a linear scale
-  // leaves every hour but the peak in the first step.
-  return Math.min(steps, Math.max(1, Math.ceil(Math.sqrt(mean / max) * steps)));
+/**
+ * How a value maps onto the colour ramp, 0 = the empty end, 1 = the peak.
+ *
+ * `linear` for turns, `sqrt` for tokens, and the difference is not cosmetic. Tokens per hour run 276x
+ * from the smallest active cell to the peak, so a linear scale leaves everything but the busiest few
+ * hours pinned at the bottom. Turns run 3.5x over the median — a well-behaved spread that needs no
+ * compression, and compressing it anyway is what put an hour worked once in three months a tenth of
+ * the way up the scale (11.8% under sqrt against 1.4% under linear).
+ */
+export type HeatScale = "linear" | "sqrt";
+
+/** Where a value sits on the ramp, 0..1. Below zero and at zero there is no position — the cell is
+ *  empty, which is a reading in its own right and not the bottom of the scale. */
+export function rampPosition(mean: number, max: number, scale: HeatScale): number | null {
+  if (mean <= 0 || max <= 0) return null;
+  const t = Math.min(1, mean / max);
+  return scale === "sqrt" ? Math.sqrt(t) : t;
+}
+
+/** Mix two `#rrggbb` colours. Straight sRGB: the ramp's own stops sit ~0.065 apart in lightness, so
+ *  interpolating between neighbours that close needs no perceptual space to stay smooth. */
+function mix(a: string, b: string, t: number): string {
+  const ch = (h: string, i: number) => parseInt(h.slice(1 + i * 2, 3 + i * 2), 16);
+  const out = [0, 1, 2].map((i) => Math.round(ch(a, i) + (ch(b, i) - ch(a, i)) * t));
+  return `#${out.map((v) => v.toString(16).padStart(2, "0")).join("")}`;
 }
 
 /**
- * The value at the top of each ramp step — `rampStep` inverted, so the legend can say what a colour
- * is worth instead of only that it is more than the one before it.
+ * The colour at position `t` along a ramp given as stops — a continuous gradient, not a bin.
  *
- * It lives beside `rampStep` because the two have to agree: a legend derived independently is a
- * legend that goes quietly wrong the first time the transform changes.
+ * The stops are the validated `--burn-*` steps, used as gradient anchors rather than as the palette
+ * itself. Binning gave every non-zero cell the first step's full colour however small it was, so the
+ * empty-to-lowest jump was the largest on the scale (ΔL 0.179 against ~0.065 between neighbours) and
+ * a one-off read louder than the step from a busy hour to a busier one. Interpolating means a value
+ * 1% of the way up renders 1% of the way up.
  */
-export function rampBounds(max: number, steps: number): number[] {
-  if (max <= 0 || steps <= 0) return [];
-  return Array.from({ length: steps }, (_, i) => ((i + 1) / steps) ** 2 * max);
+export function rampColor(t: number, stops: readonly string[]): string {
+  if (stops.length === 0) return "#000000";
+  if (stops.length === 1) return stops[0];
+  const x = Math.max(0, Math.min(1, t)) * (stops.length - 1);
+  const i = Math.min(stops.length - 2, Math.floor(x));
+  return mix(stops[i], stops[i + 1], x - i);
+}
+
+/**
+ * Evenly spaced legend ticks: `[position 0..1, the value that position means]`.
+ *
+ * Positions are even along the bar and the VALUES are what bend, which is the way round that lets a
+ * reader lay a cell's colour against the strip and read a number off it.
+ */
+export function rampTicks(max: number, scale: HeatScale, n = 5): Array<[number, number]> {
+  if (max <= 0) return [];
+  return Array.from({ length: n }, (_, i) => {
+    const pos = i / (n - 1);
+    return [pos, scale === "sqrt" ? pos ** 2 * max : pos * max] as [number, number];
+  });
 }
 
 export interface BurnPoint {
