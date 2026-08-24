@@ -103,6 +103,18 @@ export function rampStep(mean: number, max: number, steps: number): number {
   return Math.min(steps, Math.max(1, Math.ceil(Math.sqrt(mean / max) * steps)));
 }
 
+/**
+ * The value at the top of each ramp step — `rampStep` inverted, so the legend can say what a colour
+ * is worth instead of only that it is more than the one before it.
+ *
+ * It lives beside `rampStep` because the two have to agree: a legend derived independently is a
+ * legend that goes quietly wrong the first time the transform changes.
+ */
+export function rampBounds(max: number, steps: number): number[] {
+  if (max <= 0 || steps <= 0) return [];
+  return Array.from({ length: steps }, (_, i) => ((i + 1) / steps) ** 2 * max);
+}
+
 export interface BurnPoint {
   /** Local bucket key: `YYYY-MM-DD`, `YYYY-Www` or `YYYY-MM`. Sortable as a string in every case. */
   bucket: string;

@@ -3,7 +3,7 @@
  * zone: reading the host zone (UTC-3) would let an off-by-one offset pass unnoticed.
  */
 import { describe, it, expect } from "vitest";
-import { heatCells, rampStep, burnBySource, isoWeek, type BurnHour } from "../src/dashboard/burn";
+import { heatCells, rampBounds, rampStep, burnBySource, isoWeek, type BurnHour } from "../src/dashboard/burn";
 
 const row = (hour: string, work: number, source: string | null = "isf"): BurnHour => ({ hour, source, work });
 
@@ -91,6 +91,35 @@ describe("rampStep", () => {
 
   it("degrades to 0 when there is no maximum", () => {
     expect(rampStep(5, 0, 5)).toBe(0);
+  });
+});
+
+describe("rampBounds", () => {
+  it("names the top of every step, ending at the maximum", () => {
+    const b = rampBounds(700, 7);
+    expect(b).toHaveLength(7);
+    expect(b[b.length - 1]).toBe(700);
+  });
+
+  it("agrees with rampStep — the legend's numbers are the colours' boundaries", () => {
+    const max = 840_594;
+    const steps = 7;
+    for (const [i, top] of rampBounds(max, steps).entries()) {
+      expect(rampStep(top, max, steps)).toBe(i + 1);
+      expect(rampStep(top + 1, max, steps)).toBe(Math.min(steps, i + 2));
+    }
+  });
+
+  it("separates the low end that five steps could not", () => {
+    // The complaint this ramp exists to answer: at five steps 6k and 30k tokens/h were one colour.
+    const max = 840_594;
+    expect(rampStep(6_000, max, 5)).toBe(rampStep(30_000, max, 5));
+    expect(rampStep(6_000, max, 7)).toBeLessThan(rampStep(30_000, max, 7));
+  });
+
+  it("has nothing to describe without a maximum", () => {
+    expect(rampBounds(0, 7)).toEqual([]);
+    expect(rampBounds(700, 0)).toEqual([]);
   });
 });
 

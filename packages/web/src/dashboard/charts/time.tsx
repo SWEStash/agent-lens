@@ -3,7 +3,7 @@ import { ResponsiveContainer, LineChart, Line, BarChart, Bar, XAxis, YAxis, Cart
 import { ChartCard, useChartTokens } from "../../charts/theme";
 import { fmtDuration, fmtTokens, shortModel } from "../../format";
 import { resolveZone, zoneLabel } from "../../tz";
-import { burnBySource, heatCells, rampStep, type HeatCell } from "../burn";
+import { burnBySource, heatCells, rampBounds, rampStep, type HeatCell } from "../burn";
 import { CHART_MARGIN, decadeDomain, unitLabel, type ChartProps } from "./common";
 
 const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
@@ -105,12 +105,24 @@ export function BurnHeatmap({ hidden, time, range }: ChartProps) {
               ))}
             </div>
           </div>
+          {/* The step boundaries are on the legend, not just "less ▪▪▪▪ more": without them a colour
+              can only be compared to another colour, and answering "what is this cell worth" meant
+              hovering all 168 of them. The empty swatch leads the scale because a blank cell is a
+              real reading — no spend — rather than missing data. */}
           <div className="burn-legend">
-            <span>less</span>
-            {BURN_RAMP.map((c, i) => (
-              <i key={i} style={{ background: c }} />
-            ))}
-            <span>more — up to {fmtTokens(Math.round(max))} tokens/h</span>
+            <span className="burn-legend-cap">work tokens per hour, up to</span>
+            <div className="burn-scale">
+              <i style={{ background: C.panel2 }} />
+              {BURN_RAMP.map((c, i) => (
+                <i key={i} style={{ background: c }} />
+              ))}
+            </div>
+            <div className="burn-scale">
+              <span>0</span>
+              {rampBounds(max, BURN_RAMP.length).map((b, i) => (
+                <span key={i}>{fmtTokens(Math.round(b))}</span>
+              ))}
+            </div>
           </div>
           {hover && (
             // Clamped to the card and flipped past the halfway mark so a Saturday-23:00 cell does not

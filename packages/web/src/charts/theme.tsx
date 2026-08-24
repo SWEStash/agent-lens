@@ -37,8 +37,10 @@ export function useChartTokens() {
       toolError: C.red,
     };
     // Burn-heatmap ramp, low→high. Sequential (magnitude), so one hue with monotone lightness —
-    // see the derivation note in styles.css.
-    const BURN_RAMP = [v("--burn-1"), v("--burn-2"), v("--burn-3"), v("--burn-4"), v("--burn-5")];
+    // see the derivation note in styles.css for why there are seven steps rather than five.
+    const BURN_RAMP = [
+      v("--burn-1"), v("--burn-2"), v("--burn-3"), v("--burn-4"), v("--burn-5"), v("--burn-6"), v("--burn-7"),
+    ];
     // Token series colors. Cache-read is intentionally muted — it dominates and misleads.
     const TOKEN_COLORS = {
       input: C.green,

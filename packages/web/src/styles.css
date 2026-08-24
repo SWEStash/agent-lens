@@ -30,12 +30,19 @@
      from the --tl-assistant blue (OKLCH hue 252) and validated as an ordinal ramp against both
      --panel and --bg; the lightest step clears 2:1 on the surface so a cell with any spend at all is
      never invisible. Blue rather than a heat ramp on purpose: amber/red would read as a warning, and
-     this chart reports when tokens were spent, not whether that was good. */
-  --burn-1: #27527f;
-  --burn-2: #3a6ca3;
-  --burn-3: #4d88c8;
-  --burn-4: #62a5ee;
-  --burn-5: #77c2ff;
+     this chart reports when tokens were spent, not whether that was good.
+     SEVEN steps, not five: under sqrt the first of five spanned 0–33k tokens/h against a 841k peak,
+     which put an idle hour and a busy one in the same colour. Adding steps rather than switching to
+     log was measured — log separates the low end but collapses 47 of 132 real cells into one
+     near-maximum step. Each step's chroma is the most the sRGB gamut holds at its lightness, since
+     clipping an out-of-gamut blue pulls its lightness back and closes the gap to its neighbour. */
+  --burn-1: #28527f;
+  --burn-2: #386596;
+  --burn-3: #4879ae;
+  --burn-4: #588dc7;
+  --burn-5: #69a1e0;
+  --burn-6: #7bb7f9;
+  --burn-7: #96ccff;
   --code-bg: var(--bg);
 }
 /* Light theme: same tokens, WCAG-AA palette. Applied via <html data-theme="light">. */
@@ -62,10 +69,12 @@
   --tl-thinking: #8d1a89;
   --tl-tool: #a1790c;
   --burn-1: #8cb0d8;
-  --burn-2: #6695cb;
-  --burn-3: #3d7bbc;
-  --burn-4: #0160ae;
-  --burn-5: #00449e;
+  --burn-2: #719ccb;
+  --burn-3: #5687bf;
+  --burn-4: #3973b2;
+  --burn-5: #175fa4;
+  --burn-6: #004b96;
+  --burn-7: #003979;
   --code-bg: #eef1f5;
 }
 * { box-sizing: border-box; }
@@ -1465,8 +1474,13 @@ table.kv .muted { font-size: 12px; margin-top: 4px; }
 .burn-cell { flex: 1 1 0; height: 14px; border-radius: 2px; }
 .burn-tick { flex: 1 1 0; font-size: 10px; color: var(--muted); font-style: normal; text-align: left; }
 .burn-hours { margin-top: 2px; }
-.burn-legend { display: flex; align-items: center; gap: 4px; font-size: 11px; color: var(--muted); }
-.burn-legend i { width: 14px; height: 10px; border-radius: 2px; }
+.burn-legend { display: flex; flex-direction: column; gap: 2px; font-size: 11px; color: var(--muted); }
+.burn-legend-cap { align-self: flex-start; }
+/* Swatches and their boundary numbers share one flex track, so each number lands under the step it
+   bounds however wide the card is. */
+.burn-scale { display: flex; gap: 2px; }
+.burn-scale i { flex: 1 1 0; height: 10px; border-radius: 2px; }
+.burn-scale span { flex: 1 1 0; text-align: right; font-size: 10px; font-variant-numeric: tabular-nums; }
 
 /* "How to read this" disclosure in a chart card header. A panel rather than a hover tooltip: the
    content is multi-sentence reference text, hover does not exist on touch, and it has to stay open
