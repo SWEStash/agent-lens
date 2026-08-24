@@ -74,3 +74,30 @@ export function RankedBars({
     </ResponsiveContainer>
   );
 }
+
+/**
+ * A log-scale domain snapped out to whole decades, with a tick per decade.
+ *
+ * Used where a series spans orders of magnitude and a linear axis would pin the small values flat
+ * against the baseline — latency, where a median under a second sits beside a p90 of ninety minutes.
+ * Snapping to decades keeps the gridlines on round values rather than wherever the data happened to
+ * land, and callers pass only the VISIBLE values so hiding a series rescales the axis around what is
+ * left.
+ *
+ * Non-positive values are dropped rather than clamped: a log axis has no room for them, and silently
+ * moving a zero onto the first decade would misplace it by however many decades that took.
+ */
+export function decadeDomain(
+  values: readonly number[],
+  fallback: [number, number] = [1_000, 100_000],
+): { domain: [number, number]; ticks: number[] } {
+  const pos = values.filter((v) => Number.isFinite(v) && v > 0);
+  const [lo, hi] = pos.length
+    ? [10 ** Math.floor(Math.log10(Math.min(...pos))), 10 ** Math.ceil(Math.log10(Math.max(...pos)))]
+    : fallback;
+  // A single decade of data would otherwise produce lo === hi and a zero-height axis.
+  const top = Math.max(hi, lo * 10);
+  const ticks: number[] = [];
+  for (let v = lo; v <= top; v *= 10) ticks.push(v);
+  return { domain: [lo, top], ticks };
+}

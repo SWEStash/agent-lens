@@ -754,6 +754,19 @@ table.sessions { width: 100%; border-collapse: collapse; }
 .card-head { display: flex; align-items: baseline; gap: 10px; margin-bottom: 10px; flex-wrap: wrap; }
 .card-head h3 { margin: 0; font-size: 14px; }
 .card-hint { font-size: 11px; color: var(--muted); }
+
+/* Latency legend: model chips that toggle their series, plus the solid/dashed key. Laid out as one
+   centred wrapping row so it behaves like the recharts legend it replaces. */
+.lat-legend { display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 4px 12px; font-size: 12px; }
+.lat-chip {
+  display: inline-flex; align-items: center; gap: 5px;
+  background: none; border: 1px solid transparent; border-radius: 5px;
+  padding: 1px 5px; cursor: pointer; font: inherit; line-height: 1.4;
+}
+.lat-chip:hover { border-color: var(--border); }
+.lat-chip:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+/* The key is a caption, not a control — it must not read as another clickable chip. */
+.lat-key { display: inline-flex; align-items: center; gap: 5px; padding-left: 4px; }
 /* Actions on the right of a card header: metric toggles, "show all" buttons. Pushed to the far edge. */
 .card-actions { margin-left: auto; display: flex; align-items: center; gap: 8px; }
 .link-btn { background: none; border: none; color: var(--accent); font-size: 11px; cursor: pointer; padding: 0; white-space: nowrap; }

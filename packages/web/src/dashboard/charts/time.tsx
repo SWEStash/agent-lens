@@ -4,7 +4,7 @@ import { ChartCard, useChartTokens } from "../../charts/theme";
 import { fmtDuration, fmtTokens, shortModel } from "../../format";
 import { resolveZone, zoneLabel } from "../../tz";
 import { burnBySource, heatCells, rampStep, type HeatCell } from "../burn";
-import { CHART_MARGIN, unitLabel, type ChartProps } from "./common";
+import { CHART_MARGIN, decadeDomain, unitLabel, type ChartProps } from "./common";
 
 const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
@@ -191,6 +191,73 @@ export function BurnBySource({ hidden, ts, time }: ChartProps) {
 }
 
 /**
+ * Duration for the latency tile, which is the one place sub-second values have to survive.
+ *
+ * `fmtDuration` rounds to whole seconds — correct everywhere it is used for session and turn
+ * durations, and wrong on a log axis whose bottom decade is milliseconds, where it renders a 100ms
+ * gridline as "0s" and a 633ms median as "1s".
+ */
+function fmtLatency(ms: number): string {
+  return ms < 1000 ? `${Math.round(ms)}ms` : fmtDuration(ms);
+}
+
+/**
+ * The latency tile's legend, which has two jobs the default one cannot do.
+ *
+ * It keys by MODEL rather than by line. Recharts would list all eight series, and "opus-5 p50" beside
+ * "opus-5 p90" in identical swatches leaves the solid/dashed distinction — the only thing telling the
+ * two apart — stated nowhere. So the dash convention is spelled out once, at the end, and each model
+ * appears once.
+ *
+ * The chips toggle. Latency spans decades across models, so one series can own the whole axis; hiding
+ * it rescales the plot around what is left. Buttons rather than clickable spans, because this is a
+ * control and has to be reachable from the keyboard.
+ */
+function LatencyLegend({
+  models,
+  colorFor,
+  hiddenModels,
+  onToggle,
+  muted,
+}: {
+  models: string[];
+  colorFor: (m: string) => string;
+  hiddenModels: Set<string>;
+  onToggle: (m: string) => void;
+  muted: string;
+}) {
+  const swatch = (color: string, dashed?: boolean) => (
+    <svg width="18" height="8" aria-hidden="true" style={{ flex: "none" }}>
+      <line x1="0" y1="4" x2="18" y2="4" stroke={color} strokeWidth="2" strokeDasharray={dashed ? "4 3" : undefined} />
+    </svg>
+  );
+  return (
+    <div className="lat-legend">
+      {models.map((m) => {
+        const off = hiddenModels.has(m);
+        return (
+          <button
+            key={m}
+            type="button"
+            className="lat-chip"
+            aria-pressed={!off}
+            onClick={() => onToggle(m)}
+            title={`${off ? "Show" : "Hide"} ${shortModel(m)}`}
+            style={{ opacity: off ? 0.4 : 1 }}
+          >
+            {swatch(colorFor(m))}
+            <span style={{ color: muted }}>{shortModel(m)}</span>
+          </button>
+        );
+      })}
+      <span className="lat-key" style={{ color: muted }}>
+        {swatch(muted)} p50 {swatch(muted, true)} p90
+      </span>
+    </div>
+  );
+}
+
+/**
  * Prompt to first assistant token, p50 and p90 per model.
  *
  * The value of this tile is the SHAPE over time, not today's number — a model whose p90 doubles
@@ -200,6 +267,14 @@ export function BurnBySource({ hidden, ts, time }: ChartProps) {
 export function ModelLatency({ hidden, time }: ChartProps) {
   const { C, PALETTE, axisProps, gridProps, tooltipStyle } = useChartTokens();
   const bucket = time?.latency.bucket ?? "week";
+  const [hiddenModels, setHiddenModels] = useState<Set<string>>(new Set());
+  const toggleModel = (m: string) =>
+    setHiddenModels((prev) => {
+      const next = new Set(prev);
+      if (next.has(m)) next.delete(m);
+      else next.add(m);
+      return next;
+    });
   const { data, models, dropped } = useMemo(() => {
     const series = time?.latency.series ?? [];
     // Two lines per model, so the categorical palette runs out fast — and a chart carrying sixteen
@@ -224,6 +299,37 @@ export function ModelLatency({ hidden, time }: ChartProps) {
     };
   }, [time]);
 
+  const colorFor = (m: string) => PALETTE[Math.max(0, models.indexOf(m)) % PALETTE.length];
+  const visible = models.filter((m) => !hiddenModels.has(m));
+
+  /**
+   * A log axis, with the domain taken from the VISIBLE series only.
+   *
+   * Latency here spans four orders of magnitude — a median under a second against a p90 of ninety
+   * minutes — and on a linear axis the single largest series pins every other line flat against the
+   * baseline, which is the state that prompted this. Log is safe rather than merely convenient: the
+   * server filters `ms >= 0` and the real corpus bottoms out in the hundreds of milliseconds, so
+   * there is no zero for a log scale to fail on. Snapping to whole decades keeps the gridlines at
+   * round durations instead of wherever the data happened to land.
+   *
+   * Recomputing it from the visible series is what makes hiding a model worth doing: drop the series
+   * that owns the axis and the rest expand into the space it was using.
+   */
+  const { domain, ticks } = useMemo(() => {
+    const vals: number[] = [];
+    for (const row of data) {
+      for (const m of visible) {
+        for (const p of ["p50", "p90"]) {
+          const v = row[`${m} ${p}`];
+          if (typeof v === "number") vals.push(v);
+        }
+      }
+    }
+    // With every series hidden decadeDomain falls back, so the axis stays plausible rather than
+    // collapsing to nothing.
+    return decadeDomain(vals);
+  }, [data, visible.join("|")]);
+
   return (
     <ChartCard
       title="Model response latency"
@@ -242,12 +348,24 @@ export function ModelLatency({ hidden, time }: ChartProps) {
               — see the note below.
             </dd>
             <dt>y-axis</dt>
-            <dd>elapsed time from the prompt to the model's first response. Solid = median (p50), dashed = p90, one colour per model. Never a mean — the tail is the story.</dd>
+            <dd>
+              elapsed time from the prompt to the model&apos;s first response. Solid = median (p50),
+              dashed = p90, one colour per model. Never a mean — the tail is the story.{" "}
+              <strong>The scale is logarithmic</strong>: each gridline is ten times the one below, so
+              equal vertical distances are equal <em>ratios</em>, not equal seconds. A linear axis
+              cannot show these together — the slowest tenth runs a hundred times the median, which
+              flattens every median onto the baseline.
+            </dd>
           </dl>
           <p>
             <strong>The p90 is not pure model latency.</strong> A turn whose reply lands hours later is
             usually an agent parked on a permission prompt waiting for you, and nothing in the data
-            separates that from a genuinely slow response.
+            separates that from a genuinely slow response. <em>local</em>, if present, is not a model
+            at all — it marks replies Claude Code generated without calling one.
+          </p>
+          <p>
+            <strong>Click a model in the legend to hide it</strong>, and the axis rescales around what
+            is left — the way to read the fast models when one slow series owns the range.
           </p>
           <p>
             Main sessions only, and only the highest-volume models are plotted. A {bucket} holding
@@ -267,24 +385,55 @@ export function ModelLatency({ hidden, time }: ChartProps) {
           <LineChart data={data} margin={CHART_MARGIN}>
             <CartesianGrid {...gridProps} />
             <XAxis dataKey="bucket" {...axisProps} minTickGap={24} />
-            <YAxis {...axisProps} tickFormatter={(v) => fmtDuration(v as number)} width={52} label={unitLabel("time to first token", C.muted)} />
-            <Tooltip {...tooltipStyle} formatter={(v: number | string, n: string) => [fmtDuration(Number(v)), n]} />
+            <YAxis
+              {...axisProps}
+              scale="log"
+              domain={domain}
+              ticks={ticks}
+              allowDataOverflow
+              tickFormatter={(v) => fmtLatency(v as number)}
+              width={52}
+              label={unitLabel("time to first token (log)", C.muted)}
+            />
+            <Tooltip
+              {...tooltipStyle}
+              formatter={(v: number | string, n: string) => [fmtLatency(Number(v)), shortModel(String(n).replace(/ p\d0$/, "")) + String(n).slice(-4)]}
+            />
             <Legend
               wrapperStyle={{ fontSize: 12 }}
-              formatter={(value: React.ReactNode) => (
-                // Legend text stays in the text token; the swatch beside it carries the identity.
-                <span style={{ color: C.muted }}>{shortModel(String(value).replace(/ p\d0$/, "")) + String(value).slice(-4)}</span>
-              )}
+              // An ELEMENT, not a `() => <LatencyLegend/>` render function: an inline function is a new
+              // component type on every render, so React unmounts and remounts the legend each time a
+              // chip is clicked — which throws focus back to the body and leaves a keyboard user
+              // unable to press the same chip twice. Passing the element keeps the type stable.
+              content={
+                <LatencyLegend
+                  models={models}
+                  colorFor={colorFor}
+                  hiddenModels={hiddenModels}
+                  onToggle={toggleModel}
+                  muted={C.muted}
+                />
+              }
             />
-            {models.map((m, i) => (
-              <Line key={m} type="monotone" dataKey={`${m} p50`} stroke={PALETTE[i % PALETTE.length]} strokeWidth={2} dot={false} connectNulls />
+            {models.map((m) => (
+              <Line
+                key={m}
+                type="monotone"
+                dataKey={`${m} p50`}
+                hide={hiddenModels.has(m)}
+                stroke={colorFor(m)}
+                strokeWidth={2}
+                dot={false}
+                connectNulls
+              />
             ))}
-            {models.map((m, i) => (
+            {models.map((m) => (
               <Line
                 key={`${m}-p90`}
                 type="monotone"
                 dataKey={`${m} p90`}
-                stroke={PALETTE[i % PALETTE.length]}
+                hide={hiddenModels.has(m)}
+                stroke={colorFor(m)}
                 strokeWidth={2}
                 strokeDasharray="4 3"
                 dot={false}
