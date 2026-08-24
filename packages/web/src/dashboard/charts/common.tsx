@@ -33,15 +33,32 @@ export interface ChartProps {
  * unit you have to discover by interacting with the chart is a unit most readers never see. Sits
  * horizontally above the axis rather than rotated up its side — rotated axis titles are the classic
  * label nobody reads, and in a three-across grid they cost width the plot needs.
+ *
+ * It has to read as a LABEL, not as another tick. Sharing the axis fill and font size put it a few
+ * pixels above the topmost tick value in the same muted 11px — "time to first token" directly over
+ * "3.3m" ran together as one smudged line. So it is set smaller, uppercase and letter-spaced, which
+ * is the conventional treatment for an axis title and is legible as a different KIND of text even
+ * before it is read, and it is pushed further from the plot.
  */
 export function unitLabel(value: string, fill: string) {
   // `position: "top"` alone lands the text ABOVE the svg's top edge, where it is clipped and
   // invisible — hence the explicit offset back into the canvas, and CHART_MARGIN's top reservation.
-  return { value, position: "insideTopLeft" as const, offset: 0, dy: -14, dx: 2, fill, fontSize: 11 };
+  return {
+    value: value.toUpperCase(),
+    position: "insideTopLeft" as const,
+    offset: 0,
+    dy: -19,
+    dx: 2,
+    fill,
+    fontSize: 9.5,
+    letterSpacing: 0.7,
+    fillOpacity: 0.75,
+  };
 }
 
-/** Chart margin with room reserved above the plot for `unitLabel`. */
-export const CHART_MARGIN = { top: 22, right: 8, left: 0, bottom: 0 };
+/** Chart margin with room reserved above the plot for `unitLabel` — enough that the caption clears
+ *  the topmost tick value rather than sitting on it. */
+export const CHART_MARGIN = { top: 30, right: 8, left: 0, bottom: 0 };
 
 /** The scaffolding every ranked horizontal bar card repeats: a full-size vertical-layout BarChart with
  * a numeric X axis and no horizontal grid lines. `yAxis` and the bars/tooltip differ per card, so they
