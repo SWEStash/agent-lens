@@ -43,6 +43,9 @@ export default function Dashboard() {
     [s],
   );
   const [overview, ts, bd] = dash ?? NOT_LOADED;
+  // The date inputs are already local calendar days, which is exactly the grain the burn heatmap
+  // normalizes over — so they travel to the cards as typed, with no zone conversion in between.
+  const range = { from: get("from"), to: get("to") };
 
   // The time analytics load on their own, NOT as a fourth entry in the Promise.all above: they are
   // several heavier aggregates, and folding them in would mean one slow or failing query blanking
@@ -129,7 +132,7 @@ export default function Dashboard() {
                 filtered out here, so a hidden card keeps its local view state — see ChartProps. */}
             <div className="cards">
               {arrange(CHART_REGISTRY, body.charts.order).map(({ id, Component }) => (
-                <Component key={id} hidden={hiddenCharts.has(id)} ts={ts} bd={bd} time={time} expand={expand} drill={drill} />
+                <Component key={id} hidden={hiddenCharts.has(id)} ts={ts} bd={bd} time={time} expand={expand} drill={drill} range={range} />
               ))}
             </div>
           </section>

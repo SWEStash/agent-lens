@@ -28,7 +28,7 @@ export interface LocalParts {
   /** 0 = Sunday, matching `Date.getDay()` and the heatmap's row order. */
   weekday: number;
   hour: number;
-  /** Local calendar day, `YYYY-MM-DD` — the denominator for "mean per active day". */
+  /** Local calendar day, `YYYY-MM-DD` — how the heatmap finds the span it normalizes over. */
   dayKey: string;
 }
 

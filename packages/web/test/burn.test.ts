@@ -16,7 +16,7 @@ describe("heatCells", () => {
     expect(hit[0]).toMatchObject({ weekday: 6, hour: 22, total: 100 });
   });
 
-  it("divides by how many times that weekday was observed, not by the range length", () => {
+  it("divides by how many times that weekday occurs, not by the range length", () => {
     // Two Mondays with 100 each, one Tuesday with 100. Monday's mean is 100, not 200.
     const { cells } = heatCells(
       [row("2026-03-02T12", 100), row("2026-03-09T12", 100), row("2026-03-03T12", 100)],
@@ -25,6 +25,35 @@ describe("heatCells", () => {
     const at = (wd: number, h: number) => cells.find((c) => c.weekday === wd && c.hour === h)!;
     expect(at(1, 12)).toMatchObject({ total: 200, mean: 100 });
     expect(at(2, 12)).toMatchObject({ total: 100, mean: 100 });
+  });
+
+  it("counts a weekday nobody worked as a real zero, not as an absent day", () => {
+    // Two Sundays in the span, spend on only one of them. Halving it is the whole point: reading it
+    // as one 100-token Sunday overstates a weekday that is simply often skipped.
+    const rows = [row("2026-03-01T12", 100), row("2026-03-04T12", 60)]; // Sun 1st, Wed 4th
+    const { cells } = heatCells(rows, "UTC", { from: "2026-03-01", to: "2026-03-11" });
+    const at = (wd: number, h: number) => cells.find((c) => c.weekday === wd && c.hour === h)!;
+    expect(at(0, 12)).toMatchObject({ total: 100, mean: 50 }); // 2 Sundays: the 1st and the 8th
+    expect(at(3, 12)).toMatchObject({ total: 60, mean: 30 }); // 2 Wednesdays: the 4th and the 11th
+  });
+
+  it("normalizes over the requested range, including the empty days at its edges", () => {
+    // One worked Sunday, but the reader asked for four weeks — the other three Sundays are zeros
+    // that only the range knows about, since no row can carry a day with no usage on it.
+    const rows = [row("2026-03-01T12", 100)];
+    const at = (cs: ReturnType<typeof heatCells>["cells"]) => cs.find((c) => c.weekday === 0 && c.hour === 12)!;
+    expect(at(heatCells(rows, "UTC", { from: "2026-03-01", to: "2026-03-28" }).cells).mean).toBe(25);
+    // Only the payload to go on: the span is that single day, so the mean is the day itself.
+    expect(at(heatCells(rows, "UTC").cells).mean).toBe(100);
+  });
+
+  it("falls back to the payload span when the range is half-set or reversed", () => {
+    const rows = [row("2026-03-01T12", 100), row("2026-03-08T12", 100)]; // two Sundays
+    const at = (cs: ReturnType<typeof heatCells>["cells"]) => cs.find((c) => c.weekday === 0 && c.hour === 12)!;
+    expect(at(heatCells(rows, "UTC", { from: "2026-03-01" }).cells).mean).toBe(100);
+    expect(at(heatCells(rows, "UTC", { to: "2026-03-28" }).cells).mean).toBe(100);
+    // A `to` before `from` would otherwise divide every cell by zero and blank the whole tile.
+    expect(at(heatCells(rows, "UTC", { from: "2026-03-28", to: "2026-03-01" }).cells).mean).toBe(100);
   });
 
   it("shares one denominator across a weekday's 24 hours", () => {

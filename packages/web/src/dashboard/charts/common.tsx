@@ -4,6 +4,7 @@ import type { DashBreakdowns, DashTime, DashTimeseries } from "../../api";
 import { useChartTokens } from "../../charts/theme";
 import type { Expanded } from "../useExpanded";
 import type { Drilldown } from "../useDrilldown";
+import type { HeatRange } from "../burn";
 
 /**
  * What every dashboard chart card receives. The payloads are nullable because the three range-filtered
@@ -24,6 +25,10 @@ export interface ChartProps {
   time: DashTime | null;
   expand: Expanded;
   drill: Drilldown;
+  /** The dashboard's own date inputs, as local `YYYY-MM-DD` days. Only the burn heatmap reads them:
+   *  it normalizes per calendar occurrence of a weekday, and the payload alone cannot show an empty
+   *  day at either edge of the requested range. Either end may be blank. */
+  range: HeatRange;
 }
 
 /**

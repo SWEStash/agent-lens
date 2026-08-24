@@ -415,7 +415,9 @@ date range):
   tiles share one endpoint, and the dashboard skips fetching it entirely while all of them are
   hidden:
 
-  - ***When tokens are spent*** — mean work tokens per weekday × hour. Uniquely among the charts it
+  - ***When tokens are spent*** — mean work tokens per weekday × hour, averaged over the **calendar**
+    occurrences of that weekday in range, so a weekday you often skip reads as the quiet one it is
+    rather than as a busy one you rarely reach. Uniquely among the charts it
     buckets by the **event's own timestamp**, not the session's start: a session a human sat through
     runs mostly idle and often spans hours, so session-start bucketing would drop a whole day's spend
     into the hour it began. It therefore **will not tie out against "Tokens over time"** — that is

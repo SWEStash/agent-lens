@@ -34,10 +34,10 @@ const mutedLegend = (color: string) => (value: React.ReactNode) => <span style={
  * The zone is named in the card: an hour-of-day chart that does not say which clock it is on is a
  * wrong chart, not merely an incomplete one.
  */
-export function BurnHeatmap({ hidden, time }: ChartProps) {
+export function BurnHeatmap({ hidden, time, range }: ChartProps) {
   const { BURN_RAMP, C } = useChartTokens();
   const zone = resolveZone();
-  const { cells, max } = useMemo(() => heatCells(time?.burn_hours ?? [], zone), [time, zone]);
+  const { cells, max } = useMemo(() => heatCells(time?.burn_hours ?? [], zone, range), [time, zone, range.from, range.to]);
   const [hover, setHover] = useState<{ cell: HeatCell; x: number; y: number } | null>(null);
 
   return (
@@ -56,8 +56,9 @@ export function BurnHeatmap({ hidden, time }: ChartProps) {
             <dt>cell value</dt>
             <dd>
               mean <strong>work tokens</strong> (input + output + cache-write; cache reads excluded)
-              per occurrence of that weekday, so a range ending mid-week does not read as a quiet
-              Thursday.
+              per <strong>calendar</strong> occurrence of that weekday in range — a weekday you did
+              not work is a zero, not a missing day, and a range ending mid-week does not read as a
+              quiet Thursday.
             </dd>
           </dl>
           <p>

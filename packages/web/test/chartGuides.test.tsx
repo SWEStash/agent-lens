@@ -38,6 +38,7 @@ const props: ChartProps = {
   time: null,
   expand: noopExpand,
   drill: { drillFilter: () => {}, drillTo: () => () => {} } as never,
+  range: {},
 };
 
 describe("every dashboard chart explains how to read itself", () => {

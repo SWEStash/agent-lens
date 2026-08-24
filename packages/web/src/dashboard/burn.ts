@@ -13,33 +13,78 @@ export type BurnHour = DashTime["burn_hours"][number];
 export interface HeatCell {
   weekday: number;
   hour: number;
-  /** Mean work tokens per day on which this weekday was observed at all. */
+  /** Mean work tokens per calendar occurrence of this weekday in range (an unworked day is a zero). */
   mean: number;
   total: number;
+}
+
+/** The local calendar range a heatmap normalizes over: the dashboard's own date inputs when both are
+ *  set, otherwise the span the payload actually covers. Both ends are local `YYYY-MM-DD` days. */
+export interface HeatRange {
+  from?: string;
+  to?: string;
+}
+
+/**
+ * How many times each weekday occurs in `[startDay, endDay]` inclusive, index 0 = Sunday.
+ *
+ * Counted arithmetically rather than by walking the days: a hand-typed `from` of `0001-01-01` would
+ * otherwise spin through 700k iterations to answer a question that is `days / 7` plus a remainder.
+ * A calendar date's weekday does not depend on a zone, so the UTC midnight of each key is a safe
+ * stand-in for it.
+ */
+function weekdayOccurrences(startDay: string, endDay: string): number[] {
+  const start = Date.parse(`${startDay}T00:00:00Z`);
+  const end = Date.parse(`${endDay}T00:00:00Z`);
+  const counts = new Array(7).fill(0) as number[];
+  if (!Number.isFinite(start) || !Number.isFinite(end) || end < start) return counts;
+  const days = Math.round((end - start) / 86_400_000) + 1;
+  counts.fill(Math.floor(days / 7));
+  const firstWeekday = new Date(start).getUTCDay();
+  for (let i = 0; i < days % 7; i++) counts[(firstWeekday + i) % 7]++;
+  return counts;
 }
 
 /**
  * Mean work tokens per local weekday × hour.
  *
- * Normalized per *occurrence of that weekday* rather than by raw total: a range that ends mid-week
- * has fewer Thursdays than Mondays in it, and raw totals would render that as a quiet Thursday.
+ * Normalized per *calendar occurrence* of that weekday in range, not per day the weekday was worked:
+ * a Sunday nobody touched is a real zero and has to count as one, or the mean answers "how much on a
+ * Sunday I worked" while reading as "how much on a Sunday". That distinction overstated Sunday by 74%
+ * on the author's own corpus. It also keeps a range ending mid-week from rendering as a quiet Thursday.
+ *
  * Days are counted per weekday (not per cell) so a weekday's 24 hours share one denominator and the
  * row sums to that weekday's real daily mean.
  */
-export function heatCells(rows: readonly BurnHour[], zone: string): { cells: HeatCell[]; max: number } {
+export function heatCells(
+  rows: readonly BurnHour[],
+  zone: string,
+  range?: HeatRange,
+): { cells: HeatCell[]; max: number } {
   const totals = new Map<string, number>();
-  const daysPerWeekday: Array<Set<string>> = Array.from({ length: 7 }, () => new Set());
+  let firstDay: string | null = null;
+  let lastDay: string | null = null;
   for (const r of rows) {
     const p = localParts(r.hour, zone);
     if (!p) continue;
-    daysPerWeekday[p.weekday].add(p.dayKey);
+    if (firstDay === null || p.dayKey < firstDay) firstDay = p.dayKey;
+    if (lastDay === null || p.dayKey > lastDay) lastDay = p.dayKey;
     const k = `${p.weekday}:${p.hour}`;
     totals.set(k, (totals.get(k) ?? 0) + r.work);
   }
+
+  // The dashboard's range wins when it is complete, because it knows about the empty days at the
+  // edges that the payload cannot show. A half-set or reversed range falls back to the payload's own
+  // span rather than dividing everything by zero.
+  let occurrences = range?.from && range?.to ? weekdayOccurrences(range.from, range.to) : [];
+  if (!occurrences.some((n) => n > 0)) {
+    occurrences = firstDay && lastDay ? weekdayOccurrences(firstDay, lastDay) : new Array(7).fill(0);
+  }
+
   const cells: HeatCell[] = [];
   let max = 0;
   for (let weekday = 0; weekday < 7; weekday++) {
-    const days = daysPerWeekday[weekday].size;
+    const days = occurrences[weekday];
     for (let hour = 0; hour < 24; hour++) {
       const total = totals.get(`${weekday}:${hour}`) ?? 0;
       const mean = days ? total / days : 0;
