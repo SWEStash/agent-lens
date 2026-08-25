@@ -397,6 +397,16 @@ describe("model filter", () => {
     expect(t.turn_hours.reduce((n, r) => n + r.turns, 0)).toBe(1);
   });
 
+  it("counts per-source turns at the turn grain too, so the payload agrees with itself", () => {
+    // by_source.turns reads the same denormalized column the Turns KPI did. Nothing renders it
+    // today, which is exactly why it would have rotted unnoticed.
+    const all = dashboardBreakdowns(seedModels(), {});
+    expect(all.by_source.reduce((n, r) => n + r.turns, 0)).toBe(4);
+    const one = dashboardBreakdowns(seedModels(), { models: [OPUS] });
+    expect(one.by_source.reduce((n, r) => n + r.turns, 0)).toBe(1);
+    expect(one.by_source.reduce((n, r) => n + r.sessions, 0)).toBe(1);
+  });
+
   it("counts turns at the turn grain under a filter, so the KPI matches the activity chart", () => {
     // sessions.turn_count is session-grain: mix has three turns and only one is opus, so the
     // denormalized column would report 3 while "Activity over time" plots 1. With no filter the two

@@ -382,10 +382,18 @@ function modelBreakdown(db: DB, w: Where): DashBreakdowns["by_model"] {
 }
 
 function sourceBreakdown(db: DB, w: Where): DashBreakdowns["by_source"] {
+  // Sessions are session-grain and counted whole; turns are turn-grain, so under a model filter the
+  // denormalized `turn_count` would over-report exactly as it did for the Turns KPI. The correlated
+  // count rides `idx_turns_session`. Placeholders here precede the WHERE clause, so its params bind
+  // first.
+  const perSourceTurns = w.models
+    ? `SUM((SELECT COUNT(*) FROM turns tn WHERE tn.session_id = s.id AND tn.model IN (${placeholders(w.models)})))`
+    : "SUM(s.turn_count)";
   return queryAll<DashBreakdowns["by_source"][number]>(
     db,
-    `SELECT COALESCE(s.source_id, '(none)') source, COUNT(*) sessions, SUM(s.turn_count) turns
+    `SELECT COALESCE(s.source_id, '(none)') source, COUNT(*) sessions, ${perSourceTurns} turns
      FROM sessions s ${w.sql} GROUP BY s.source_id ORDER BY sessions DESC`,
+    ...(w.models ?? []),
     ...w.params,
   );
 }
