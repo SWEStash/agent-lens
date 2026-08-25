@@ -7,6 +7,8 @@ import { burnBySource, heatCells, heatRows, rampColor, rampPosition, rampTicks, 
 import { CHART_MARGIN, decadeDomain, unitLabel, type ChartProps } from "./common";
 
 const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+/** Spelled out where the word takes a plural: "13 Thus" is not a word. */
+const WEEKDAYS_LONG = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 
 /** How many models the latency tile shows BY DEFAULT. Two lines each, so this is the real series
  *  budget — but every other model is still offered in the legend rather than dropped, so a reader
@@ -185,6 +187,13 @@ export function BurnHeatmap({ hidden, time, range }: ChartProps) {
               </div>
               <div className="burn-tip-row">
                 {fmtVal(hover.cell.mean)} {unit} · average {WEEKDAYS[hover.cell.weekday]}
+              </div>
+              {/* The support behind that average. A cell reading "0.1 turns" is a very different
+                  claim when it rests on one observed day than on twelve, and the mean alone cannot
+                  say which — the denominator is the same either way. */}
+              <div className="burn-tip-row burn-tip-support">
+                on {hover.cell.observed} of {hover.cell.days} {WEEKDAYS_LONG[hover.cell.weekday]}
+                {hover.cell.days === 1 ? "" : "s"}
               </div>
             </div>
           )}

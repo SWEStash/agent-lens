@@ -28,6 +28,9 @@ export interface Mark {
   durationMs: number;
   /** The chosen metric's value; 0 when the event has no usage row. */
   value: number;
+  /** Prompt size for this request — how full the context window was at this message. 0 when the
+   *  event has no usage row. Independent of the metric toggle: it answers a different question. */
+  context: number;
   /** Audit annotations for the rail below the baseline. */
   error: boolean;
   finding: Severity | null;
@@ -55,6 +58,20 @@ export function metricValue(e: EventNode, metric: TokenMetric): number {
   if (metric === "output") return e.usage.output;
   if (metric === "total") return workTokens(e.usage) + e.usage.cache_read;
   return workTokens(e.usage);
+}
+
+/**
+ * How much of the context window this request occupied: the whole prompt the model was sent, which is
+ * input + cache-write + cache-read on the usage row. Output is deliberately absent — it is what came
+ * back, not what was carried in.
+ *
+ * Purely descriptive, and it must stay that way. Efficiency against context occupancy was measured on
+ * the corpus and is U-shaped, not monotonic: the agent gets *better* as context fills, best somewhere
+ * around 200-350k, and only falls off past ~350k. A "context filling up" warning would therefore be
+ * backwards over most of the range. Turn depth is the variable that degrades; prompt size is not.
+ */
+export function contextTokens(e: EventNode): number {
+  return e.usage ? e.usage.input + e.usage.cache_creation + e.usage.cache_read : 0;
 }
 
 /** Most-severe-first, so an event carrying several findings shows its worst one. */
@@ -101,6 +118,7 @@ export function buildMarks({ events, points, findings, fileChanges, turnSeqById,
       t: p.t,
       durationMs: p.durationMs,
       value: metricValue(e, metric),
+      context: contextTokens(e),
       error: e.toolCalls.some((t) => t.status === "error"),
       finding: worstFinding.get(p.uuid) ?? null,
       fileChange: (changed.get(p.uuid) ?? 0) > 0,

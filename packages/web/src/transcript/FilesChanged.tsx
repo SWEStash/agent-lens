@@ -53,6 +53,17 @@ function FileTreeRows({ node, depth }: { node: FileTreeNode; depth: number }) {
   );
 }
 
+/**
+ * Touches of one file within one session at which it is worth saying so out loud.
+ *
+ * From the corpus histogram: pairs at 7+ touches are a small minority of (session, file) pairs but
+ * carry over a quarter of every edit made. It is a threshold for surfacing a list, NOT a quality
+ * signal — rework was tested against session cost in both directions and the relationship is flat.
+ */
+const REWORK_TOUCHES = 7;
+/** Most-reworked files named inline before the count gives way to "and N more". */
+const REWORK_NAMED = 4;
+
 /** "Files changed" roll-up in the transcript header (ADR-022): the session's derived Edit/Write file
  * modifications, grouped per file and rendered as a compressed directory tree. Collapsed by default
  * (native <details>, like the subagent run groups); each file jumps to its first change's transcript
@@ -63,12 +74,34 @@ export function FilesChangedPanel({ changes, projectPath }: { changes: FileChang
   const rel = (p: string) =>
     projectPath && p.startsWith(projectPath.replace(/\/$/, "") + "/") ? p.slice(projectPath.replace(/\/$/, "").length + 1) : p;
   const tree = buildFileTree([...byFile.entries()].map(([path, list]) => ({ display: rel(path), path, list })));
+  // A count and a list, never a score. It answers "did this session keep going back to the same
+  // file", which the per-file rows already contain but bury once a session touches thirty of them.
+  const reworked = [...byFile.entries()]
+    .filter(([, list]) => list.length >= REWORK_TOUCHES)
+    .sort((a, b) => b[1].length - a[1].length);
   return (
     <details className="wf-run files-changed">
       <summary>
         📄 {byFile.size} {byFile.size === 1 ? "file" : "files"} changed · {changes.length}{" "}
         {changes.length === 1 ? "edit" : "edits"}
+        {reworked.length > 0 && (
+          <span className="muted"> · {reworked.length} edited {REWORK_TOUCHES}+ times</span>
+        )}
       </summary>
+      {reworked.length > 0 && (
+        <p className="muted files-rework">
+          Most reworked:{" "}
+          {reworked.slice(0, REWORK_NAMED).map(([path, list], i) => (
+            <Fragment key={path}>
+              {i > 0 && ", "}
+              <span title={path}>
+                {rel(path).split("/").pop()} ({list.length}×)
+              </span>
+            </Fragment>
+          ))}
+          {reworked.length > REWORK_NAMED && `, and ${reworked.length - REWORK_NAMED} more`}
+        </p>
+      )}
       <table className="sessions">
         <tbody>
           <FileTreeRows node={tree} depth={0} />

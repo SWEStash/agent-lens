@@ -327,6 +327,18 @@ export function TimelineBand(props: TimelineBandProps) {
   // spikes, which is the outcome sqrt was chosen to avoid. So the reference is the 95th percentile
   // and the top few marks clamp to full height. The exact number stays available on the mark itself,
   // so nothing is hidden: what is given up is only "how much taller" the tallest few are.
+  // Context occupancy, drawn as a line over the bars. Normalised against this session's own peak
+  // rather than a model's window size: the window differs per model and a session can mix them, and
+  // the shape over the session is the readable part either way. Descriptive only — see contextTokens.
+  const ctxPeak = Math.max(0, ...marks.map((m) => m.context));
+  const ctxLine =
+    ctxPeak > 0
+      ? marks
+          .filter((m) => m.context > 0)
+          .map((m) => `${markGeom(m, scale).x.toFixed(1)},${(PLOT_H - (m.context / ctxPeak) * PLOT_H).toFixed(1)}`)
+          .join(" ")
+      : "";
+
   const graded = marks.map((k) => k.value).filter((v) => v > 0).sort((a, b) => a - b);
   const reference = graded.length ? graded[Math.min(Math.floor(graded.length * 0.95), graded.length - 1)] : 0;
   const barHeight = (v: number): number => {
@@ -439,6 +451,9 @@ export function TimelineBand(props: TimelineBandProps) {
           {marks.map((m) => (
             <MarkRect key={m.uuid} m={m} scale={scale} h={barHeight(m.value)} fill={fillFor(m.kind)} />
           ))}
+          {/* Over the bars, not under them: at 44px the bars would hide most of it. `pointer-events`
+              is off in CSS so it never steals a click meant for a mark. */}
+          {ctxLine && <polyline className="tl-context" points={ctxLine} />}
           {hovered && (
             <rect className="tl-hover" x={hovered.x - 1} y={0} width={hovered.w + 2} height={PLOT_H} />
           )}
@@ -493,6 +508,7 @@ export function TimelineBand(props: TimelineBandProps) {
             {new Date(hovered.mark.t).toLocaleTimeString()}
             {usagePresent && hovered.mark.value > 0 ? ` · ${fmtTokens(hovered.mark.value)} tok` : ""}
             {hovered.mark.durationMs > 0 ? ` · ${fmtDuration(hovered.mark.durationMs)}` : ""}
+            {hovered.mark.context > 0 ? ` · ${fmtTokens(hovered.mark.context)} context` : ""}
           </div>
           {(hovered.mark.error || hovered.mark.finding || hovered.mark.fileChange || hovered.mark.spawn) && (
             <div className="tl-tip-row">
@@ -534,6 +550,15 @@ export function TimelineBand(props: TimelineBandProps) {
           <span className="tl-key">
             <span className="tl-swatch" style={{ background: TIMELINE_COLORS.toolError }} />
             tool error
+          </span>
+        )}
+        {/* The line needs its peak stated or it is a shape with no units. It is named "context", not
+            "context used" or anything implying a budget: the corpus says a fuller context is not a
+            worse one over most of the range. */}
+        {ctxPeak > 0 && (
+          <span className="tl-key" title="Prompt size per message — input + cache-write + cache-read. Shape only; a fuller context is not a worse one.">
+            <span className="tl-swatch is-line" />
+            context, peak {fmtTokens(ctxPeak)}
           </span>
         )}
       </div>

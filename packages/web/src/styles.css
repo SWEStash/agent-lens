@@ -1397,6 +1397,11 @@ table.kv .muted { font-size: 12px; margin-top: 4px; }
 /* A break is a hole in the axis, not data: recessive fill plus a hatch so it never reads as a mark. */
 .tl-break rect { fill: var(--panel2); stroke: var(--border); stroke-dasharray: 2 2; }
 .tl-mark { shape-rendering: crispEdges; }
+/* Context-occupancy line over the bars (ADR-032 gave us per-event usage). Thin, unfilled and
+   half-transparent so it reads as an overlay rather than as another series competing with the marks,
+   and inert to the pointer so it never intercepts a click meant for the mark underneath. */
+.tl-context { fill: none; stroke: var(--muted); stroke-width: 1.25; stroke-opacity: 0.65; pointer-events: none; }
+.tl-swatch.is-line { height: 2px; border-radius: 1px; background: var(--muted); opacity: 0.65; align-self: center; }
 /* An opened gap reads as the same kind of thing as a collapsed one — just at its real width. */
 .tl-expanded { cursor: zoom-out; }
 .tl-expanded rect { fill: var(--panel2); stroke: var(--border); stroke-dasharray: 2 2; opacity: 0.75; }
@@ -1562,5 +1567,10 @@ table.kv .muted { font-size: 12px; margin-top: 4px; }
 }
 .burn-tip-head { font-weight: 600; }
 .burn-tip-row { color: var(--muted); font-variant-numeric: tabular-nums; }
+/* "Files changed" rework line: a list, deliberately not a badge — it is a count, not a verdict. */
+.files-rework { margin: 0.4rem 0 0.2rem; padding-left: 0.4rem; font-size: 12px; }
+
+/* The observed-day support line, set below the value it qualifies. */
+.burn-tip-support { font-size: 11px; opacity: 0.8; }
 .burn-cell { cursor: default; }
 .burn-cell:hover { outline: 2px solid var(--text); outline-offset: -1px; }
