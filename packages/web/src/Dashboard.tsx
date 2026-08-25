@@ -82,7 +82,11 @@ export default function Dashboard() {
           onChange={(next) => setParam({ models: next.length === models.length ? "" : next.join(",") })}
           reset={{ label: "select all", to: models }}
           disabled={SNAPSHOT}
-          title={SNAPSHOT ? "The exported demo serves one pre-computed view, so filters do not apply to it." : undefined}
+          title={
+            SNAPSHOT
+              ? "The exported demo serves one pre-computed view, so filters do not apply to it."
+              : "Applies to every chart. Spend, turns and tool calls filter on the model that produced them; anything counted per session counts sessions that used one of these."
+          }
         />
         <label className="ctl">
           from <input type="date" value={get("from")} onChange={(e) => setParam({ from: e.target.value })} />

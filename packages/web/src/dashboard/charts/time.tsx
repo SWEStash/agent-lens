@@ -451,10 +451,18 @@ export function ModelLatency({ hidden, time }: ChartProps) {
             excluded here — their elapsed time is not a model response time.
           </p>
           <p>
+            <strong>The filter bar moves this chart less than it moves the token charts.</strong> A
+            model is counted here once per turn it answered, but in the token charts by everything it
+            spent — so a model doing subagent work, haiku above all, can be a top-three consumer while
+            contributing almost nothing to this tile. Unticking it visibly moves one and not the other.
+          </p>
+          <p>
             <strong>Every model is in the legend; click one to show or hide it</strong>, and the axis
             rescales around what is left. Only the highest-volume few start switched on, so a model
             you do not see is off rather than absent — though a low-volume one may plot as a point or
-            two, since a bucket under 5 turns is dropped.
+            two, since a bucket under 5 turns is dropped. The legend is a <em>view</em> control over
+            whatever the filter bar admits: unticking a model up there removes it from every chart,
+            while hiding it here only takes it off this one.
           </p>
           <p>
             Main sessions only, and only the highest-volume models are plotted. A {bucket} holding

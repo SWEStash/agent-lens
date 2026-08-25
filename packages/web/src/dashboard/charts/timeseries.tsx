@@ -150,6 +150,12 @@ export function Activity({ hidden, ts }: ChartProps) {
             <dt>y-axis</dt>
             <dd>count. <strong>sessions</strong> = sessions that started in the bucket, subagent runs included; <strong>turns</strong> = prompt-and-response exchanges within them.</dd>
           </dl>
+          <p>
+            <strong>Under a model filter this counts whole sessions, not model-attributable rows.</strong>{" "}
+            A session has no single model, so it is counted here whenever it used any model you ticked
+            — including the work it did with the others. That is why a session count and a token total
+            move by different amounts when you untick a model.
+          </p>
           <p>Bars become lines once the range holds more buckets than can be drawn as readable bars.</p>
         </>
       }
