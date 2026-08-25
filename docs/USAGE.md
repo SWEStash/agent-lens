@@ -661,6 +661,7 @@ below is relative to `<dataDir>`; run `agent-lens config` to print the resolved 
 | `GET /api/dashboard/timeseries` | tokens/cost/activity over time (adaptive buckets) |
 | `GET /api/dashboard/breakdowns` | by model / category / complexity / tool / skill / subagent / error type |
 | `GET /api/dashboard/time` | when work happened: hourly token burn, model latency, review latency |
+| `GET /api/dashboard/audit` | how the work went: file-edit failures by model, plan/question rejections, repeat edits per file, findings over time |
 | `GET /api/workflows/:run_id` | workflow run detail (phase graph, returned result, run log, per-agent rows) |
 | `GET /api/skills` | skills list (optional `q`, `source`, `project` filters) |
 | `GET /api/skills/:name` | skill detail (content-addressed versions + firings) |
@@ -678,8 +679,8 @@ that severity), `error_type` (comma-separated; sessions with a failed tool call 
 `sort`, `dir`, `limit` (≤200), `offset`.
 `/api/dashboard/*` query params: `source`, `from`, `to`, `models` (comma-separated; **absent means
 every model**, which is not the same query as listing them all — [ADR-035](decisions/ADR-035-dashboard-model-filter.md));
-`timeseries` and `time` also accept `bucket` (`day`\|`week`\|`month`, otherwise chosen adaptively
-from the data span).
+`timeseries`, `time` and `audit` also accept `bucket` (`day`\|`week`\|`month`, otherwise chosen
+adaptively from the data span).
 `/api/security/findings` query params: `severity`, `category`, `rule`, `session`, `source`,
 `project`, `from`, `to` (date-inclusive), `status` (`open` default \| `dismissed` \| `muted` \|
 `all`), `sort`, `dir`, `limit`, `offset`.

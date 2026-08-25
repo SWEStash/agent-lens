@@ -6,7 +6,7 @@
  * "tokens" number because it dominates and misleads. Cost is derived via the shared pricing table.
  */
 import { costForUsage, rateForModel, errorKind, type ToolErrorType } from "@agent-lens/core";
-import type { DashBreakdowns, DashOverview, DashTime, DashTimeseries, ReviewLatency, TimeseriesPoint } from "@agent-lens/contracts";
+import type { DashAudit, DashBreakdowns, DashOverview, DashTime, DashTimeseries, ReviewLatency, TimeseriesPoint } from "@agent-lens/contracts";
 import type { DB } from "./db.js";
 import { tableExists, pushDateRange, queryAll, queryGet } from "./sql-util.js";
 import type {
@@ -82,6 +82,11 @@ const withModel = (w: Where, col: string): Where =>
 /** A tool call carries no model of its own; its event does, on every row of the real corpus. Joined
  *  only when a model is actually selected, so the unfiltered query plan is untouched. */
 const toolModelJoin = (w: Where) => (w.models ? "JOIN events e ON e.uuid = tc.event_uuid" : "");
+
+/** The same join, emitted unconditionally. The audit aggregates read `e.model` / `e.timestamp` as
+ *  OUTPUT, not just as a predicate, so they always need the row — `toolModelJoin` would leave them
+ *  selecting from a table that isn't in the query when no model is selected. */
+const eventJoin = "JOIN events e ON e.uuid = tc.event_uuid";
 
 /** Extend a session WHERE clause with one more condition, opening the clause when it is empty. */
 const andWhere = (w: Where) => (w.sql ? w.sql + " AND" : "WHERE");
@@ -291,16 +296,16 @@ function chooseBucket(db: DB, f: DashFilters): Bucket {
   return "month";
 }
 
-const BUCKET_EXPR: Record<Bucket, string> = {
-  day: "strftime('%Y-%m-%d', s.started_at)",
-  week: "strftime('%Y-W%W', s.started_at)",
-  month: "strftime('%Y-%m', s.started_at)",
-};
+/** The bucket key expression over an arbitrary timestamp column. Every series but one buckets on
+ *  `s.started_at`; findings buckets on their own event's timestamp, which is why the column is a
+ *  parameter rather than baked in. */
+const bucketExpr = (b: Bucket, col: string): string =>
+  b === "day" ? `strftime('%Y-%m-%d', ${col})` : b === "week" ? `strftime('%Y-W%W', ${col})` : `strftime('%Y-%m', ${col})`;
 
 export function dashboardTimeseries(db: DB, f: DashFilters, bucketParam?: string): DashTimeseries {
   const bucket: Bucket = bucketParam === "day" || bucketParam === "week" || bucketParam === "month" ? bucketParam : chooseBucket(db, f);
   const w = sessionWhere(f);
-  const expr = BUCKET_EXPR[bucket];
+  const expr = bucketExpr(bucket, "s.started_at");
 
   const byBucket = new Map<string, TimeseriesPoint>();
   const get = (b: string): TimeseriesPoint => {
@@ -620,7 +625,7 @@ function modelLatency(db: DB, mw: Where, bucket: Bucket): DashTime["latency"] {
   // rather than assuming a whole granularity is unusable. On the real corpus a daily bucket still
   // yields 119 plotted cells against a week's 36 — thinner, and honestly so, since the cells that
   // cannot support a percentile disappear instead of being drawn.
-  const expr = BUCKET_EXPR[bucket];
+  const expr = bucketExpr(bucket, "s.started_at");
   const lw = withModel(mw, "tn.model");
   const series = queryAll<LatencyRow>(
     db,
@@ -691,4 +696,129 @@ function reviewLatency(db: DB, mw: Where): DashTime["review"] {
     out[r.wrote ? "wrote" : "none"] = { n: r.n, under_10s: r.u10 ?? 0, under_30s: r.u30 ?? 0, under_2min: r.u120 ?? 0 };
   }
   return out;
+}
+
+/**
+ * Audit aggregates (ADR-036): four questions about how the work went.
+ *
+ * They share an endpoint because they share a shape — every one of them reaches a model through
+ * `events.model`, so all four are **row-grain** for the model filter and none needs the session-grain
+ * "used at least one selected model" fallback. None of them is an efficiency measure: there is no
+ * defensible one here, and tokens-per-line in particular is sign-inverted (see ADR-036).
+ */
+export function dashboardAudit(db: DB, f: DashFilters, bucketParam?: string): DashAudit {
+  const w = sessionWhere(f);
+  const bucket: Bucket = bucketParam ? bucketFor(bucketParam) : chooseBucket(db, f);
+  return {
+    bucket,
+    edit_reliability: editReliability(db, w),
+    plan_rejections: planRejections(db, mainOnly(w), bucket),
+    file_rework: fileRework(db, w),
+    findings_over_time: findingsOverTime(db, w, bucket),
+  };
+}
+
+/**
+ * File-writing calls and their error count, by the model that issued them. Both populations.
+ *
+ * `status` is 'error' or NULL — there is no 'success' value — so a failure is counted explicitly
+ * rather than by comparing against a success marker. A failed Edit means the model got the file's
+ * contents wrong, which is a capability signal rather than a latency one; the tile says it is only
+ * comparable within a time window, because older models ran older sessions on different work.
+ */
+function editReliability(db: DB, w: Where): DashAudit["edit_reliability"] {
+  const ew = withModel(w, "e.model");
+  return queryAll<DashAudit["edit_reliability"][number]>(
+    db,
+    `SELECT COALESCE(e.model, '(unknown)') model, COUNT(*) calls,
+            SUM(CASE WHEN tc.status = 'error' THEN 1 ELSE 0 END) errors
+     FROM tool_calls tc ${eventJoin} JOIN sessions s ON s.id = tc.session_id
+     ${andWhere(ew)} tc.tool_name IN ('Edit', 'Write', 'NotebookEdit')
+     GROUP BY 1 ORDER BY calls DESC`,
+    ...ew.params,
+  );
+}
+
+/**
+ * Plans and questions put to the user, and how many came back rejected, per bucket. Main sessions
+ * only — a subagent has no human to reject it, and on the real corpus all 746 such calls are already
+ * `is_sidechain = 0`.
+ *
+ * "Rejected" is `error_type = 'user-rejected'`, NOT `status = 'error'`: a handful of AskUserQuestion
+ * errors bucket as `other` and are genuine failures rather than the user saying no. This is a
+ * different number from the dashboard's rejection-rate KPI, which is every rejected or blocked tool
+ * call over every tool call — a much larger denominator.
+ */
+function planRejections(db: DB, mw: Where, bucket: Bucket): DashAudit["plan_rejections"] {
+  const ew = withModel(mw, "e.model");
+  const rejected = (tool: string) =>
+    `SUM(CASE WHEN tc.tool_name = '${tool}' AND tc.error_type = 'user-rejected' THEN 1 ELSE 0 END)`;
+  const calls = (tool: string) => `SUM(CASE WHEN tc.tool_name = '${tool}' THEN 1 ELSE 0 END)`;
+  return queryAll<DashAudit["plan_rejections"][number]>(
+    db,
+    `SELECT ${bucketExpr(bucket, "s.started_at")} bucket,
+            ${calls("ExitPlanMode")} plan_calls, ${rejected("ExitPlanMode")} plan_rejected,
+            ${calls("AskUserQuestion")} question_calls, ${rejected("AskUserQuestion")} question_rejected
+     FROM tool_calls tc ${eventJoin} JOIN sessions s ON s.id = tc.session_id
+     ${andWhere(ew)} tc.tool_name IN ('ExitPlanMode', 'AskUserQuestion')
+     GROUP BY bucket ORDER BY bucket`,
+    ...ew.params,
+  ).filter((r) => r.bucket != null);
+}
+
+/** The rework bands, in display order. Emitted even at zero so the chart's x-axis does not move
+ *  when a filter empties a band. */
+const REWORK_BANDS = ["1", "2-3", "4-6", "7-12", "13+"] as const;
+
+/**
+ * How often a session goes back to the same file: a histogram over (session, file) pairs. Both
+ * populations, model-filtered at the file change's own event.
+ *
+ * A count and a list, never a score. Both directions of the "struggle" framing were tested against
+ * the corpus and are flat — rework correlates with total tokens only because bigger sessions edit
+ * more, which is not an efficiency effect.
+ */
+function fileRework(db: DB, w: Where): DashAudit["file_rework"] {
+  const ew = withModel(w, "e.model");
+  const rows = queryAll<DashAudit["file_rework"][number]>(
+    db,
+    `WITH pairs AS (
+       SELECT COUNT(*) n
+       FROM file_changes fc
+       JOIN events e ON e.uuid = fc.event_uuid
+       JOIN sessions s ON s.id = fc.session_id
+       ${ew.sql} GROUP BY fc.session_id, fc.file_path
+     )
+     SELECT CASE WHEN n = 1 THEN '1' WHEN n <= 3 THEN '2-3' WHEN n <= 6 THEN '4-6'
+                 WHEN n <= 12 THEN '7-12' ELSE '13+' END band,
+            COUNT(*) pairs, SUM(n) changes
+     FROM pairs GROUP BY band`,
+    ...ew.params,
+  );
+  const byBand = new Map(rows.map((r) => [r.band, r]));
+  return REWORK_BANDS.map((band) => byBand.get(band) ?? { band, pairs: 0, changes: 0 });
+}
+
+/**
+ * Security findings per bucket by severity — the dashboard's only security chart. The /security page
+ * remains the surface for reading individual findings; this exists because a trend is the one thing
+ * that page cannot show.
+ *
+ * Bucketed on the finding's OWN event timestamp rather than its session's `started_at`. `findings`
+ * carries no time column, and every row on the real corpus joins to a timestamped event, so the
+ * honest time is available — the one series on this endpoint whose x-axis is derived that way.
+ */
+function findingsOverTime(db: DB, w: Where, bucket: Bucket): DashAudit["findings_over_time"] {
+  const ew = withModel(w, "e.model");
+  const sev = (s: string) => `SUM(CASE WHEN f.severity = '${s}' THEN 1 ELSE 0 END) ${s}`;
+  return queryAll<DashAudit["findings_over_time"][number]>(
+    db,
+    `SELECT ${bucketExpr(bucket, "e.timestamp")} bucket,
+            ${sev("info")}, ${sev("low")}, ${sev("medium")}, ${sev("high")}, ${sev("critical")}
+     FROM findings f
+     JOIN events e ON e.uuid = f.event_uuid
+     JOIN sessions s ON s.id = f.session_id
+     ${ew.sql} GROUP BY bucket ORDER BY bucket`,
+    ...ew.params,
+  ).filter((r) => r.bucket != null);
 }

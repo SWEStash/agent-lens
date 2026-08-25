@@ -756,3 +756,34 @@ export interface DashBreakdowns {
     rejections: number;
   };
 }
+
+/**
+ * Audit aggregates (ADR-036): four questions about how the work went, none of them about efficiency.
+ *
+ * Every series here is **row-grain for the model filter** — each aggregate's rows reach a model
+ * through `events.model`, so none of them falls back to the session-grain "used at least one
+ * selected model" rule that the model-less breakdowns use. `events.model` is populated on 100% of
+ * the rows these joins reach on the real corpus.
+ */
+export interface DashAudit {
+  /** The resolved bucket for the two time series below, echoed like `DashTimeseries.bucket`. */
+  bucket: "day" | "week" | "month";
+  /** File-writing tool calls and how many of them errored, by the model that issued them. Both
+   *  populations — a subagent's edits are real edits. A failed Edit means the model got the file's
+   *  contents wrong, so this is a capability signal; it is confounded by era and task mix and is
+   *  only comparable within a time window. */
+  edit_reliability: Array<{ model: string; calls: number; errors: number }>;
+  /** ExitPlanMode / AskUserQuestion calls and how many the user sent back, per bucket. **Main
+   *  sessions only** — a subagent has no human to reject it. "Sent back" is
+   *  `error_type = 'user-rejected'`, which is narrower than `error_types.rejections`. */
+  plan_rejections: Array<{ bucket: string; plan_calls: number; plan_rejected: number; question_calls: number; question_rejected: number }>;
+  /** How often a session goes back to the same file, as a histogram over (session, file) pairs.
+   *  All five bands are always present, at zero when empty, so the x-axis is stable. Descriptive:
+   *  rework does not correlate with anything useful (the "struggle score" framing was tested and is
+   *  flat), so this ships as a count and a list, never a score. */
+  file_rework: Array<{ band: string; pairs: number; changes: number }>;
+  /** Security findings per bucket by severity. Bucketed on the finding's OWN event timestamp, not
+   *  its session's `started_at` — `findings` has no time column of its own and every row joins to a
+   *  timestamped event. This is the dashboard's only security chart; /security stays the surface. */
+  findings_over_time: Array<{ bucket: string; info: number; low: number; medium: number; high: number; critical: number }>;
+}

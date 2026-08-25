@@ -8,7 +8,7 @@
 import { describe, it, expect, beforeAll } from "vitest";
 import { DatabaseSync } from "node:sqlite";
 import { SCHEMA_SQL } from "@agent-lens/core";
-import { dashboardOverview, dashboardBreakdowns, dashboardTimeseries, dashboardTime } from "../dist/dashboard.js";
+import { dashboardOverview, dashboardBreakdowns, dashboardTimeseries, dashboardTime, dashboardAudit } from "../dist/dashboard.js";
 
 function seed(): DatabaseSync {
   const db = new DatabaseSync(":memory:");
@@ -462,5 +462,128 @@ describe("model filter", () => {
   it("echoes the selection so a reader can tell a filtered payload from an unfiltered one", () => {
     expect(dashboardOverview(seedModels(), { models: [OPUS] }).range.models).toEqual([OPUS]);
     expect(dashboardOverview(seedModels(), {}).range.models).toBeNull();
+  });
+});
+
+/**
+ * Audit fixture. Three sessions across two months and two sources, one of them a subagent, so each
+ * aggregate's population rule is observable: plan rejections must drop the subagent's rejected plan,
+ * the other three must keep its rows. Every model attribution runs through `events.model`.
+ */
+function seedAudit(): DatabaseSync {
+  const db = new DatabaseSync(":memory:");
+  db.exec(SCHEMA_SQL);
+  db.exec("PRAGMA foreign_keys = OFF");
+  db.exec(`
+    INSERT INTO sessions (id, agent_id, source_id, is_sidechain, started_at, turn_count) VALUES
+      ('m','claude-code','isf',0,'2026-04-01T09:00:00Z',2),
+      ('sub','claude-code','isf',1,'2026-04-01T12:00:00Z',1),
+      ('m2','claude-code','personal',0,'2026-05-02T09:00:00Z',1);
+    INSERT INTO events (uuid, session_id, type, role, timestamp, model, raw_json) VALUES
+      ('e1','m','assistant','assistant','2026-04-01T10:00:00Z','claude-opus-5',x''),
+      ('e2','m','assistant','assistant','2026-04-01T11:00:00Z','claude-fable-5',x''),
+      ('e3','sub','assistant','assistant','2026-04-01T12:00:00Z','claude-opus-5',x''),
+      ('e4','m2','assistant','assistant','2026-05-02T10:00:00Z','claude-opus-5',x'');
+    INSERT INTO token_usage (event_uuid, session_id, model, input_tokens, output_tokens, cache_creation_input_tokens, cache_read_input_tokens) VALUES
+      ('e1','m','claude-opus-5',100,10,0,0),
+      ('e2','m','claude-fable-5',100,10,0,0),
+      ('e3','sub','claude-opus-5',100,10,0,0),
+      ('e4','m2','claude-opus-5',100,10,0,0);
+    INSERT INTO tool_calls (id, event_uuid, session_id, tool_name, status, error_type) VALUES
+      ('ed1','e1','m','Edit',NULL,NULL),
+      ('ed2','e1','m','Edit','error','file-not-found'),
+      ('ed3','e2','m','Write',NULL,NULL),
+      ('ed4','e3','sub','NotebookEdit',NULL,NULL),
+      ('ed5','e4','m2','Edit','error','file-not-found'),
+      ('p1','e1','m','ExitPlanMode','error','user-rejected'),
+      ('p2','e1','m','ExitPlanMode',NULL,NULL),
+      ('p3','e2','m','AskUserQuestion','error','other'),
+      ('p4','e3','sub','ExitPlanMode','error','user-rejected'),
+      ('p5','e4','m2','AskUserQuestion','error','user-rejected');
+    INSERT INTO file_changes (id, tool_call_id, session_id, event_uuid, file_path, tool_name) VALUES
+      ('c1','ed1','m','e1','/a.ts','Edit'),
+      ('c2','ed1','m','e1','/b.ts','Edit'),
+      ('c3','ed1','m','e1','/b.ts','Edit'),
+      ('c4','ed1','m','e1','/b.ts','Edit'),
+      ('c5','ed4','sub','e3','/c.ts','Edit'),
+      ('c6','ed4','sub','e3','/c.ts','Edit'),
+      ('c7','ed4','sub','e3','/c.ts','Edit'),
+      ('c8','ed4','sub','e3','/c.ts','Edit'),
+      ('c9','ed4','sub','e3','/c.ts','Edit'),
+      ('c10','ed5','m2','e4','/d.ts','Edit');
+    INSERT INTO findings (id, session_id, event_uuid, rule_id, category, severity, detector_version) VALUES
+      ('f1','m','e1','r.a','destructive','low',8),
+      ('f2','m','e1','r.b','destructive','high',8),
+      ('f3','m','e2','r.c','exfiltration','critical',8),
+      ('f4','sub','e3','r.d','destructive','info',8),
+      ('f5','m2','e4','r.e','destructive','medium',8);
+  `);
+  return db;
+}
+
+describe("dashboardAudit", () => {
+  const audit = (f: any = {}) => dashboardAudit(seedAudit(), f, "month");
+
+  it("counts file-writing calls and their errors by the issuing event's model, both populations", () => {
+    // opus-5 issued ed1, ed2, ed4 (subagent) and ed5; fable-5 only ed3. Ranked by call count.
+    expect(audit().edit_reliability).toEqual([
+      { model: "claude-opus-5", calls: 4, errors: 2 },
+      { model: "claude-fable-5", calls: 1, errors: 0 },
+    ]);
+  });
+
+  it("counts plans and questions per bucket, main sessions only, rejected by error_type", () => {
+    // p4 is the subagent's rejected plan and must not appear. p3 errored as `other`, which is a
+    // genuine failure rather than the user saying no, so it counts as a call and not a rejection.
+    expect(audit().plan_rejections).toEqual([
+      { bucket: "2026-04", plan_calls: 2, plan_rejected: 1, question_calls: 1, question_rejected: 0 },
+      { bucket: "2026-05", plan_calls: 0, plan_rejected: 0, question_calls: 1, question_rejected: 1 },
+    ]);
+  });
+
+  it("bands (session, file) pairs by touch count and always emits all five bands", () => {
+    expect(audit().file_rework).toEqual([
+      { band: "1", pairs: 2, changes: 2 },   // m:/a.ts and m2:/d.ts
+      { band: "2-3", pairs: 1, changes: 3 }, // m:/b.ts
+      { band: "4-6", pairs: 1, changes: 5 }, // sub:/c.ts — subagent edits are real edits
+      { band: "7-12", pairs: 0, changes: 0 },
+      { band: "13+", pairs: 0, changes: 0 },
+    ]);
+    // A filter that admits no file change still yields the full x-axis rather than an empty chart.
+    expect(audit({ models: ["claude-fable-5"] }).file_rework.map((b) => b.band)).toEqual(["1", "2-3", "4-6", "7-12", "13+"]);
+    expect(audit({ models: ["claude-fable-5"] }).file_rework.every((b) => b.pairs === 0)).toBe(true);
+  });
+
+  it("buckets findings on the finding's own event time, not its session's start", () => {
+    // f5 sits on an event in May under a session that started in May, but f1..f4 are what pin this:
+    // they land in the April bucket by their event timestamps.
+    expect(audit().findings_over_time).toEqual([
+      { bucket: "2026-04", info: 1, low: 1, medium: 0, high: 1, critical: 1 },
+      { bucket: "2026-05", info: 0, low: 0, medium: 1, high: 0, critical: 0 },
+    ]);
+  });
+
+  it("narrows every aggregate at its own row grain under a model filter", () => {
+    const o = audit({ models: ["claude-opus-5"] });
+    expect(o.edit_reliability).toEqual([{ model: "claude-opus-5", calls: 4, errors: 2 }]);
+    // fable-5 issued p3, the only AskUserQuestion in April, so April's question column empties.
+    expect(o.plan_rejections).toEqual([
+      { bucket: "2026-04", plan_calls: 2, plan_rejected: 1, question_calls: 0, question_rejected: 0 },
+      { bucket: "2026-05", plan_calls: 0, plan_rejected: 0, question_calls: 1, question_rejected: 1 },
+    ]);
+    expect(o.file_rework).toEqual(audit().file_rework); // every file change is opus-5's
+    // f3 is fable-5's critical finding and drops.
+    expect(o.findings_over_time[0]).toEqual({ bucket: "2026-04", info: 1, low: 1, medium: 0, high: 1, critical: 0 });
+  });
+
+  it("is unchanged by an empty model selection", () => {
+    expect(audit({ models: [] })).toEqual(audit());
+  });
+
+  it("scopes to the source and date filters like every other endpoint", () => {
+    expect(audit({ source: "personal" }).edit_reliability).toEqual([{ model: "claude-opus-5", calls: 1, errors: 1 }]);
+    const april = audit({ from: "2026-04-01", to: "2026-04-30" });
+    expect(april.plan_rejections.map((p) => p.bucket)).toEqual(["2026-04"]);
+    expect(april.file_rework.find((b) => b.band === "1")).toEqual({ band: "1", pairs: 1, changes: 1 });
   });
 });
