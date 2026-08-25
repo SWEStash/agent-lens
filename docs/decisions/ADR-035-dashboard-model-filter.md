@@ -76,6 +76,11 @@ question about a different set of rows while looking authoritative.
 
 ## Consequences
 
+- **`sessions.turn_count` stops being usable for the Turns KPI under a filter.** That column is
+  denormalized per session, so it would report every turn of an admitted session — the KPI would
+  disagree with "Activity over time", which counts turn rows. Under a filter the KPI counts rows
+  instead; with no filter the column is kept, and `validate.mjs` already asserts the two are equal
+  there. Any future aggregate reading a denormalized session column has the same problem.
 - **A session count and a token total respond differently to the same click**, by decision 2. The
   session-grain guides state this; it is the single most likely source of a "these numbers disagree"
   report.

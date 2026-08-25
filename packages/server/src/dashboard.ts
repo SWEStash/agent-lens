@@ -239,6 +239,14 @@ export function dashboardOverview(db: DB, f: DashFilters): DashOverview {
 
   // Turn-duration percentiles (work cadence), excluding null durations.
   const tnw = withModel(w, "tn.model");
+  // `sessions.turn_count` is denormalized and session-grain: under a model filter it would report
+  // every turn of an admitted session, including the ones other models answered — so the KPI would
+  // disagree with "Activity over time", which counts turn rows. They are identical with no filter
+  // (validate.mjs asserts turn_count == COUNT(turns)), so the cheap column stays the default.
+  const turns = tnw.models
+    ? (queryGet<CountRow>(db, `SELECT COUNT(*) n FROM turns tn JOIN sessions s ON s.id = tn.session_id ${tnw.sql}`, ...tnw.params)
+        ?.n ?? 0)
+    : (counts.turns ?? 0);
   const turnDur = percentiles(
     db,
     `SELECT tn.duration_ms v FROM turns tn JOIN sessions s ON s.id = tn.session_id
@@ -256,7 +264,7 @@ export function dashboardOverview(db: DB, f: DashFilters): DashOverview {
     sessions: counts.sessions ?? 0,
     sessions_main: counts.main ?? 0,
     sessions_subagent: counts.subagent ?? 0,
-    turns: counts.turns ?? 0,
+    turns,
     projects: counts.projects ?? 0,
     tool_calls: toolCount ?? 0,
     tokens, // {input, output, cache_creation, cache_read}

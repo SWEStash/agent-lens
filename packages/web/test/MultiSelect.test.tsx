@@ -63,6 +63,13 @@ describe("MultiSelect", () => {
     expect(screen.getByRole("checkbox", { name: "opus" }).hasAttribute("disabled")).toBe(false);
   });
 
+  it("renders inert when disabled, for a surface that cannot honour the filter", () => {
+    // The static snapshot serves one pre-computed response per endpoint and ignores query params,
+    // so a live-looking control there would silently do nothing.
+    render(<MultiSelect label="Models" options={OPTIONS} selected={["a", "b", "c"]} onChange={vi.fn()} disabled />);
+    expect(screen.getAllByRole("checkbox").every((b) => b.hasAttribute("disabled"))).toBe(true);
+  });
+
   it("normalizes a new selection to option order, so the URL does not depend on click order", () => {
     const onChange = show(["c"]);
     fireEvent.click(screen.getByRole("checkbox", { name: "opus" }));

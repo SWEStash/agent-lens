@@ -397,6 +397,19 @@ describe("model filter", () => {
     expect(t.turn_hours.reduce((n, r) => n + r.turns, 0)).toBe(1);
   });
 
+  it("counts turns at the turn grain under a filter, so the KPI matches the activity chart", () => {
+    // sessions.turn_count is session-grain: mix has three turns and only one is opus, so the
+    // denormalized column would report 3 while "Activity over time" plots 1. With no filter the two
+    // are identical by construction, which is why the cheap column is still the default.
+    const unfiltered = dashboardOverview(seedModels(), {});
+    expect(unfiltered.turns).toBe(4);
+    expect(unfiltered.turns).toBe(dashboardTimeseries(seedModels(), {}).series.reduce((n, p) => n + p.turns, 0));
+
+    const o = dashboardOverview(seedModels(), { models: [OPUS] });
+    expect(o.turns).toBe(1);
+    expect(o.turns).toBe(dashboardTimeseries(seedModels(), { models: [OPUS] }).series.reduce((n, p) => n + p.turns, 0));
+  });
+
   it("filters tool calls through the event that issued them, since tool_calls has no model", () => {
     const o = dashboardOverview(seedModels(), { models: [OPUS] });
     expect(o.tool_calls).toBe(1); // tco only — tch is haiku, tcf is a different session
