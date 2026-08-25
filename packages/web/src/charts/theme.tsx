@@ -42,6 +42,16 @@ export function useChartTokens() {
     const BURN_RAMP = [
       v("--burn-1"), v("--burn-2"), v("--burn-3"), v("--burn-4"), v("--burn-5"), v("--burn-6"), v("--burn-7"),
     ];
+    // Per-severity mark colours, already shared by the sessions-list dot and the timeline rail
+    // (see styles.css). Findings-over-time reuses them rather than deriving a sixth palette, so one
+    // finding is the same colour wherever the app draws it. `info` has no vivid step by design.
+    const SEVERITY_COLORS = {
+      critical: v("--sev-c-critical"),
+      high: v("--sev-c-high"),
+      medium: v("--sev-c-medium"),
+      low: v("--sev-c-low"),
+      info: C.muted,
+    };
     // Token series colors. Cache-read is intentionally muted — it dominates and misleads.
     const TOKEN_COLORS = {
       input: C.green,
@@ -58,7 +68,7 @@ export function useChartTokens() {
       labelStyle: { color: C.text },
       itemStyle: { color: C.text },
     };
-    return { C, TOKEN_COLORS, TIMELINE_COLORS, BURN_RAMP, PALETTE, axisProps, gridProps, tooltipStyle };
+    return { C, TOKEN_COLORS, TIMELINE_COLORS, SEVERITY_COLORS, BURN_RAMP, PALETTE, axisProps, gridProps, tooltipStyle };
   }, [theme]);
 }
 

@@ -11,8 +11,9 @@
  * Ids must match KPI_REGISTRY / CHART_REGISTRY exactly; a typo is otherwise a silently missing tile,
  * which is what test/presets.test.ts guards.
  *
- * No Security view: the registry has one security tile and no security charts, so it would be a single
- * KPI over an empty grid. The /security page is that surface.
+ * No Security view, even though the registry now has a security chart (findings over time, ADR-036).
+ * A view pairing one KPI with one chart is not a view, and /security is where findings are actually
+ * read — the chart exists on the dashboard because a trend is the one thing that page cannot show.
  */
 
 export interface Preset {

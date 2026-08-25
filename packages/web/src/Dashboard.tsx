@@ -1,4 +1,4 @@
-import { api, SNAPSHOT, type DashOverview, type DashTimeseries, type DashBreakdowns, type DashTime, type SecuritySummary, type Source } from "./api";
+import { api, SNAPSHOT, type DashOverview, type DashTimeseries, type DashBreakdowns, type DashTime, type DashAudit, type SecuritySummary, type Source } from "./api";
 import { MultiSelect } from "./MultiSelect";
 import { shortModel } from "./format";
 import { useAsync, useLookup } from "./useFetch";
@@ -7,7 +7,7 @@ import { ErrorAlert, Loading } from "./AsyncBoundary";
 import { useExpanded } from "./dashboard/useExpanded";
 import { useDrilldown } from "./dashboard/useDrilldown";
 import { KPI_REGISTRY, KpiRow } from "./dashboard/Kpis";
-import { CHART_REGISTRY, TIME_CHART_IDS } from "./dashboard/registry";
+import { AUDIT_CHART_IDS, CHART_REGISTRY, TIME_CHART_IDS } from "./dashboard/registry";
 import { StripCustomizer } from "./dashboard/StripCustomizer";
 import { PresetPills } from "./dashboard/PresetPills";
 import { useDashLayout } from "./dashboard/useDashLayout";
@@ -65,6 +65,10 @@ export default function Dashboard() {
   // in the dep key, so un-hiding one fires the request.
   const timeVisible = TIME_CHART_IDS.some((id) => !hiddenCharts.has(id));
   const { data: time, error: timeError } = useAsync(() => (timeVisible ? api<DashTime>("/dashboard/time" + s) : null), [s, timeVisible]);
+  // Same arrangement for the audit tiles, and separate from `time` for the same reason they are
+  // separate from the Promise.all: one endpoint failing should cost its own four cards, not the rest.
+  const auditVisible = AUDIT_CHART_IDS.some((id) => !hiddenCharts.has(id));
+  const { data: audit, error: auditError } = useAsync(() => (auditVisible ? api<DashAudit>("/dashboard/audit" + s) : null), [s, auditVisible]);
 
   return (
     <div>
@@ -107,6 +111,7 @@ export default function Dashboard() {
 
       <ErrorAlert error={error} />
       <ErrorAlert error={timeError} />
+      <ErrorAlert error={auditError} />
       {loading && <Loading />}
 
       {overview && !loading && (
@@ -157,7 +162,7 @@ export default function Dashboard() {
                 filtered out here, so a hidden card keeps its local view state — see ChartProps. */}
             <div className="cards">
               {arrange(CHART_REGISTRY, body.charts.order).map(({ id, Component }) => (
-                <Component key={id} hidden={hiddenCharts.has(id)} ts={ts} bd={bd} time={time} expand={expand} drill={drill} range={range} />
+                <Component key={id} hidden={hiddenCharts.has(id)} ts={ts} bd={bd} time={time} audit={audit} expand={expand} drill={drill} range={range} />
               ))}
             </div>
           </section>
