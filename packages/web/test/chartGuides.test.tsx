@@ -38,6 +38,7 @@ const props: ChartProps = {
   time: null,
   expand: noopExpand,
   drill: { drillFilter: () => {}, drillTo: () => () => {} } as never,
+  range: {},
 };
 
 describe("every dashboard chart explains how to read itself", () => {
@@ -56,6 +57,16 @@ describe("every dashboard chart explains how to read itself", () => {
       cleanup();
     });
   }
+
+  it("every chart can be opened enlarged", () => {
+    // ChartCard puts the control there so a chart added later inherits it; without this, a card that
+    // stops routing through ChartCard loses the affordance and nothing else notices.
+    for (const { id, label, Component } of CHART_REGISTRY) {
+      render(<Component {...props} />);
+      expect(screen.getByLabelText(`Expand "${label}"`), `${id}: no expand control in the card header`).toBeTruthy();
+      cleanup();
+    }
+  });
 
   it("card titles and registry labels agree, so the guide's accessible name is findable", () => {
     for (const { id, label, Component } of CHART_REGISTRY) {

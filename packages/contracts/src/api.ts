@@ -709,6 +709,10 @@ export interface DashTimeseries {
 export interface DashTime {
   /** Work tokens (input + output + cache-creation) per UTC hour per source. `hour` is `YYYY-MM-DDTHH`. */
   burn_hours: Array<{ hour: string; source: string | null; work: number }>;
+  /** Turns started per UTC hour per source, **main sessions only** — the population rule flips with
+   *  the metric: tokens are spend and count subagents too, a turn is a human sitting down to
+   *  prompt. Same raw-hourly shape as `burn_hours`, folded to local time in the browser. */
+  turn_hours: Array<{ hour: string; source: string | null; turns: number }>;
   /** Prompt to first assistant token, per bucket per model. Main sessions only. Never a mean. */
   latency: {
     bucket: "day" | "week" | "month";

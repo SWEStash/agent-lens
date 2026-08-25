@@ -3,7 +3,7 @@ import { ResponsiveContainer, LineChart, Line, BarChart, Bar, XAxis, YAxis, Cart
 import { ChartCard, useChartTokens } from "../../charts/theme";
 import { fmtDuration, fmtTokens, shortModel } from "../../format";
 import { resolveZone, zoneLabel } from "../../tz";
-import { burnBySource, heatCells, rampStep, type HeatCell } from "../burn";
+import { burnBySource, heatCells, heatRows, rampColor, rampPosition, rampTicks, type HeatCell, type HeatMetric } from "../burn";
 import { CHART_MARGIN, decadeDomain, unitLabel, type ChartProps } from "./common";
 
 const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
@@ -28,64 +28,117 @@ const LOG_SCALE_RATIO = 100;
 const mutedLegend = (color: string) => (value: React.ReactNode) => <span style={{ color }}>{value}</span>;
 
 /**
- * Weekday × hour token burn. Recharts has no heatmap, so this is a plain CSS grid of cells —
- * 168 of them, well inside what the DOM handles, and far simpler than bending a scatter into shape.
+ * Weekday × hour activity. Recharts has no heatmap, so this is a plain CSS grid of cells — 168 of
+ * them, well inside what the DOM handles, and far simpler than bending a scatter into shape.
  *
  * The zone is named in the card: an hour-of-day chart that does not say which clock it is on is a
  * wrong chart, not merely an incomplete one.
+ *
+ * Turns is the DEFAULT metric, not tokens. Tokens per hour are unbounded — a single 12-minute
+ * subagent fan-out burned 1.8M work tokens, and rendered in the same colour step as a Sunday evening
+ * worked five weeks running. A turn count is bounded per hour, so a cell scales with how OFTEN that
+ * hour is worked, which is what a reader takes a heatmap cell to mean. Tokens stay available: the
+ * question "when did the spend happen" is still a real one, it is just not the one a reader assumes.
  */
-export function BurnHeatmap({ hidden, time }: ChartProps) {
+export function BurnHeatmap({ hidden, time, range }: ChartProps) {
   const { BURN_RAMP, C } = useChartTokens();
   const zone = resolveZone();
-  const { cells, max } = useMemo(() => heatCells(time?.burn_hours ?? [], zone), [time, zone]);
+  const [metric, setMetric] = useState<HeatMetric>("turns");
+  const isTokens = metric === "tokens";
+  const rows = useMemo(() => heatRows(time, metric), [time, metric]);
+  const { cells, max } = useMemo(() => heatCells(rows, zone, range), [rows, zone, range.from, range.to]);
   const [hover, setHover] = useState<{ cell: HeatCell; x: number; y: number } | null>(null);
+  // Turn means are fractions of a turn per day, so they need decimals a token count does not:
+  // `fmtTokens` renders every one of them as "0". The precision follows the peak rather than the
+  // individual value, so the legend's numbers line up as one scale — on a small corpus a fixed one
+  // decimal printed the first two boundaries as "0" and "0.0".
+  const dp = isTokens ? 0 : max < 2 ? 2 : 1;
+  const fmtVal = (n: number) => (isTokens ? fmtTokens(Math.round(n)) : n.toFixed(dp));
+  const unit = isTokens ? "work tokens" : "turns";
+  // Linear for turns, sqrt for tokens — see `rampPosition`. Compressing a 3.5x spread is what put a
+  // one-off cell a tenth of the way up the scale.
+  const scale = isTokens ? "sqrt" : "linear";
+  // The gradient runs from the EMPTY cell's own colour, so a cell's colour is continuous with having
+  // no work at all rather than starting at a step that must be visible however small the value is.
+  // The cost is deliberate and was the point: one turn in three months is meant to look like almost
+  // nothing, and the tooltip carries the number.
+  const stops = [C.panel2, ...BURN_RAMP];
+  const gradient = `linear-gradient(to right, ${stops.join(", ")})`;
 
   return (
     <ChartCard
-      title="When tokens are spent"
-      hint={`mean work tokens per weekday × hour, ${zoneLabel(zone)}`}
+      title="When work happens"
+      hint={`mean ${unit} per weekday × hour, ${zoneLabel(zone)}`}
       guide={
         <>
           <p>
-            Each cell is one hour of one weekday. Darker means more tokens were spent in that hour on a
-            typical day — hover any cell for its exact figure.
+            Each cell is one hour of one weekday. Darker means more {unit} in that hour on a typical
+            day — hover any cell for its exact figure.
           </p>
           <dl>
             <dt>rows / columns</dt>
             <dd>weekday (Sun–Sat) × hour of day, 0–23, in {zoneLabel(zone)} — your own clock.</dd>
             <dt>cell value</dt>
             <dd>
-              mean <strong>work tokens</strong> (input + output + cache-write; cache reads excluded)
-              per occurrence of that weekday, so a range ending mid-week does not read as a quiet
-              Thursday.
+              mean {isTokens ? <><strong>work tokens</strong> (input + output + cache-write; cache reads excluded)</> : <><strong>turns started</strong> — one turn is one prompt and its answer</>}{" "}
+              per <strong>calendar</strong> occurrence of that weekday in range — a weekday you did
+              not work is a zero, not a missing day, and a range ending mid-week does not read as a
+              quiet Thursday.
+            </dd>
+            <dt>which sessions</dt>
+            <dd>
+              {isTokens
+                ? "Both populations: a subagent's tokens come off the same quota."
+                : "Main sessions only — a turn is a person sitting down to prompt, and a subagent has nobody in it."}
             </dd>
           </dl>
           <p>
-            Bucketed by each usage event's own timestamp, not its session's start — so its totals
-            deliberately <strong>do not match "Tokens over time"</strong>, which buckets by session.
+            <strong>Turns and tokens do not draw the same picture, and the difference is the point.</strong>{" "}
+            Tokens per hour are unbounded: one 12-minute fan-out of subagents can burn more than a
+            month of evenings, so a one-off lands in the same colour as a habit. A turn count is
+            bounded per hour, so a cell tracks how <em>often</em> that hour is worked. Switch to
+            tokens when you want the spend rather than the rhythm.
           </p>
-          <p>It shows when tokens were spent. It says nothing about whether that was a good time to spend them.</p>
+          <p>
+            Bucketed by when the work happened — the usage event's own timestamp, or the turn's start
+            — not by its session's start, so its totals deliberately{" "}
+            <strong>do not match &quot;Tokens over time&quot;</strong>, which buckets by session.
+          </p>
+          <p>It shows when work happened. It says nothing about whether that was a good time for it.</p>
         </>
       }
       hidden={hidden}
+      actions={
+        <span className="seg" role="group" aria-label="Metric">
+          <button type="button" className={metric === "turns" ? "on" : ""} onClick={() => setMetric("turns")}>
+            turns
+          </button>
+          <button type="button" className={isTokens ? "on" : ""} onClick={() => setMetric("tokens")}>
+            tokens
+          </button>
+        </span>
+      }
     >
-      {time && max === 0 ? (
-        <div className="empty">No token usage in range.</div>
+      {/* Enlarged, the cells grow and the hour axis labels every other hour instead of every sixth:
+          the extra room buys cells big enough to compare and precision about *which* hour each one
+          is, which is the question a 168-cell grid raises. */}
+      {(expanded) => (time && max === 0 ? (
+        <div className="empty">No {unit} in range.</div>
       ) : (
-        <div className="burn">
-          <div className="burn-grid" role="img" aria-label={`Token burn by weekday and hour, ${zoneLabel(zone)}`}>
+        <div className={expanded ? "burn burn-lg" : "burn"}>
+          <div className="burn-grid" role="img" aria-label={`Mean ${unit} by weekday and hour, ${zoneLabel(zone)}`}>
             {WEEKDAYS.map((label, weekday) => (
               <div className="burn-row" key={label}>
                 <span className="burn-day">{label}</span>
                 {cells
                   .filter((c) => c.weekday === weekday)
                   .map((c) => {
-                    const step = rampStep(c.mean, max, BURN_RAMP.length);
+                    const t = rampPosition(c.mean, max, scale);
                     return (
                       <i
                         key={c.hour}
                         className="burn-cell"
-                        style={{ background: step ? BURN_RAMP[step - 1] : C.panel2 }}
+                        style={{ background: t === null ? C.panel2 : rampColor(t, stops) }}
                         onPointerEnter={(e) => {
                           const cell = e.currentTarget.getBoundingClientRect();
                           const box = e.currentTarget.closest(".burn")!.getBoundingClientRect();
@@ -100,16 +153,24 @@ export function BurnHeatmap({ hidden, time }: ChartProps) {
             <div className="burn-row burn-hours">
               <span className="burn-day" />
               {Array.from({ length: 24 }, (_, h) => (
-                <i key={h} className="burn-tick">{h % 6 === 0 ? h : ""}</i>
+                <i key={h} className="burn-tick">{h % (expanded ? 2 : 6) === 0 ? h : ""}</i>
               ))}
             </div>
           </div>
+          {/* A gradient bar with the values written under it, not "less ▪▪▪▪ more": a reader has to be
+              able to lay a cell against the strip and get a number, and hovering 168 cells is not
+              that. It starts at the empty colour because a blank cell is a reading — no work — and
+              the scale should run continuously out of it. */}
           <div className="burn-legend">
-            <span>less</span>
-            {BURN_RAMP.map((c, i) => (
-              <i key={i} style={{ background: c }} />
-            ))}
-            <span>more — up to {fmtTokens(Math.round(max))} tokens/h</span>
+            <span className="burn-legend-cap">{unit} per hour</span>
+            <div className="burn-bar" style={{ background: gradient }} />
+            <div className="burn-ticks">
+              {rampTicks(max, scale).map(([pos, value]) => (
+                <span key={pos} style={{ left: `${pos * 100}%` }}>
+                  {fmtVal(value)}
+                </span>
+              ))}
+            </div>
           </div>
           {hover && (
             // Clamped to the card and flipped past the halfway mark so a Saturday-23:00 cell does not
@@ -123,12 +184,12 @@ export function BurnHeatmap({ hidden, time }: ChartProps) {
                 {WEEKDAYS[hover.cell.weekday]} {String(hover.cell.hour).padStart(2, "0")}:00
               </div>
               <div className="burn-tip-row">
-                {fmtTokens(Math.round(hover.cell.mean))} work tokens · average {WEEKDAYS[hover.cell.weekday]}
+                {fmtVal(hover.cell.mean)} {unit} · average {WEEKDAYS[hover.cell.weekday]}
               </div>
             </div>
           )}
         </div>
-      )}
+      ))}
     </ChartCard>
   );
 }

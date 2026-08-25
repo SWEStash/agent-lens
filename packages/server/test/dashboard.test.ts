@@ -220,6 +220,17 @@ describe("dashboardTime", () => {
     expect(isf.map((r: any) => r.work)).toEqual([75, 3, 300]);
   });
 
+  it("counts turns by their own start hour, main sessions only", () => {
+    // The heatmap's other metric, and its population rule is the inverse of burn's: a turn is a
+    // person sitting down to prompt, so the subagent's turn at 22:04 must not be counted — that is
+    // the whole reason a fan-out of subagents cannot inflate a cell.
+    const t = dashboardTime(seedTime(), {});
+    expect(t.turn_hours.map((r: any) => [r.hour, r.turns])).toEqual([
+      ["2026-03-01T22", 1],
+      ["2026-03-01T23", 1],
+    ]);
+  });
+
   it("excludes cache-read from work tokens", () => {
     const t = dashboardTime(seedTime(), {});
     expect(t.burn_hours.reduce((a: number, r: any) => a + r.work, 0)).toBe(378); // not 40k-odd

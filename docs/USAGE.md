@@ -411,15 +411,31 @@ date range):
   failure-vs-rejection split are a heuristic over the tool result text — see [ADR-019](decisions/ADR-019-tool-error-observability.md).
 - **Unpriced models** (e.g. `claude-fable-5`) are surfaced explicitly, not silently zeroed, so cost
   reads as a lower bound rather than a wrong number.
-- **Time analytics** — *when* the work happened, rather than how much of it there was. These five
+- **Time analytics** — *when* the work happened, rather than how much of it there was. These four
   tiles share one endpoint, and the dashboard skips fetching it entirely while all of them are
   hidden:
 
-  - ***When tokens are spent*** — mean work tokens per weekday × hour. Uniquely among the charts it
-    buckets by the **event's own timestamp**, not the session's start: a session a human sat through
-    runs mostly idle and often spans hours, so session-start bucketing would drop a whole day's spend
-    into the hour it began. It therefore **will not tie out against "Tokens over time"** — that is
-    deliberate, see [ADR-033](decisions/ADR-033-time-analytics-bucketing.md).
+  - ***When work happens*** — weekday × hour, averaged over the **calendar** occurrences of that
+    weekday in range, so a weekday you often skip reads as the quiet one it is rather than as a busy
+    one you rarely reach. Two metrics, toggled in the card:
+    - ***turns*** (default) — turns started in that hour, **main sessions only**. A turn is one
+      prompt and its answer, so this is the rhythm of when you actually work.
+    - ***tokens*** — mean work tokens (input + output + cache-write), **both populations**, since a
+      subagent's tokens come off the same quota.
+
+    They do not draw the same picture, and that is the point: tokens per hour are unbounded, so one
+    twelve-minute fan-out of subagents can outweigh a month of evenings and a one-off lands in the
+    same colour as a habit — see [ADR-034](decisions/ADR-034-heatmap-metric.md).
+
+    Colour is a **continuous gradient**, not a set of bands, and it runs out of the empty cell's own
+    colour — so a barely-used hour is barely coloured rather than jumping to a first band that has to
+    be visible. That does mean a near-zero cell is close to invisible, deliberately; hover any cell
+    for its exact figure, and the strip under the grid maps colour to number. Uniquely among the
+    charts it buckets by **when the work happened** — the usage event's own timestamp, or the turn's
+    start — not the session's start: a session a human sat through runs mostly idle and often spans
+    hours, so session-start bucketing would drop a whole day's spend into the hour it began. It
+    therefore **will not tie out against "Tokens over time"** — that is deliberate, see
+    [ADR-033](decisions/ADR-033-time-analytics-bucketing.md).
   - ***Burn by source*** — work tokens over time, one line per source. Sources are plotted
     separately and **never summed**; they have genuinely different profiles. It follows the
     dashboard's bucket control, so switching to *day* shows each source's shape where a month
@@ -447,6 +463,9 @@ date range):
   what the axes are in, how the number is computed, and the caveats that decide whether a reading is
   fair — which population it counts, what a heuristic label is worth, where a tail is contaminated.
   Axis units are also printed above each axis, so "15.0M" is never left ambiguous.
+- **Enlarging a chart** — the **⤢** beside a card's title opens it full-width in a dialog, where a
+  chart with more to say uses the room for it (the burn heatmap labels every other hour instead of
+  every sixth). Escape or the ✕ closes it and returns focus to the card.
 - **Views** — a switcher above the strips picks a curated layout: **All** (everything), **Cost**,
   **Reliability**, **Activity**. Presets are defined in code, so they never grow silently when a new
   chart ships — `All` always has everything.

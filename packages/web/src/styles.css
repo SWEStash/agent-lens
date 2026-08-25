@@ -26,16 +26,27 @@
   --tl-assistant: #058dfa;
   --tl-thinking: #b343ad;
   --tl-tool: #a86819;
-  /* Burn-heatmap ramp — SEQUENTIAL, not categorical: one hue, monotone lightness, low→high. Derived
-     from the --tl-assistant blue (OKLCH hue 252) and validated as an ordinal ramp against both
-     --panel and --bg; the lightest step clears 2:1 on the surface so a cell with any spend at all is
-     never invisible. Blue rather than a heat ramp on purpose: amber/red would read as a warning, and
-     this chart reports when tokens were spent, not whether that was good. */
-  --burn-1: #27527f;
-  --burn-2: #3a6ca3;
-  --burn-3: #4d88c8;
-  --burn-4: #62a5ee;
-  --burn-5: #77c2ff;
+  /* Burn-heatmap ramp — SEQUENTIAL: one hue (the --tl-assistant blue, OKLCH 252), monotone lightness,
+     low→high. Blue rather than a heat ramp on purpose: amber/red would read as a warning, and this
+     chart reports when work happened, not whether that was good.
+     These are GRADIENT ANCHORS, not a palette of discrete steps — the heatmap interpolates between
+     them (see rampColor in dashboard/burn.ts) and prepends --panel2, so the scale runs continuously
+     out of an empty cell. Binning them was the earlier design and it failed on its own first step:
+     every non-zero cell took the lowest step's full colour however small the value, so empty→lowest
+     was the biggest jump on the scale (ΔL 0.179 against ~0.065 between neighbours) and an hour worked
+     once in three months read louder than a busy hour against a busier one.
+     Two properties still matter and are worth preserving if these are ever re-derived. The first
+     anchor is near-NEUTRAL, so the run out of the grey empty cell is a change in lightness only, not
+     a jump from neutral into colour. And each anchor's chroma is the most the sRGB gamut holds at its
+     lightness — asking for more clips, and clipping drags lightness back toward the next anchor,
+     which bends the curve. Validated as an ordinal ramp against both --panel and --bg. */
+  --burn-1: #48515b;
+  --burn-2: #536478;
+  --burn-3: #5d7896;
+  --burn-4: #688cb6;
+  --burn-5: #72a1d6;
+  --burn-6: #7cb6f7;
+  --burn-7: #96ccff;
   --code-bg: var(--bg);
 }
 /* Light theme: same tokens, WCAG-AA palette. Applied via <html data-theme="light">. */
@@ -61,11 +72,15 @@
   --tl-assistant: #2649c0;
   --tl-thinking: #8d1a89;
   --tl-tool: #a1790c;
-  --burn-1: #8cb0d8;
-  --burn-2: #6695cb;
-  --burn-3: #3d7bbc;
-  --burn-4: #0160ae;
-  --burn-5: #00449e;
+  /* Same derivation as the dark anchors: the palest one is near-neutral, so the run out of an
+     empty cell changes lightness only. */
+  --burn-1: #a4aeb9;
+  --burn-2: #859ab3;
+  --burn-3: #6787ac;
+  --burn-4: #4874a4;
+  --burn-5: #26609c;
+  --burn-6: #004c93;
+  --burn-7: #003979;
   --code-bg: #eef1f5;
 }
 * { box-sizing: border-box; }
@@ -1465,8 +1480,52 @@ table.kv .muted { font-size: 12px; margin-top: 4px; }
 .burn-cell { flex: 1 1 0; height: 14px; border-radius: 2px; }
 .burn-tick { flex: 1 1 0; font-size: 10px; color: var(--muted); font-style: normal; text-align: left; }
 .burn-hours { margin-top: 2px; }
-.burn-legend { display: flex; align-items: center; gap: 4px; font-size: 11px; color: var(--muted); }
-.burn-legend i { width: 14px; height: 10px; border-radius: 2px; }
+/* Enlarged: bigger cells, but a fixed size rather than "fill the body". Stretching seven rows over
+   700px turns each hour into a tall column and the grid stops reading as a weekday × hour map at
+   all — at this width a cell is ~43px across, so 40px tall keeps it about square. */
+.burn-lg .burn-cell { height: 40px; }
+.burn-lg .burn-day, .burn-lg .burn-tick { font-size: 12px; }
+.burn-lg .burn-day { width: 36px; }
+.burn-legend { display: flex; flex-direction: column; gap: 3px; font-size: 11px; color: var(--muted); }
+.burn-legend-cap { align-self: flex-start; }
+/* A continuous bar rather than swatches: the cells are a gradient, so the key has to be one too. */
+.burn-bar { height: 10px; border-radius: 2px; }
+/* Ticks are positioned along the bar rather than flowed, so each number sits under the point it
+   labels; the first and last are pulled inside so they do not overhang the card. */
+.burn-ticks { position: relative; height: 12px; }
+.burn-ticks span {
+  position: absolute; transform: translateX(-50%);
+  font-size: 10px; font-variant-numeric: tabular-nums; white-space: nowrap;
+}
+.burn-ticks span:first-child { transform: none; }
+.burn-ticks span:last-child { transform: translateX(-100%); }
+
+/* Enlarged chart view. Above every other layer in the app (the highest is 20) because it is modal:
+   nothing may paint over it while it is open. */
+.chart-modal-backdrop {
+  position: fixed; inset: 0; z-index: 50;
+  background: rgba(0, 0, 0, 0.6);
+  display: flex; align-items: center; justify-content: center; padding: 24px;
+}
+.chart-modal { position: relative; width: min(1100px, 100%); max-height: 100%; overflow: auto; }
+.chart-modal > .card { margin: 0; }
+.chart-modal-close {
+  position: absolute; top: 10px; right: 10px;
+  background: none; border: none; color: var(--muted); font-size: 14px; line-height: 1; cursor: pointer;
+  padding: 4px 6px; border-radius: 4px;
+}
+.chart-modal-close:hover { color: var(--text); background: var(--tag); }
+/* The enlarged body is capped by viewport height rather than given a fixed size: the point is to use
+   whatever room the reader's screen has, and a chart taller than the screen is not more readable.
+   A definite height is what Recharts' ResponsiveContainer needs — the heatmap is plain CSS with its
+   own cell size, so it takes the height its content asks for instead of floating in a tall box. */
+.chart-body-lg { height: min(70vh, 720px); }
+.chart-body-lg:has(.burn) { height: auto; }
+.card-expand { background: none; border: none; color: var(--muted); font-size: 12px; line-height: 1; cursor: pointer; padding: 2px 4px; border-radius: 4px; }
+.card-expand:hover { color: var(--accent); background: var(--tag); }
+/* Placeholder left in the grid while the chart is in the dialog — the card keeps its height so the
+   grid behind the backdrop does not reflow, and reflow again on close. */
+.chart-moved { display: flex; align-items: center; justify-content: center; height: 100%; color: var(--muted); font-size: 12px; }
 
 /* "How to read this" disclosure in a chart card header. A panel rather than a hover tooltip: the
    content is multi-sentence reference text, hover does not exist on touch, and it has to stay open

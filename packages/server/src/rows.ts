@@ -306,6 +306,13 @@ export interface BurnHourRow {
   work: number | null;
 }
 
+/** Turns started in one UTC hour, for one source. */
+export interface TurnHourRow {
+  h: string | null;
+  src: string | null;
+  turns: number | null;
+}
+
 /** Prompt-to-first-token percentiles for one (bucket, model) pair. */
 export interface LatencyRow {
   b: string | null;
