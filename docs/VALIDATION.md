@@ -151,7 +151,11 @@ hand-computed expecteds. Three things to be aware of:
 
 Observation (by design, not a bug): the "turns" KPI sums `turn_count` over all
 sessions including subagents (889 main + 506 subagent turns); category/complexity
-breakdowns intentionally cover main sessions only.
+breakdowns intentionally cover main sessions only. **Under a model filter the KPI
+counts turn rows instead** — the denormalized column is session-grain and would
+report an admitted session's turns by every model, disagreeing with "Activity over
+time" ([ADR-035](decisions/ADR-035-dashboard-model-filter.md)). Invariant [6] is
+what makes the two interchangeable when nothing is filtered.
 
 ## Guarantees & guardrails on the corpus
 
