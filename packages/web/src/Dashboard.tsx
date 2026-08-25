@@ -1,4 +1,6 @@
-import { api, type DashOverview, type DashTimeseries, type DashBreakdowns, type DashTime, type SecuritySummary, type Source } from "./api";
+import { api, SNAPSHOT, type DashOverview, type DashTimeseries, type DashBreakdowns, type DashTime, type SecuritySummary, type Source } from "./api";
+import { MultiSelect } from "./MultiSelect";
+import { shortModel } from "./format";
 import { useAsync, useLookup } from "./useFetch";
 import { useQueryState } from "./useQueryState";
 import { ErrorAlert, Loading } from "./AsyncBoundary";
@@ -22,6 +24,7 @@ const NOT_LOADED: [DashOverview | null, DashTimeseries | null, DashBreakdowns | 
 export default function Dashboard() {
   const { get, set: setParam, pick } = useQueryState();
   const sources = useLookup<Source[]>("/sources", []);
+  const models = useLookup<string[]>("/models", []);
   // Security summary is global (not source/date filtered), so fetch it once on mount like sources.
   const security = useLookup<SecuritySummary | null>("/security/summary", null);
   const expand = useExpanded();
@@ -31,7 +34,13 @@ export default function Dashboard() {
   const hiddenCharts = new Set(body.charts.hidden);
 
   // The three range-filtered payloads load as one unit: a partial dashboard would mix ranges.
-  const qs = pick(["source", "from", "to", "bucket"]);
+  // An absent `models` param means every model, which is NOT the same query as listing them all:
+  // `<synthetic>` is not an option, so an explicit list drops the sessions that only ever replied
+  // without an API call, along with every row whose model is unknown (ADR-035). So the param is
+  // written only while the selection is a genuine narrowing, and read back as "all" when absent.
+  const pickedModels = get("models").split(",").filter(Boolean);
+  const selectedModels = pickedModels.length ? pickedModels : models;
+  const qs = pick(["source", "from", "to", "bucket", "models"]);
   const s = qs.toString() ? "?" + qs.toString() : "";
   const { data: dash, loading, error } = useAsync(
     () =>
@@ -66,6 +75,15 @@ export default function Dashboard() {
             </option>
           ))}
         </select>
+        <MultiSelect
+          label="Models"
+          options={models.map((m) => ({ value: m, label: shortModel(m) }))}
+          selected={selectedModels}
+          onChange={(next) => setParam({ models: next.length === models.length ? "" : next.join(",") })}
+          reset={{ label: "select all", to: models }}
+          disabled={SNAPSHOT}
+          title={SNAPSHOT ? "The exported demo serves one pre-computed view, so filters do not apply to it." : undefined}
+        />
         <label className="ctl">
           from <input type="date" value={get("from")} onChange={(e) => setParam({ from: e.target.value })} />
         </label>

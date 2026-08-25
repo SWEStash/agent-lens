@@ -5,6 +5,7 @@ import { useFetch, useLookup } from "./useFetch";
 import { useQueryState } from "./useQueryState";
 import { ErrorAlert, Loading } from "./AsyncBoundary";
 import { useDetailsAutoClose } from "./useOutsideClick";
+import { MultiSelect } from "./MultiSelect";
 import { costTitle, fmtCost, fmtDate, fmtDuration, fmtTokens, shortModel, tokenSplitTitle } from "./format";
 import { FilterSelect } from "./FilterSelect";
 import { Pager } from "./Pager";
@@ -179,49 +180,6 @@ const ERROR_TYPE_OPTIONS: Array<{ value: string; label: string }> = [
   { value: "guardrail-blocked", label: "guardrail blocked" },
 ];
 
-/** A labeled multi-select filter: a <details> dropdown of checkboxes. Value is the selected `value`s;
- * empty = no filter. Mirrors the column-customizer dropdown (shares the `.col-menu` panel styles). */
-function MultiSelect({
-  label,
-  options,
-  selected,
-  onChange,
-}: {
-  label: string;
-  options: Array<{ value: string; label: string }>;
-  selected: string[];
-  onChange: (next: string[]) => void;
-}) {
-  function toggle(value: string, on: boolean) {
-    const set = new Set(selected);
-    if (on) set.add(value);
-    else set.delete(value);
-    // Preserve the option order so URL state is stable regardless of click order.
-    onChange(options.map((o) => o.value).filter((v) => set.has(v)));
-  }
-  const ref = useDetailsAutoClose();
-  return (
-    <details className="multi-select" ref={ref}>
-      <summary aria-label={label}>
-        {label}
-        {selected.length ? ` (${selected.length})` : ""} ▾
-      </summary>
-      <div className="col-menu" role="group" aria-label={label}>
-        {options.map((o) => (
-          <label key={o.value}>
-            <input type="checkbox" checked={selected.includes(o.value)} onChange={(e) => toggle(o.value, e.target.checked)} />
-            {o.label}
-          </label>
-        ))}
-        {selected.length > 0 && (
-          <button type="button" className="ghost small ms-clear" onClick={() => onChange([])}>
-            clear
-          </button>
-        )}
-      </div>
-    </details>
-  );
-}
 
 /** Compact gear control that lives in the last header cell of the table; opens a checkbox menu to
  * show/hide the toggleable columns. Uses a native <details> so open/close and keyboard/focus behaviour
