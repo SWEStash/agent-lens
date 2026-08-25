@@ -135,13 +135,13 @@ export function listProjects(db: DB): Project[] {
 }
 
 export function listModels(db: DB): string[] {
-  // `<synthetic>` is Claude Code's marker for a reply generated without an API call, not a model:
-  // it carries usage rows but exactly 0 work tokens, so offering it as a filter option would add a
-  // choice that changes no total. modelLatency excludes it from its own query for the same reason.
-  return queryAll<ModelRow>(
-    db,
-    `SELECT DISTINCT model FROM token_usage WHERE model IS NOT NULL AND model IS NOT '<synthetic>' ORDER BY model`,
-  ).map((r) => r.model);
+  // Every distinct model, `<synthetic>` included. It is not a model — it marks a reply generated
+  // without an API call — but it IS a value the sessions list can usefully filter on, and 2,094
+  // sessions carry it. The dashboard's model filter drops it from its own options instead
+  // (ADR-035), which is where that judgement belongs.
+  return queryAll<ModelRow>(db, `SELECT DISTINCT model FROM token_usage WHERE model IS NOT NULL ORDER BY model`).map(
+    (r) => r.model,
+  );
 }
 
 /**

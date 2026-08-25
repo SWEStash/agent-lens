@@ -24,7 +24,10 @@ const NOT_LOADED: [DashOverview | null, DashTimeseries | null, DashBreakdowns | 
 export default function Dashboard() {
   const { get, set: setParam, pick } = useQueryState();
   const sources = useLookup<Source[]>("/sources", []);
-  const models = useLookup<string[]>("/models", []);
+  // `<synthetic>` marks replies generated without an API call. It carries 0 work tokens, so as a
+  // dashboard filter it would be a choice that changes no total — dropped here rather than from
+  // /api/models, which the sessions list filters on for real (ADR-035).
+  const models = useLookup<string[]>("/models", []).filter((m) => m !== "<synthetic>");
   // Security summary is global (not source/date filtered), so fetch it once on mount like sources.
   const security = useLookup<SecuritySummary | null>("/security/summary", null);
   const expand = useExpanded();

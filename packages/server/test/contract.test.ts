@@ -17,7 +17,7 @@
 import { describe, it, expect } from "vitest";
 import type { DatabaseSync } from "node:sqlite";
 import { resolvePricing } from "@agent-lens/core";
-import { addSession, appFor, freshDb, seedBasic } from "./helpers/seed";
+import { addEvent, addSession, addTokens, appFor, freshDb, seedBasic } from "./helpers/seed";
 
 /** Exact-key assertion. Sorted so the failure message reads as a set diff, not an ordering complaint. */
 function expectKeys(actual: unknown, expected: string[], what: string) {
@@ -149,6 +149,19 @@ describe("response contracts — populated DB", () => {
     const app = await appFor(seedBasic());
     const body = (await app.inject({ method: "GET", url: "/api/models" })).json();
     expect(body).toEqual(["claude-opus-4-8"]);
+    await app.close();
+  });
+
+  it("GET /api/models keeps <synthetic>, which the sessions list filters on", async () => {
+    // It is not a model, and the dashboard's model filter drops it from its own options — but 2,094
+    // sessions carry it, so removing it from the endpoint would silently delete a working filter
+    // from a different surface. That regression shipped once; this is the guard.
+    const db = seedBasic();
+    addSession(db, "synthetic-only", { startedAt: "2026-01-03T00:00:00Z" });
+    addEvent(db, "synthetic-only", "syn-ev", { timestamp: "2026-01-03T00:00:01Z" });
+    addTokens(db, "syn-ev", "synthetic-only", "<synthetic>", { input: 5, output: 5 });
+    const app = await appFor(db);
+    expect((await app.inject({ method: "GET", url: "/api/models" })).json()).toContain("<synthetic>");
     await app.close();
   });
 

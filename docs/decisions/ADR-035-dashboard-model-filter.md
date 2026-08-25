@@ -84,7 +84,10 @@ question about a different set of rows while looking authoritative.
   the token charts a great deal and that tile almost not at all.
 - **`DashOverview.range` gains `models: string[] | null`**, where null means no filter was applied —
   which is not the same as every model being listed.
-- **`/api/models` no longer returns `<synthetic>`**, by decision 3.
+- **The `<synthetic>` exclusion is the dashboard's, not the endpoint's.** `/api/models` still returns
+  it, because the sessions list filters on it for real — 2,094 sessions carry it. Dropping it from the
+  shared endpoint removed a working filter from an unrelated surface; it is now filtered out where
+  the options for *this* control are built, and a contract test guards the endpoint.
 - **The static snapshot cannot honour it.** `resolveUrl` drops the query string and maps each
   endpoint to one pre-computed file, so the control is disabled there. Source and date range have
   always had this defect silently; this makes it visible for one filter rather than fixing it for all.
