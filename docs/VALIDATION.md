@@ -47,7 +47,8 @@ pnpm sandbox                                # Layer 5 end-to-end over the corpus
   - `server/test/dashboard.test.ts` — every dashboard aggregate (token split,
     `total_tokens`, `cache_read_ratio`, cost, `unpriced_models`, p50/p95 turn
     duration, per-model/source/category breakdowns, subagent fan-out, source
-    filter) with hand-computed numbers.
+    filter, the model filter at each aggregate's own grain, and the four audit
+    aggregates) with hand-computed numbers.
   - `ingest/test/classify.test.ts` — complexity sub-scores + weighted total
     (zero, all-ceilings → 100.0, exact half-ceilings), LoC parsing, category
     keywords + structural signals + subagent-role override.
@@ -60,7 +61,8 @@ pnpm sandbox                                # Layer 5 end-to-end over the corpus
   - `web/test/*.test.ts(x)` — the SPA's pure transcript logic (shell/diff/parse/
     tree/timeline scale) and its hooks and components (`useFetch`, `useQueryState`,
     `useOutsideClick`, `FilterSelect`, `AgentRow`, and the session view's
-    deep-link, search, time-range and keyboard behaviour).
+    deep-link, search, time-range and keyboard behaviour), plus the chart
+    registries' visibility gates and every card's how-to-read panel.
     `packages/web/vitest.config.ts`
     defines the web project (jsdom, source resolved by vite); the root config
     references it, so a package-local run and the repo-wide run execute the same

@@ -65,10 +65,14 @@ export function metricValue(e: EventNode, metric: TokenMetric): number {
  * input + cache-write + cache-read on the usage row. Output is deliberately absent — it is what came
  * back, not what was carried in.
  *
- * Purely descriptive, and it must stay that way. Efficiency against context occupancy was measured on
- * the corpus and is U-shaped, not monotonic: the agent gets *better* as context fills, best somewhere
- * around 200-350k, and only falls off past ~350k. A "context filling up" warning would therefore be
- * backwards over most of the range. Turn depth is the variable that degrades; prompt size is not.
+ * Purely descriptive, and it must stay that way — the line has no threshold, no warning colour and no
+ * "start a fresh session" prompt, and that is a decision rather than an omission.
+ *
+ * The obvious gauge would flag a filling context as a problem. The only measure available for testing
+ * that was work tokens per line of churn, which is disqualified on its own terms (it scores a surgical
+ * fix as the worst outcome), and even under it the relationship was U-shaped rather than monotonic —
+ * so the warning would have been backwards over most of its range even by its own broken yardstick.
+ * Two independent reasons not to ship it; neither licenses the inverse claim either.
  */
 export function contextTokens(e: EventNode): number {
   return e.usage ? e.usage.input + e.usage.cache_creation + e.usage.cache_read : 0;

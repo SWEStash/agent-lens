@@ -112,7 +112,10 @@ agent-lens-ingest: files=312 skipped=298 new_events=1840 malformed=0
   button runs collect+ingest on the host on demand (loopback-only, CSRF-guarded; ADR-015).
 - **Analytics dashboards** — tokens / cost / activity over time (adaptive day/week/month bucketing)
   and breakdowns by model, task category, complexity, tool, skill, and subagent type, filterable by
-  source, date range, and model.
+  source, date range, and model — plus **audit tiles** on how the work went: file-edit failures per
+  model, plans and questions you sent back, repeat edits per file, and findings over time. Reported
+  as observables, never scored: there is no defensible efficiency measure here and the tool does not
+  invent one ([ADR-036](docs/decisions/ADR-036-dashboard-audit-endpoint.md)).
 - **Heuristic classification** — deterministic, **no-AI** task category + complexity per session,
   with every input signal stored for transparency.
 - **Security findings** — deterministic, **no-AI** rules flag risky operations the agent performed
@@ -147,9 +150,10 @@ generated from the same committed corpus by `node scripts/screenshots.mjs` — f
 **Dashboard** — token breakdown, estimated cost, cache-read ratio, and breakdowns by model, category,
 complexity, tool, skill, and subagent fan-out — plus **time analytics**: a weekday × hour heatmap of
 when the work actually happens (in your own timezone), burn kept separate per source, model response
-latency, and how fast turns that wrote files were answered:
+latency, and how fast turns that wrote files were answered — and **audit tiles**: edit failures per
+model, plans and questions sent back, repeat edits per file, and findings over time:
 
-![Agent Lens dashboard showing KPI cards (token breakdown, estimated cost, cache-read ratio, total tokens), tokens/cost/activity-over-time charts, breakdown charts by model, task category, complexity band, tool frequency, skill activation and subagent fan-out, and time-analytics tiles: a weekday-by-hour work heatmap, burn per source, model response latency, and turnaround after a turn](docs/img/dashboard.png)
+![Agent Lens dashboard showing KPI cards (token breakdown, estimated cost, cache-read ratio, total tokens), tokens/cost/activity-over-time charts, breakdown charts by model, task category, complexity band, tool frequency, skill activation and subagent fan-out, time-analytics tiles (a weekday-by-hour work heatmap, burn per source, model response latency, turnaround after a turn) and audit tiles (edit failures by model, plans and questions sent back, repeat edits per file, findings over time)](docs/img/dashboard.png)
 
 **Session transcript** — turn-segmented, with purpose-built rendering per tool. Here, `Bash` as a
 shell console: a `$` prompt per logical command (a heredoc's body correctly left unprefixed), the

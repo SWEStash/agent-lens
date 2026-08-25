@@ -339,6 +339,11 @@ corpus by `node scripts/screenshots.mjs`.
     order of magnitude larger than the rest and would flatten every message to the same size.
   - **Colour** is the message type, and the rail beneath the baseline marks the audit-worthy events:
     failed tool calls, security findings, file changes, and subagent spawns.
+  - **A line over the bars** is **context occupancy** — how full the prompt was at each message
+    (input + cache-write + cache-read), with the session's own peak named in the legend. Shape only:
+    a fuller context is not a worse one. Nothing here warns you to start fresh: what little the data
+    supports points away from prompt size as the thing that goes wrong, and Agent Lens does not
+    claim an efficiency measure it cannot defend.
   - **Hover** a mark to see which message it is — turn, type, time, size and any flags on it. The
     marks are only a few pixels wide, so the hover target is much larger than the mark itself.
   - **Click** a mark to jump to that message (its turn expands and the message is highlighted, the
@@ -390,7 +395,10 @@ successful `Edit`/`Write` tool call in the archive. Answers the inverse of the t
   expanded to the specific turns, each **deep-linking to the exact Edit/Write call in the
   transcript** (scrolled to and highlighted).
 - See a **"files changed" roll-up** on each session page (header, collapsible) — per-file change
-  counts and line deltas, each linking to the file's history.
+  counts and line deltas, each linking to the file's history. When a session kept returning to the
+  same file (seven touches or more) the roll-up names those files and how many times each was
+  touched. It is a count and a list, not a verdict: rework was measured against session cost in both
+  directions and the relationship is flat.
 
 > **Honest limits:** the index is built from Edit/Write tool calls only. Changes made via shell
 > commands (`sed`, redirects), by you in an editor, by formatters, or on other machines are **not
@@ -438,7 +446,9 @@ range, and models):
     Colour is a **continuous gradient**, not a set of bands, and it runs out of the empty cell's own
     colour — so a barely-used hour is barely coloured rather than jumping to a first band that has to
     be visible. That does mean a near-zero cell is close to invisible, deliberately; hover any cell
-    for its exact figure, and the strip under the grid maps colour to number. Uniquely among the
+    for its exact figure **and how many days it rests on** ("on 1 of 14 Sundays") — an average over
+    one observed day and one over twelve read identically without it — and the strip under the grid
+    maps colour to number. Uniquely among the
     charts it buckets by **when the work happened** — the usage event's own timestamp, or the turn's
     start — not the session's start: a session a human sat through runs mostly idle and often spans
     hours, so session-start bucketing would drop a whole day's spend into the hour it began. It
@@ -467,6 +477,32 @@ range, and models):
   **Timezone:** hour-of-day and weekday are *local*, resolved from your browser and named on each
   tile. The server computes and returns UTC; the browser localizes, so an exported snapshot reads
   correctly in every viewer's zone and across daylight-saving changes.
+- **Audit tiles** — *how the work went*. Four more tiles behind one endpoint, fetched and skipped on
+  visibility exactly like the time analytics. None of them is an efficiency measure: there is no
+  defensible one here, and the two obvious framings — tokens per line of churn, and a composite
+  score over errors and rework — were tested against the corpus and rejected, the first as
+  sign-inverted and the second as flat. See [ADR-036](decisions/ADR-036-dashboard-audit-endpoint.md).
+
+  - ***Edit failures by model*** — the share of a model's `Edit`/`Write`/`NotebookEdit` calls that
+    came back as errors. A failed edit usually means the model got the file's existing contents
+    wrong, so this is a capability signal rather than a speed one. Ranked by call volume rather than
+    by failure rate, because rate-ranking promotes whichever model made nine calls; the sample size
+    is in every tooltip. **Confounded by era and task mix** — read it inside a date range, not as a
+    standing leaderboard.
+  - ***Plans & questions sent back*** — the share of `ExitPlanMode` and `AskUserQuestion` calls you
+    rejected, per bucket, **main sessions only**. Alignment measured before the work happens rather
+    than after. This is **not** the rejection-rate KPI, which counts every rejected or blocked tool
+    call over a far larger denominator; a bucket containing none of that kind plots as a gap rather
+    than as a flawless 0%.
+  - ***Repeat edits per file*** — (session, file) pairs banded by how many times that session touched
+    that file, with the edits each band accounts for beside it. The two series disagree on purpose:
+    most pairs sit in the left band while a large share of all edits lands in the right ones. A count
+    and a list, never a score.
+  - ***Findings over time*** — detector findings per bucket, stacked by severity. The dashboard's
+    only security chart, because a trend is the one thing the **Security** page (`/security`) cannot show;
+    individual findings, their evidence and their mute state still live there. Uniquely it is dated
+    by **the finding's own moment** rather than by its session's start — a long session can raise one
+    hours after it began.
 - **Reading a chart** — every card carries an **ⓘ** beside its title. It opens a short panel saying
   what the axes are in, how the number is computed, and the caveats that decide whether a reading is
   fair — which population it counts, what a heuristic label is worth, where a tail is contaminated.
