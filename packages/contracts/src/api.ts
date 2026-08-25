@@ -656,7 +656,9 @@ export interface WorkflowDetail {
 // ---- Dashboard aggregates -----------------------------------------------
 
 export interface DashOverview {
-  range: { from: string | null; to: string | null; source: string | null };
+  /** The filters this payload was computed under. `models` is null when no model filter was
+   *  applied — which is not the same as every model being listed (see ADR-035). */
+  range: { from: string | null; to: string | null; source: string | null; models: string[] | null };
   sessions: number;
   sessions_main: number;
   sessions_subagent: number;

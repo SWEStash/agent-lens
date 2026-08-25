@@ -317,3 +317,127 @@ describe("dashboardTime", () => {
     expect(dashboardTime(seedTime(), { source: "personal" }).burn_hours).toEqual([]);
   });
 });
+
+/**
+ * A corpus where model varies WITHIN a session, which is the whole difficulty of a model filter:
+ * `sessions` has no model column, so each aggregate has to filter at its own grain (ADR-035).
+ *
+ * `mix` spends on opus-5 and haiku and also carries a turn whose model is unknown; `solo` is
+ * fable-5 only. Tool calls hang off events so the events.model grain is exercised.
+ */
+function seedModels(): DatabaseSync {
+  const db = new DatabaseSync(":memory:");
+  db.exec(SCHEMA_SQL);
+  db.exec("PRAGMA foreign_keys = OFF");
+  db.exec(`
+    INSERT INTO sessions (id, agent_id, source_id, is_sidechain, started_at, turn_count) VALUES
+      ('mix','claude-code','isf',0,'2026-04-01T10:00:00Z',3),
+      ('solo','claude-code','isf',0,'2026-04-01T12:00:00Z',1),
+      ('synth','claude-code','isf',0,'2026-04-01T14:00:00Z',0);
+    INSERT INTO events (uuid, session_id, turn_id, type, role, timestamp, model, raw_json) VALUES
+      ('eo','mix','mix:0','assistant','assistant','2026-04-01T10:00:10Z','claude-opus-5',x''),
+      ('eh','mix','mix:1','assistant','assistant','2026-04-01T10:05:10Z','claude-haiku-4-5-20251001',x''),
+      ('ef','solo','solo:0','assistant','assistant','2026-04-01T12:00:10Z','claude-fable-5',x''),
+      ('es','synth',NULL,'assistant','assistant','2026-04-01T14:00:10Z','<synthetic>',x'');
+    INSERT INTO token_usage (event_uuid, session_id, model, input_tokens, output_tokens, cache_creation_input_tokens, cache_read_input_tokens) VALUES
+      ('eo','mix','claude-opus-5',100,10,0,0),
+      ('eh','mix','claude-haiku-4-5-20251001',7,3,0,0),
+      ('ef','solo','claude-fable-5',50,50,0,0),
+      ('es','synth','<synthetic>',0,0,0,0);
+    INSERT INTO turns (id, session_id, seq, model, started_at, ended_at, duration_ms) VALUES
+      ('mix:0','mix',0,'claude-opus-5','2026-04-01T10:00:00Z','2026-04-01T10:01:00Z',60000),
+      ('mix:1','mix',1,'claude-haiku-4-5-20251001','2026-04-01T10:05:00Z','2026-04-01T10:06:00Z',60000),
+      ('mix:2','mix',2,NULL,'2026-04-01T10:10:00Z','2026-04-01T10:11:00Z',60000),
+      ('solo:0','solo',0,'claude-fable-5','2026-04-01T12:00:00Z','2026-04-01T12:01:00Z',60000);
+    INSERT INTO tool_calls (id, event_uuid, session_id, turn_id, tool_name, status) VALUES
+      ('tco','eo','mix','mix:0','Edit','ok'),
+      ('tch','eh','mix','mix:1','Bash','ok'),
+      ('tcf','ef','solo','solo:0','Read','ok');
+    INSERT INTO workflow_results (run_id, source_id, status, total_tokens, duration_ms, started_at) VALUES
+      ('wf1','isf','completed',1000,2000,'2026-04-01T10:00:00Z');
+  `);
+  return db;
+}
+
+const OPUS = "claude-opus-5";
+
+describe("model filter", () => {
+  it("changes nothing at all when no model is selected", () => {
+    // The property the whole design rests on: an empty selection emits no predicate, rather than
+    // `IN (every model)` — which would drop null-model rows and any model ingested later.
+    const none = dashboardOverview(seedModels(), {});
+    const empty = dashboardOverview(seedModels(), { models: [] });
+    expect(empty).toEqual(none);
+    expect(dashboardBreakdowns(seedModels(), { models: [] })).toEqual(dashboardBreakdowns(seedModels(), {}));
+    expect(dashboardTime(seedModels(), { models: [] })).toEqual(dashboardTime(seedModels(), {}));
+  });
+
+  it("counts a session that only ever replied synthetically until a real model is picked", () => {
+    // Why the client must OMIT the parameter rather than send every model: `<synthetic>` is not a
+    // model and is not offered as an option, so "everything ticked" silently excludes the sessions
+    // that never called one. On the real corpus that is 1,880 sessions. Unfiltered must still see it.
+    expect(dashboardOverview(seedModels(), {}).sessions).toBe(3);
+    const everyRealModel = [OPUS, "claude-haiku-4-5-20251001", "claude-fable-5"];
+    expect(dashboardOverview(seedModels(), { models: everyRealModel }).sessions).toBe(2);
+  });
+
+  it("filters spend at the token_usage grain, not by session", () => {
+    // `mix` spent on both models; only its opus rows may survive.
+    const o = dashboardOverview(seedModels(), { models: [OPUS] });
+    expect(o.total_tokens).toBe(110);
+    expect(o.tokens.input).toBe(100);
+    const bd = dashboardBreakdowns(seedModels(), { models: [OPUS] });
+    expect(bd.by_model.map((m) => m.model)).toEqual([OPUS]);
+  });
+
+  it("filters turns at the turns grain", () => {
+    const ts = dashboardTimeseries(seedModels(), { models: [OPUS] });
+    expect(ts.series.reduce((n, p) => n + p.turns, 0)).toBe(1);
+    const t = dashboardTime(seedModels(), { models: [OPUS] });
+    expect(t.turn_hours.reduce((n, r) => n + r.turns, 0)).toBe(1);
+  });
+
+  it("filters tool calls through the event that issued them, since tool_calls has no model", () => {
+    const o = dashboardOverview(seedModels(), { models: [OPUS] });
+    expect(o.tool_calls).toBe(1); // tco only — tch is haiku, tcf is a different session
+    const bd = dashboardBreakdowns(seedModels(), { models: [OPUS] });
+    expect(bd.tools.map((t) => t.name)).toEqual(["Edit"]);
+  });
+
+  it("keeps session-grain aggregates on sessions that used a selected model", () => {
+    const o = dashboardOverview(seedModels(), { models: [OPUS] });
+    expect(o.sessions).toBe(1); // mix used opus; solo never did
+    expect(dashboardBreakdowns(seedModels(), { models: [OPUS] }).by_source[0].sessions).toBe(1);
+  });
+
+  it("drops turns whose model is unknown, but only when a model is actually selected", () => {
+    // An unattributable row cannot answer "was this opus-5". Unfiltered, mix:2 still counts.
+    const all = dashboardTimeseries(seedModels(), {});
+    expect(all.series.reduce((n, p) => n + p.turns, 0)).toBe(4);
+    const some = dashboardTimeseries(seedModels(), { models: [OPUS, "claude-haiku-4-5-20251001"] });
+    expect(some.series.reduce((n, p) => n + p.turns, 0)).toBe(2);
+  });
+
+  it("leaves the workflow rollup alone, which has no session to filter through", () => {
+    expect(dashboardOverview(seedModels(), { models: [OPUS] }).workflows.total).toBe(1);
+    expect(dashboardOverview(seedModels(), { models: ["claude-sonnet-5"] }).workflows.total).toBe(1);
+  });
+
+  it("measures review turnaround across every turn of an admitted session, not just its selected ones", () => {
+    // reviewLatency's LEAD() reads "the next turn" from the surviving rows, so narrowing it to one
+    // model would stitch together turns that were never adjacent. mix has three turns and therefore
+    // two turnarounds, whichever model is picked; filtering per turn would leave the single opus
+    // turn with no successor and report none.
+    const turnarounds = (f: Parameters<typeof dashboardTime>[1]) => {
+      const r = dashboardTime(seedModels(), f).review;
+      return r.wrote.n + r.none.n;
+    };
+    expect(turnarounds({})).toBe(2);
+    expect(turnarounds({ models: [OPUS] })).toBe(2);
+  });
+
+  it("echoes the selection so a reader can tell a filtered payload from an unfiltered one", () => {
+    expect(dashboardOverview(seedModels(), { models: [OPUS] }).range.models).toEqual([OPUS]);
+    expect(dashboardOverview(seedModels(), {}).range.models).toBeNull();
+  });
+});

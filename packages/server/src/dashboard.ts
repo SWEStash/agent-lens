@@ -29,10 +29,13 @@ export interface DashFilters {
   source?: string;
   from?: string;
   to?: string;
+  /** Included models. Absent or empty means NO model predicate at all (see sessionWhere) — not
+   *  "IN (every model)", which would drop null-model rows and any model ingested later. */
+  models?: string[];
 }
 
 /** A WHERE-clause fragment and its bound parameters, threaded through every aggregate below. */
-type Where = { sql: string; params: unknown[] };
+type Where = { sql: string; params: unknown[]; models?: string[] };
 
 /** WHERE clause + params over the `sessions` alias `s` (started_at / source_id). */
 function sessionWhere(f: DashFilters): Where {
@@ -42,8 +45,43 @@ function sessionWhere(f: DashFilters): Where {
   // Date-inclusive on both ends (compare the DATE part) so a picked `to` day includes that day's
   // events — a plain `started_at <= '2026-07-14'` would drop everything after 2026-07-14T00:00.
   pushDateRange(where, params, "s.started_at", f.from, f.to);
-  return { sql: where.length ? `WHERE ${where.join(" AND ")}` : "", params };
+  // `sessions` has no model column, so a model filter reaches session-grain aggregates only as
+  // "sessions that used at least one selected model". A correlated EXISTS is the cheap form here —
+  // token_usage is indexed by session_id, so this measures 15ms on a 1GB corpus (the materialized
+  // set reviewLatency needs is for file_changes.turn_id, which has no index).
+  const models = f.models?.length ? f.models : undefined;
+  if (models) {
+    where.push(`EXISTS (SELECT 1 FROM token_usage t WHERE t.session_id = s.id AND t.model IN (${placeholders(models)}))`);
+    params.push(...models);
+  }
+  return { sql: where.length ? `WHERE ${where.join(" AND ")}` : "", params, models };
 }
+
+const placeholders = (xs: unknown[]) => xs.map(() => "?").join(",");
+
+/** Append one more predicate to a session WHERE, keeping bound params in positional order. */
+const and = (w: Where, sql: string, params: unknown[] = []): Where => ({
+  sql: `${andWhere(w)} ${sql}`,
+  params: [...w.params, ...params],
+  models: w.models,
+});
+
+/**
+ * Narrow an aggregate to the selected models at ITS OWN grain — token_usage.model, turns.model or
+ * events.model — because a session routinely uses several and the session-level restriction above
+ * only says the session touched one of them.
+ *
+ * Rows whose model is NULL are dropped, deliberately: an unattributable row cannot answer "was this
+ * opus-5". Note that this is an `IN` list, so the drop is silent — unlike the `IS NOT '<synthetic>'`
+ * comparison in modelLatency, where the silent drop WOULD have been the bug. With no selection the
+ * predicate is absent entirely, so the default keeps every null-model row.
+ */
+const withModel = (w: Where, col: string): Where =>
+  w.models ? and(w, `${col} IN (${placeholders(w.models)})`, w.models) : w;
+
+/** A tool call carries no model of its own; its event does, on every row of the real corpus. Joined
+ *  only when a model is actually selected, so the unfiltered query plan is untouched. */
+const toolModelJoin = (w: Where) => (w.models ? "JOIN events e ON e.uuid = tc.event_uuid" : "");
 
 /** Extend a session WHERE clause with one more condition, opening the clause when it is empty. */
 const andWhere = (w: Where) => (w.sql ? w.sql + " AND" : "WHERE");
@@ -54,7 +92,7 @@ const andWhere = (w: Where) => (w.sql ? w.sql + " AND" : "WHERE");
  * sequence — so anything measuring human behaviour or session shape counts main sessions only.
  * Spend metrics deliberately do NOT use this: a subagent's tokens are real tokens.
  */
-const mainOnly = (w: Where): Where => ({ sql: `${andWhere(w)} s.is_sidechain = 0`, params: w.params });
+const mainOnly = (w: Where): Where => ({ sql: `${andWhere(w)} s.is_sidechain = 0`, params: w.params, models: w.models });
 
 interface Split {
   input: number;
@@ -119,6 +157,10 @@ function workflowWhere(f: DashFilters): Where {
  * (completed vs failed; in-flight `running` excluded from the denominator), and token/duration rollups.
  * Guarded so a pre-v9 DB (no `workflow_results` table) returns an all-zero shape instead of throwing. */
 function workflowAgg(db: DB, f: DashFilters): DashOverview["workflows"] {
+  // Deliberately NOT model-filtered. workflow_results has no session join to carry the restriction,
+  // and its only model column is `default_model` — the run's default, not what actually spent the
+  // tokens — so filtering on it would answer a question the data cannot. These KPIs therefore stay
+  // put while every other tile narrows; the guide says so.
   const empty = { total: 0, by_status: [], completed: 0, failed: 0, success_rate: 0, total_tokens: 0, avg_duration_ms: 0 };
   if (!tableExists(db, "workflow_results")) return empty;
   const ww = workflowWhere(f);
@@ -168,20 +210,22 @@ export function dashboardOverview(db: DB, f: DashFilters): DashOverview {
     ...w.params,
   )!;
 
+  const tw = withModel(w, "e.model");
   const toolCount = queryGet<CountRow>(
     db,
-    `SELECT COUNT(*) n FROM tool_calls tc JOIN sessions s ON s.id = tc.session_id ${w.sql}`,
-    ...w.params,
+    `SELECT COUNT(*) n FROM tool_calls tc ${toolModelJoin(w)} JOIN sessions s ON s.id = tc.session_id ${tw.sql}`,
+    ...tw.params,
   )!.n;
 
   // Per-model usage → token split + cache-aware cost; track unpriced models honestly.
+  const uw = withModel(w, "t.model");
   const usage = queryAll<UsageAggRow>(
     db,
     `SELECT t.model model, SUM(t.input_tokens) i, SUM(t.output_tokens) o,
             SUM(t.cache_creation_input_tokens) cw, SUM(t.cache_read_input_tokens) cr
-     FROM token_usage t JOIN sessions s ON s.id = t.session_id ${w.sql}
+     FROM token_usage t JOIN sessions s ON s.id = t.session_id ${uw.sql}
      GROUP BY t.model`,
-    ...w.params,
+    ...uw.params,
   );
   const tokens = zeroSplit();
   let cost = 0;
@@ -194,11 +238,12 @@ export function dashboardOverview(db: DB, f: DashFilters): DashOverview {
   const totalTokens = tokens.input + tokens.output + tokens.cache_creation + tokens.cache_read;
 
   // Turn-duration percentiles (work cadence), excluding null durations.
+  const tnw = withModel(w, "tn.model");
   const turnDur = percentiles(
     db,
     `SELECT tn.duration_ms v FROM turns tn JOIN sessions s ON s.id = tn.session_id
-     ${w.sql ? w.sql + " AND" : "WHERE"} tn.duration_ms IS NOT NULL`,
-    w.params,
+     ${andWhere(tnw)} tn.duration_ms IS NOT NULL`,
+    tnw.params,
   );
 
   // Session-length percentiles over MAIN sessions only (subagents share the parent's wall clock),
@@ -207,7 +252,7 @@ export function dashboardOverview(db: DB, f: DashFilters): DashOverview {
   const sessDur = percentiles(db, `SELECT s.duration_ms v FROM sessions s ${mw.sql} AND s.duration_ms IS NOT NULL`, mw.params);
 
   return {
-    range: { from: f.from ?? null, to: f.to ?? null, source: f.source ?? null },
+    range: { from: f.from ?? null, to: f.to ?? null, source: f.source ?? null, models: f.models?.length ? f.models : null },
     sessions: counts.sessions ?? 0,
     sessions_main: counts.main ?? 0,
     sessions_subagent: counts.subagent ?? 0,
@@ -259,13 +304,16 @@ export function dashboardTimeseries(db: DB, f: DashFilters, bucketParam?: string
     return r;
   };
 
+  const uw = withModel(w, "t.model");
+  const tnw = withModel(w, "tn.model");
+  const ew = withModel(w, "e.model");
   for (const u of queryAll<BucketUsageAggRow>(
     db,
     `SELECT ${expr} b, t.model model, SUM(t.input_tokens) i, SUM(t.output_tokens) o,
             SUM(t.cache_creation_input_tokens) cw, SUM(t.cache_read_input_tokens) cr
      FROM token_usage t JOIN sessions s ON s.id = t.session_id
-     ${w.sql} GROUP BY b, t.model`,
-    ...w.params,
+     ${uw.sql} GROUP BY b, t.model`,
+    ...uw.params,
   )) {
     if (!u.b) continue;
     const r = get(u.b);
@@ -277,8 +325,8 @@ export function dashboardTimeseries(db: DB, f: DashFilters, bucketParam?: string
   }
   for (const t of queryAll<BucketCountRow>(
     db,
-    `SELECT ${expr} b, COUNT(*) n FROM turns tn JOIN sessions s ON s.id = tn.session_id ${w.sql} GROUP BY b`,
-    ...w.params,
+    `SELECT ${expr} b, COUNT(*) n FROM turns tn JOIN sessions s ON s.id = tn.session_id ${tnw.sql} GROUP BY b`,
+    ...tnw.params,
   )) {
     if (t.b) get(t.b).turns = t.n;
   }
@@ -286,9 +334,9 @@ export function dashboardTimeseries(db: DB, f: DashFilters, bucketParam?: string
   // derived from the stored error_type). Bucketed by the session's date, same as every other series.
   for (const e of queryAll<BucketErrorRow>(
     db,
-    `SELECT ${expr} b, tc.error_type et, COUNT(*) n FROM tool_calls tc JOIN sessions s ON s.id = tc.session_id
-     ${w.sql ? w.sql + " AND" : "WHERE"} tc.status = 'error' GROUP BY b, tc.error_type`,
-    ...w.params,
+    `SELECT ${expr} b, tc.error_type et, COUNT(*) n FROM tool_calls tc ${toolModelJoin(w)} JOIN sessions s ON s.id = tc.session_id
+     ${andWhere(ew)} tc.status = 'error' GROUP BY b, tc.error_type`,
+    ...ew.params,
   )) {
     if (!e.b) continue;
     const r = get(e.b);
@@ -302,6 +350,7 @@ export function dashboardTimeseries(db: DB, f: DashFilters, bucketParam?: string
 }
 
 function modelBreakdown(db: DB, w: Where): DashBreakdowns["by_model"] {
+  const uw = withModel(w, "t.model");
   const modelRows = queryAll<ModelBreakdownRow>(
     db,
     // COALESCE the bucket label, exactly as by_source does for a null source_id: token_usage.model is
@@ -310,9 +359,9 @@ function modelBreakdown(db: DB, w: Where): DashBreakdowns["by_model"] {
     `SELECT COALESCE(t.model, '(unknown)') model, SUM(t.input_tokens) i, SUM(t.output_tokens) o,
             SUM(t.cache_creation_input_tokens) cw, SUM(t.cache_read_input_tokens) cr,
             COUNT(DISTINCT t.session_id) sessions
-     FROM token_usage t JOIN sessions s ON s.id = t.session_id ${w.sql}
+     FROM token_usage t JOIN sessions s ON s.id = t.session_id ${uw.sql}
      GROUP BY t.model ORDER BY (SUM(t.input_tokens)+SUM(t.output_tokens)+SUM(t.cache_creation_input_tokens)+SUM(t.cache_read_input_tokens)) DESC`,
-    ...w.params,
+    ...uw.params,
   );
   return modelRows.map((u) => ({
     model: u.model,
@@ -355,11 +404,12 @@ function classificationBreakdowns(db: DB, w: Where): {
 }
 
 function toolBreakdown(db: DB, w: Where): DashBreakdowns["tools"] {
+  const ew = withModel(w, "e.model");
   return queryAll<DashBreakdowns["tools"][number]>(
     db,
-    `SELECT tc.tool_name name, COUNT(*) n FROM tool_calls tc JOIN sessions s ON s.id = tc.session_id
-     ${w.sql} GROUP BY tc.tool_name ORDER BY n DESC LIMIT 20`,
-    ...w.params,
+    `SELECT tc.tool_name name, COUNT(*) n FROM tool_calls tc ${toolModelJoin(w)} JOIN sessions s ON s.id = tc.session_id
+     ${ew.sql} GROUP BY tc.tool_name ORDER BY n DESC LIMIT 20`,
+    ...ew.params,
   );
 }
 
@@ -370,22 +420,24 @@ function skillBreakdowns(db: DB, w: Where): {
   skills: DashBreakdowns["skills"];
   skillVersions: DashBreakdowns["skill_versions"];
 } {
+  const ew = withModel(w, "e.model");
   const skills = queryAll<DashBreakdowns["skills"][number]>(
     db,
-    `SELECT tc.skill_name name, COUNT(*) n FROM tool_calls tc JOIN sessions s ON s.id = tc.session_id
-     ${andWhere(w)} tc.skill_name IS NOT NULL GROUP BY tc.skill_name ORDER BY n DESC LIMIT 20`,
-    ...w.params,
+    `SELECT tc.skill_name name, COUNT(*) n FROM tool_calls tc ${toolModelJoin(w)} JOIN sessions s ON s.id = tc.session_id
+     ${andWhere(ew)} tc.skill_name IS NOT NULL GROUP BY tc.skill_name ORDER BY n DESC LIMIT 20`,
+    ...ew.params,
   );
 
   const skillVersions = queryAll<DashBreakdowns["skill_versions"][number]>(
     db,
     `SELECT tc.skill_name name, sk.id version_id, sk.summary, sk.last_seen, COUNT(*) n
      FROM tool_calls tc
+     ${toolModelJoin(w)}
      JOIN skills sk ON sk.id = tc.skill_id
      JOIN sessions s ON s.id = tc.session_id
-     ${andWhere(w)} tc.skill_id IS NOT NULL
+     ${andWhere(ew)} tc.skill_id IS NOT NULL
      GROUP BY tc.skill_name, sk.id ORDER BY name, n DESC`,
-    ...w.params,
+    ...ew.params,
   );
 
   return { skills, skillVersions };
@@ -393,18 +445,21 @@ function skillBreakdowns(db: DB, w: Where): {
 
 /** Subagent fan-out: spawns by type, plus a per-(main-)session histogram of subagent calls. */
 function subagentFanoutBreakdown(db: DB, w: Where): DashBreakdowns["subagent_fanout"] {
+  // The spawning call's own model decides whether a spawn counts, so under a model filter the
+  // per-session totals shrink too — not just the set of sessions that appear.
+  const ew = withModel(w, "e.model");
   const subagentByType = queryAll<DashBreakdowns["subagent_fanout"]["by_type"][number]>(
     db,
-    `SELECT tc.agent_type type, COUNT(*) n FROM tool_calls tc JOIN sessions s ON s.id = tc.session_id
-     ${andWhere(w)} tc.agent_type IS NOT NULL GROUP BY tc.agent_type ORDER BY n DESC`,
-    ...w.params,
+    `SELECT tc.agent_type type, COUNT(*) n FROM tool_calls tc ${toolModelJoin(w)} JOIN sessions s ON s.id = tc.session_id
+     ${andWhere(ew)} tc.agent_type IS NOT NULL GROUP BY tc.agent_type ORDER BY n DESC`,
+    ...ew.params,
   );
   const perSession = queryAll<CountRow>(
     db,
-    `SELECT COUNT(*) n FROM tool_calls tc JOIN sessions s ON s.id = tc.session_id
-     ${mainOnly(w).sql} AND tc.tool_name IN ('Agent','Task')
+    `SELECT COUNT(*) n FROM tool_calls tc ${toolModelJoin(w)} JOIN sessions s ON s.id = tc.session_id
+     ${mainOnly(ew).sql} AND tc.tool_name IN ('Agent','Task')
      GROUP BY tc.session_id`,
-    ...w.params,
+    ...ew.params,
   );
   const counts = perSession.map((r) => r.n);
   return {
@@ -420,11 +475,12 @@ function subagentFanoutBreakdown(db: DB, w: Where): DashBreakdowns["subagent_fan
  * populated only for status='error' rows (see errors.ts); the raw count is authoritative, the bucket
  * is the heuristic. Ordered most-frequent first. */
 function errorTypeBreakdown(db: DB, w: Where): DashBreakdowns["error_types"] {
+  const ew = withModel(w, "e.model");
   const errorRows = queryAll<{ type: string; n: number }>(
     db,
-    `SELECT COALESCE(tc.error_type, 'other') type, COUNT(*) n FROM tool_calls tc JOIN sessions s ON s.id = tc.session_id
-     ${andWhere(w)} tc.status = 'error' GROUP BY tc.error_type ORDER BY n DESC`,
-    ...w.params,
+    `SELECT COALESCE(tc.error_type, 'other') type, COUNT(*) n FROM tool_calls tc ${toolModelJoin(w)} JOIN sessions s ON s.id = tc.session_id
+     ${andWhere(ew)} tc.status = 'error' GROUP BY tc.error_type ORDER BY n DESC`,
+    ...ew.params,
   );
   let failures = 0;
   let rejections = 0;
@@ -473,6 +529,7 @@ export function dashboardTime(db: DB, f: DashFilters, bucketParam?: string): Das
   // Work tokens per UTC hour per source, bucketed by the usage event's OWN timestamp. token_usage
   // carries no time of its own, so this joins events on the usage PK. Both populations: a subagent's
   // tokens come off the same quota. Cache-read is excluded, matching the band's default metric.
+  const uw = withModel(w, "t.model");
   const burn_hours = queryAll<BurnHourRow>(
     db,
     `SELECT strftime('%Y-%m-%dT%H', e.timestamp) h, s.source_id src,
@@ -480,8 +537,8 @@ export function dashboardTime(db: DB, f: DashFilters, bucketParam?: string): Das
      FROM token_usage t
      JOIN events e ON e.uuid = t.event_uuid
      JOIN sessions s ON s.id = t.session_id
-     ${w.sql} GROUP BY h, src ORDER BY h`,
-    ...w.params,
+     ${uw.sql} GROUP BY h, src ORDER BY h`,
+    ...uw.params,
   )
     .filter((r): r is BurnHourRow & { h: string } => r.h != null)
     .map((r) => ({ hour: r.h, source: r.src, work: r.work ?? 0 }));
@@ -494,13 +551,14 @@ export function dashboardTime(db: DB, f: DashFilters, bucketParam?: string): Das
   // work tokens, which rendered the same as a Sunday evening worked five weeks running. A turn count
   // is bounded per hour, so the cell scales with how often that hour is worked, which is what a
   // heatmap reader takes a cell to mean.
+  const tw = withModel(mw, "t.model");
   const turn_hours = queryAll<TurnHourRow>(
     db,
     `SELECT strftime('%Y-%m-%dT%H', t.started_at) h, s.source_id src, COUNT(*) turns
      FROM turns t
      JOIN sessions s ON s.id = t.session_id
-     ${mw.sql} GROUP BY h, src ORDER BY h`,
-    ...mw.params,
+     ${tw.sql} GROUP BY h, src ORDER BY h`,
+    ...tw.params,
   )
     .filter((r): r is TurnHourRow & { h: string } => r.h != null)
     .map((r) => ({ hour: r.h, source: r.src, turns: r.turns ?? 0 }));
@@ -547,6 +605,7 @@ function modelLatency(db: DB, mw: Where, bucket: Bucket): DashTime["latency"] {
   // yields 119 plotted cells against a week's 36 — thinner, and honestly so, since the cells that
   // cannot support a percentile disappear instead of being drawn.
   const expr = BUCKET_EXPR[bucket];
+  const lw = withModel(mw, "tn.model");
   const series = queryAll<LatencyRow>(
     db,
     `WITH lat AS MATERIALIZED (
@@ -555,7 +614,7 @@ function modelLatency(db: DB, mw: Where, bucket: Bucket): DashTime["latency"] {
        FROM turns tn
        JOIN sessions s ON s.id = tn.session_id
        JOIN events e ON e.turn_id = tn.id AND e.role = 'assistant'
-       ${mw.sql} AND tn.started_at IS NOT NULL AND tn.model IS NOT '<synthetic>'
+       ${lw.sql} AND tn.started_at IS NOT NULL AND tn.model IS NOT '<synthetic>'
        GROUP BY tn.id
      ),
      ranked AS (
@@ -568,7 +627,7 @@ function modelLatency(db: DB, mw: Where, bucket: Bucket): DashTime["latency"] {
             MAX(CASE WHEN rn = MAX(1, CAST(ceil(0.5 * c) AS INTEGER)) THEN ms END) p50,
             MAX(CASE WHEN rn = MAX(1, CAST(ceil(0.9 * c) AS INTEGER)) THEN ms END) p90
      FROM ranked GROUP BY b, model HAVING MAX(c) >= ${MIN_LATENCY_SAMPLES} ORDER BY b, model`,
-    ...mw.params,
+    ...lw.params,
   )
     .filter((r): r is LatencyRow & { b: string } => r.b != null)
     .map((r) => ({
@@ -589,6 +648,9 @@ function modelLatency(db: DB, mw: Where, bucket: Bucket): DashTime["latency"] {
  * does not claim that was too fast to have read anything.
  */
 function reviewLatency(db: DB, mw: Where): DashTime["review"] {
+  // Session-restricted only — never narrowed to turns by model. The LEAD() below reads "the next
+  // turn" from whatever rows survive the WHERE, so a per-turn model predicate would stitch together
+  // turns that were never adjacent and report turnarounds that never happened.
   const empty = (): ReviewLatency => ({ n: 0, under_10s: 0, under_30s: 0, under_2min: 0 });
   const out = { wrote: empty(), none: empty() };
   for (const r of queryAll<ReviewLatencyRow>(

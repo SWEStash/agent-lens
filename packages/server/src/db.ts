@@ -135,9 +135,13 @@ export function listProjects(db: DB): Project[] {
 }
 
 export function listModels(db: DB): string[] {
-  return queryAll<ModelRow>(db, `SELECT DISTINCT model FROM token_usage WHERE model IS NOT NULL ORDER BY model`).map(
-    (r) => r.model,
-  );
+  // `<synthetic>` is Claude Code's marker for a reply generated without an API call, not a model:
+  // it carries usage rows but exactly 0 work tokens, so offering it as a filter option would add a
+  // choice that changes no total. modelLatency excludes it from its own query for the same reason.
+  return queryAll<ModelRow>(
+    db,
+    `SELECT DISTINCT model FROM token_usage WHERE model IS NOT NULL AND model IS NOT '<synthetic>' ORDER BY model`,
+  ).map((r) => r.model);
 }
 
 /**

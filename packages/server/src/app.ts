@@ -144,10 +144,12 @@ export async function createApp(db: DB, opts: CreateAppOpts = {}): Promise<Fasti
   app.get("/api/projects", async () => listProjects(db));
   app.get("/api/models", async () => listModels(db));
 
-  // Dashboard aggregates. All read-only; filters: source, from, to.
+  // Dashboard aggregates. All read-only; filters: source, from, to, models.
+  // `models` is a comma-joined include-list (same convention as severity/error_type below). Absent
+  // means no model predicate at all, which is what the client sends when every model is ticked.
   const dashFilters = (req: any): DashFilters => {
     const q = req.query as Record<string, string>;
-    return { source: q.source, from: q.from, to: q.to };
+    return { source: q.source, from: q.from, to: q.to, models: q.models?.split(",").filter(Boolean) };
   };
   app.get("/api/dashboard/overview", async (req) => dashboardOverview(db, dashFilters(req)));
   app.get("/api/dashboard/timeseries", async (req) => {

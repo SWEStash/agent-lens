@@ -232,7 +232,7 @@ describe("response contracts — populated DB", () => {
     const overview = (await app.inject({ method: "GET", url: "/api/dashboard/overview" })).json();
     expectKeys(overview, DASH_OVERVIEW_KEYS, "dash overview");
     expectKeys(overview.tokens, TOKEN_SPLIT_KEYS, "dash overview tokens");
-    expectKeys(overview.range, ["from", "to", "source"], "dash overview range");
+    expectKeys(overview.range, ["from", "to", "source", "models"], "dash overview range");
     expectKeys(overview.turn_duration_ms, ["p50", "p95", "count"], "turn_duration_ms");
     expectKeys(overview.session_duration_ms, ["p50", "p95", "count"], "session_duration_ms");
     expectKeys(
