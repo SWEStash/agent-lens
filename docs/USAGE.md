@@ -397,8 +397,8 @@ successful `Edit`/`Write` tool call in the archive. Answers the inverse of the t
 > captured**; deletions/renames aren't tracked yet (see the ADR's roadmap). Treat it as agent
 > provenance, not a complete file history.
 
-**Dashboard** (`/dashboard`) — server-side aggregates over the whole store (filter by source and a
-date range):
+**Dashboard** (`/dashboard`) — server-side aggregates over the whole store (filter by source, a date
+range, and models):
 
 - **KPI cards** — sessions, tokens (split input/output/cache-creation/cache-read), estimated
   cost (cache-aware), and a cache-read-ratio explainer.
@@ -411,6 +411,14 @@ date range):
   failure-vs-rejection split are a heuristic over the tool result text — see [ADR-019](decisions/ADR-019-tool-error-observability.md).
 - **Unpriced models** (e.g. `claude-fable-5`) are surfaced explicitly, not silently zeroed, so cost
   reads as a lower bound rather than a wrong number.
+- **Model filter** — a multi-select beside the source and date controls, applying to every chart at
+  once. Every model starts ticked, which is the *unfiltered* state; the parameter is written only
+  once you narrow. Each chart filters where its own rows carry a model — spend on `token_usage`,
+  turns and latency on `turns`, tool counts through the event that issued the call — while anything
+  counted per session counts sessions that used one of the ticked models, whole. So a session count
+  and a token total move by different amounts from the same click; see
+  [ADR-035](decisions/ADR-035-dashboard-model-filter.md), which also covers why the workflow KPIs and
+  the review-latency tile do not respond to it.
 - **Time analytics** — *when* the work happened, rather than how much of it there was. These four
   tiles share one endpoint, and the dashboard skips fetching it entirely while all of them are
   hidden:
@@ -668,8 +676,10 @@ below is relative to `<dataDir>`; run `agent-lens config` to print the resolved 
 `q` (full-text), `from`, `to` (date-inclusive), `severity` (comma-separated; sessions with a finding of
 that severity), `error_type` (comma-separated; sessions with a failed tool call of that error type),
 `sort`, `dir`, `limit` (≤200), `offset`.
-`/api/dashboard/*` query params: `source`, `from`, `to`; `timeseries` also accepts `bucket`
-(`day`\|`week`\|`month`, otherwise chosen adaptively from the data span).
+`/api/dashboard/*` query params: `source`, `from`, `to`, `models` (comma-separated; **absent means
+every model**, which is not the same query as listing them all — [ADR-035](decisions/ADR-035-dashboard-model-filter.md));
+`timeseries` and `time` also accept `bucket` (`day`\|`week`\|`month`, otherwise chosen adaptively
+from the data span).
 `/api/security/findings` query params: `severity`, `category`, `rule`, `session`, `source`,
 `project`, `from`, `to` (date-inclusive), `status` (`open` default \| `dismissed` \| `muted` \|
 `all`), `sort`, `dir`, `limit`, `offset`.

@@ -111,7 +111,8 @@ agent-lens-ingest: files=312 skipped=298 new_events=1840 malformed=0
 - **Freshness + one-click refresh** — the header shows when data was last ingested and a **Refresh**
   button runs collect+ingest on the host on demand (loopback-only, CSRF-guarded; ADR-015).
 - **Analytics dashboards** — tokens / cost / activity over time (adaptive day/week/month bucketing)
-  and breakdowns by model, task category, complexity, tool, skill, and subagent type.
+  and breakdowns by model, task category, complexity, tool, skill, and subagent type, filterable by
+  source, date range, and model.
 - **Heuristic classification** — deterministic, **no-AI** task category + complexity per session,
   with every input signal stored for transparency.
 - **Security findings** — deterministic, **no-AI** rules flag risky operations the agent performed
