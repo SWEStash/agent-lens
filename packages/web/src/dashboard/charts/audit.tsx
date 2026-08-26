@@ -3,6 +3,7 @@ import {
   XAxis, YAxis, CartesianGrid, Tooltip, Legend,
 } from "recharts";
 import { ChartCard, useChartTokens } from "../../charts/theme";
+import { shortModel } from "../../format";
 import { CHART_MARGIN, RankedBars, Y_AXIS_W, unitLabel, useBarsFit, type ChartProps } from "./common";
 
 /**
@@ -29,8 +30,13 @@ const pct1 = (v: number) => `${v.toFixed(1)}%`;
  */
 export function EditReliability({ hidden, audit }: ChartProps) {
   const { C, axisProps, tooltipStyle } = useChartTokens();
+  // Labelled like every other model surface: `shortModel` drops the `claude-` prefix and a dated
+  // snapshot's trailing -YYYYMMDD, so `claude-haiku-4-5-20251001` reads as `haiku-4-5`. The raw id is
+  // kept on the datum — it is what a drilldown would have to filter on, since the grouping key on the
+  // wire is still the full id.
   const data = (audit?.edit_reliability ?? []).map((r) => ({
-    name: r.model,
+    name: shortModel(r.model),
+    model: r.model,
     rate: pct(r.errors, r.calls),
     calls: r.calls,
     errors: r.errors,
@@ -66,7 +72,7 @@ export function EditReliability({ hidden, audit }: ChartProps) {
         data={data}
         left={8}
         xAxisProps={{ tickFormatter: (v: number) => `${v}%` }}
-        yAxis={<YAxis type="category" dataKey="name" {...axisProps} width={150} />}
+        yAxis={<YAxis type="category" dataKey="name" {...axisProps} width={104} />}
       >
         <Tooltip
           {...tooltipStyle}
