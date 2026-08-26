@@ -148,6 +148,25 @@ export function rateForModel(model: string | null | undefined): Rate | null {
   return best?.rate ?? null;
 }
 
+/**
+ * A trailing `-YYYYMMDD` marks a dated snapshot of a minor version, and the minor version is the
+ * identity — `claude-haiku-4-5-20251001` and `claude-haiku-4-5` are one model. Transcripts carry
+ * whichever id the client happened to send, so grouping and filtering canonicalize here first; the
+ * raw id stays in storage, the only place full fidelity survives (ADR-037).
+ *
+ * Deliberately narrow. The minor version is never stripped (`opus-4-8` and `opus-4-7` are different
+ * models), the `[1m]` context variant keeps its own key (different price point), and `<synthetic>`
+ * carries no date so it passes through untouched.
+ *
+ * The SQL twin is `canonModelSql` in the server's sql-util; `canonical-model.test.ts` asserts the
+ * two agree. Note this is NOT applied before {@link rateForModel} — pricing resolves the raw id, so
+ * a dated override key in a config table keeps working.
+ */
+const DATED_SNAPSHOT = /-\d{8}$/;
+export function canonicalModel<T extends string | null | undefined>(model: T): T {
+  return (model && DATED_SNAPSHOT.test(model) ? model.slice(0, -9) : model) as T;
+}
+
 /** Cost in USD for one usage record. Returns 0 for unknown models. */
 export function costForUsage(model: string | null | undefined, u: UsageTokens): number {
   const r = rateForModel(model);

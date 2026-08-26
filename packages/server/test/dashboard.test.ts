@@ -92,7 +92,9 @@ describe("dashboardBreakdowns", () => {
   beforeAll(() => (b = dashboardBreakdowns(seed(), {})));
 
   it("orders models by total tokens and flags unpriced", () => {
-    expect(b.by_model.map((m: any) => m.model)).toEqual(["claude-opus-4-8", "<synthetic>", "claude-haiku-4-5-20251001"]);
+    // Keyed by the CANONICAL id (ADR-037) — the seed spends under `claude-haiku-4-5-20251001` and the
+    // bucket comes back as `claude-haiku-4-5`. `<synthetic>` carries no date and is untouched.
+    expect(b.by_model.map((m: any) => m.model)).toEqual(["claude-opus-4-8", "<synthetic>", "claude-haiku-4-5"]);
     const opus = b.by_model[0];
     expect(opus.total_tokens).toBe(13_000_000);
     expect(opus.cost).toBeCloseTo(41.25, 6);
@@ -585,5 +587,74 @@ describe("dashboardAudit", () => {
     const april = audit({ from: "2026-04-01", to: "2026-04-30" });
     expect(april.plan_rejections.map((p) => p.bucket)).toEqual(["2026-04"]);
     expect(april.file_rework.find((b) => b.band === "1")).toEqual({ band: "1", pairs: 1, changes: 1 });
+  });
+});
+
+/**
+ * The collision this change exists for: ONE model ingested under two ids — a dated snapshot and its
+ * alias. Not in the real corpus today, so this fixture is the only place the case is exercised.
+ *
+ * Before ADR-037 the totals were already exact (shortening only relabels), but the identity was not:
+ * two bars carried the same label with contradictory rates, and `/api/models` offered two
+ * identical-looking options where ticking one silently admitted half the model's work.
+ */
+function seedCollision(): DatabaseSync {
+  const db = new DatabaseSync(":memory:");
+  db.exec(SCHEMA_SQL);
+  db.exec("PRAGMA foreign_keys = OFF");
+  db.exec(`
+    INSERT INTO sessions (id, agent_id, source_id, is_sidechain, started_at, turn_count) VALUES
+      ('s','claude-code','isf',0,'2026-04-01T09:00:00Z',1);
+    INSERT INTO events (uuid, session_id, type, role, timestamp, model, raw_json) VALUES
+      ('e1','s','assistant','assistant','2026-04-01T10:00:00Z','claude-haiku-4-5-20251001',x''),
+      ('e2','s','assistant','assistant','2026-04-01T11:00:00Z','claude-haiku-4-5',x'');
+    INSERT INTO token_usage (event_uuid, session_id, model, input_tokens, output_tokens, cache_creation_input_tokens, cache_read_input_tokens) VALUES
+      ('e1','s','claude-haiku-4-5-20251001',100,10,0,0),
+      ('e2','s','claude-haiku-4-5',300,30,0,0);
+    INSERT INTO tool_calls (id, event_uuid, session_id, tool_name, status) VALUES
+      ('t1','e1','s','Edit',NULL), ('t2','e1','s','Edit','error'),
+      ('t3','e2','s','Edit',NULL), ('t4','e2','s','Write',NULL);
+  `);
+  return db;
+}
+
+describe("a dated model id and its alias are one model", () => {
+  const audit = (f = {}) => dashboardAudit(seedCollision(), f, "month");
+  const breakdowns = (f = {}) => dashboardBreakdowns(seedCollision(), f);
+
+  it("reports one row per model, not one per id", () => {
+    expect(audit().edit_reliability).toEqual([{ model: "claude-haiku-4-5", calls: 4, errors: 1 }]);
+    expect(breakdowns().by_model.map((m) => m.model)).toEqual(["claude-haiku-4-5"]);
+  });
+
+  it("counts the session once, not once per id it used", () => {
+    expect(breakdowns().by_model[0].sessions).toBe(1);
+  });
+
+  it("keeps the totals exact — they were never wrong, and must not move", () => {
+    const edit = audit().edit_reliability;
+    expect(edit.reduce((n, r) => n + r.calls, 0)).toBe(4);
+    expect(edit.reduce((n, r) => n + r.errors, 0)).toBe(1);
+    expect(breakdowns().by_model.reduce((n, r) => n + r.total_tokens, 0)).toBe(440);
+  });
+
+  it("admits the whole family from a single tick", () => {
+    // The part that was never cosmetic: one option used to admit only half the model's work.
+    expect(audit({ models: ["claude-haiku-4-5"] }).edit_reliability).toEqual([
+      { model: "claude-haiku-4-5", calls: 4, errors: 1 },
+    ]);
+  });
+
+  it("still resolves a raw dated id on input, so a shared link keeps working", () => {
+    expect(audit({ models: ["claude-haiku-4-5-20251001"] })).toEqual(audit({ models: ["claude-haiku-4-5"] }));
+    expect(breakdowns({ models: ["claude-haiku-4-5-20251001", "claude-haiku-4-5"] })).toEqual(
+      breakdowns({ models: ["claude-haiku-4-5"] }),
+    );
+  });
+
+  it("prices each raw id on its own, so a dated pricing override is not bypassed", () => {
+    // haiku is $1/$5 per 1M: (400 * 1 + 40 * 5) / 1e6 = 0.0006, whichever id carried the tokens.
+    expect(breakdowns().by_model[0].cost).toBeCloseTo(0.0006, 8);
+    expect(breakdowns().by_model[0].priced).toBe(true);
   });
 });

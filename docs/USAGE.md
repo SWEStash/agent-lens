@@ -427,6 +427,13 @@ range, and models):
   and a token total move by different amounts from the same click; see
   [ADR-035](decisions/ADR-035-dashboard-model-filter.md), which also covers why the workflow KPIs and
   the review-latency tile do not respond to it.
+
+  Models are identified by their **minor version**, so a dated snapshot such as
+  `claude-haiku-4-5-20251001` and a plain `claude-haiku-4-5` are one option and one bar — ticking it
+  admits all of that model's work, whichever id a given transcript happened to carry. The full id is
+  still what gets stored, and cost is still looked up on it, so a rate you pin to a dated id in the
+  `pricing` block keeps applying. A saved dashboard link carrying a raw dated id still works. See
+  [ADR-037](decisions/ADR-037-canonical-model-key.md).
 - **Time analytics** — *when* the work happened, rather than how much of it there was. These four
   tiles share one endpoint, and the dashboard skips fetching it entirely while all of them are
   hidden:
