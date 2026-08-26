@@ -37,6 +37,14 @@ jobs:
 
       - run: pnpm install --frozen-lockfile
       - run: pnpm build
+
+      # Typechecks src AND test/ — the latter via each package's tsconfig.test.json, because their
+      # main tsconfig sets rootDir to ./src and cannot include test/. Must follow `pnpm build`: every
+      # package except web imports its own ../dist/*.js from tests, so the .d.ts files have to exist.
+      # Nothing ran `typecheck` in CI before this step — src was only checked as a side effect of the
+      # tsc-based builds, which left packages/cli (built by tsup) unchecked entirely.
+      - run: pnpm typecheck
+
       - run: pnpm test # builds all packages + vitest (incl. corpus-scenarios, determinism, redaction)
 
       # A new SPA endpoint missing from export-snapshot.mjs (or a snapshotFileKey collision) fails

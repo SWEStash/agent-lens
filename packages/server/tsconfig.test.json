@@ -1,0 +1,11 @@
+// Typechecks test/ without touching what `build` emits. The main config sets rootDir to ./src, so
+// test/ cannot simply be added to its `include` — tsc rejects it with TS6059. Hence a second project:
+// rootDir "." makes test/ legal input, noEmit keeps the inherited outDir from producing anything.
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "rootDir": "."
+  },
+  "include": ["test/**/*"]
+}

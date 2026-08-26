@@ -7,7 +7,7 @@
  * rather than reaching SQLite. Workflow fan-out lives in workflows.test.ts, prefs in prefs.test.ts.
  */
 import { describe, it, expect, beforeAll } from "vitest";
-import { addEvent, addSession, addSource, addTokens, addTool, addTurn, appFor, freshDb, seedBasic } from "./helpers/seed";
+import { addEvent, addSession, addSource, addTokens, addTool, addTurn, appFor, freshDb, seedBasic } from "./helpers/seed.js";
 
 let app: Awaited<ReturnType<typeof appFor>>;
 beforeAll(async () => {

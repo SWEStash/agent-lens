@@ -17,7 +17,7 @@
 import { describe, it, expect } from "vitest";
 import type { DatabaseSync } from "node:sqlite";
 import { resolvePricing } from "@agent-lens/core";
-import { addEvent, addSession, addTokens, appFor, freshDb, seedBasic } from "./helpers/seed";
+import { addEvent, addSession, addTokens, appFor, freshDb, seedBasic } from "./helpers/seed.js";
 
 /** Exact-key assertion. Sorted so the failure message reads as a set diff, not an ordering complaint. */
 function expectKeys(actual: unknown, expected: string[], what: string) {

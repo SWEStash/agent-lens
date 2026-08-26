@@ -1,0 +1,12 @@
+// Typechecks test/. The main config already sets noEmit (this package builds with tsup, not tsc),
+// but its rootDir is ./src, so test/ cannot simply be added to its `include` — tsc rejects it with
+// TS6059. rootDir "." makes test/ legal input. Kept as a separate project for the same reason the
+// other packages need one, so every package's `typecheck` script reads the same.
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "rootDir": "."
+  },
+  "include": ["test/**/*"]
+}

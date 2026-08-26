@@ -6,13 +6,16 @@ session/turn/subagent aggregates, and the heuristic classifier are right — at 
 formula level (absolute correctness) **and** at full real-data scale
 (self-consistency).
 
-## Approach — five layers
+## Approach — a type gate and five layers
 
 Each layer answers a different question. Together they cover absolute
-correctness, real-scale consistency, and the whole CLI→API path.
+correctness, real-scale consistency, and the whole CLI→API path. Layer 0 sits
+underneath them: it proves nothing about behaviour, only that the fixtures the
+other layers assert on still match the types they claim.
 
 | Layer | Question | Where | Needs hand-authored expecteds? | Scale |
 |------|----------|-------|-------------------------------|-------|
+| 0. Type gate | Do the tests still typecheck against the code? | `pnpm typecheck` | No | every `src` + `test` file |
 | 1. Golden fixtures | Are the *formulas* exactly right? | vitest | Yes | tiny |
 | 2. Invariants | Does the *real* data stay self-consistent? | `scripts/validate.mjs` | No | full (your real DB) |
 | 3. Determinism | Is incremental == full rebuild? | vitest | No | committed corpus |
@@ -31,6 +34,7 @@ covered by Layer 1 fixtures instead, never by the oracle.
 ## How to run
 
 ```bash
+pnpm build && pnpm typecheck                # Layer 0 — src + test/ (build first: tests import ../dist)
 pnpm test                                   # Layers 1, 3, 4-unit + corpus scenarios + web unit tests
 cp data/agent-lens.db /tmp/al-validate.db   # snapshot (never read the live WAL DB)
 pnpm validate --db /tmp/al-validate.db      # Layer 2 invariants on the real corpus
@@ -40,6 +44,18 @@ pnpm sandbox                                # Layer 5 end-to-end over the corpus
 
 ## What each layer covers
 
+- **Layer 0 — type gate** (`pnpm typecheck`, run in CI right after `pnpm build`):
+  each package typechecks `src` via its `tsconfig.json` and `test/` via a
+  sibling `tsconfig.test.json` (`noEmit`, `rootDir: "."`, `include: test/**/*`) —
+  the main configs set `rootDir` to `./src` and so cannot include `test/`
+  themselves. **Scope: it proves a test fixture still matches the type it is
+  annotated with, and nothing more** — a fixture can be perfectly typed and still
+  assert the wrong number, which is what Layers 1–5 are for. It exists because
+  the opposite failure is silent: a `ChartProps` fixture in
+  `web/test/chartGuides.test.tsx` once went stale when a required field was added,
+  and the suite kept passing because no config compiled it. The step must follow
+  `pnpm build` — every package except `web` imports its own `../dist/*.js` from
+  tests, so the `.d.ts` files have to exist first.
 - **Layer 1 — golden fixtures** (`packages/*/test/*.test.ts`):
   - `core/test/pricing.test.ts` — cost formula, longest-prefix model match
     (`claude-opus-4-8[1m]` → opus-4-8, dated haiku → `claude-haiku-4`), cache
@@ -89,7 +105,9 @@ pnpm sandbox                                # Layer 5 end-to-end over the corpus
 > ~630-session DB — Layer 2 runs against your own `data/agent-lens.db`, so the numbers scale with
 > your data. Layers 1/3/4/5 run on the committed corpus and are deterministic.
 
-**Layer 1/3/4-unit + corpus scenarios + web — `pnpm test`:** 799 tests pass (65 files).
+**Layer 0 — type gate (`pnpm typecheck`):** clean across all 7 packages, `src` and `test`.
+
+**Layer 1/3/4-unit + corpus scenarios + web — `pnpm test`:** 943 tests pass (74 files).
 
 **Layer 2 — invariants on the live corpus (~632-session snapshot):** all hard invariants PASS.
 
