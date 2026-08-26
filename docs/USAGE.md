@@ -448,10 +448,10 @@ range, and models):
     be visible. That does mean a near-zero cell is close to invisible, deliberately; hover any cell
     for its exact figure **and how many days it rests on** ("on 1 of 14 Sundays") — an average over
     one observed day and one over twelve read identically without it — and the strip under the grid
-    maps colour to number. Uniquely among the
-    charts it buckets by **when the work happened** — the usage event's own timestamp, or the turn's
-    start — not the session's start: a session a human sat through runs mostly idle and often spans
-    hours, so session-start bucketing would drop a whole day's spend into the hour it began. It
+    maps colour to number. It buckets by **when the work happened** — the usage event's own
+    timestamp, or the turn's start — rather than by the session's start: a session a human sat
+    through runs mostly idle and often spans hours, so session-start bucketing would drop a whole
+    day's spend into the hour it began. It
     therefore **will not tie out against "Tokens over time"** — that is deliberate, see
     [ADR-033](decisions/ADR-033-time-analytics-bucketing.md).
   - ***Burn by source*** — work tokens over time, one line per source. Sources are plotted
@@ -498,11 +498,11 @@ range, and models):
     that file, with the edits each band accounts for beside it. The two series disagree on purpose:
     most pairs sit in the left band while a large share of all edits lands in the right ones. A count
     and a list, never a score.
-  - ***Findings over time*** — detector findings per bucket, stacked by severity. The dashboard's
-    only security chart, because a trend is the one thing the **Security** page (`/security`) cannot show;
-    individual findings, their evidence and their mute state still live there. Uniquely it is dated
-    by **the finding's own moment** rather than by its session's start — a long session can raise one
-    hours after it began.
+  - ***Findings over time*** — detector findings per bucket, stacked by severity. It earns a place
+    here because a trend is the one thing the **Security** page (`/security`) cannot show; individual
+    findings, their evidence and their mute state still live there. Dated by **the finding's own
+    moment** rather than by its session's start — a long session can raise one hours after it began,
+    so a bucket is when the risky thing was done.
 - **Reading a chart** — every card carries an **ⓘ** beside its title. It opens a short panel saying
   what the axes are in, how the number is computed, and the caveats that decide whether a reading is
   fair — which population it counts, what a heuristic label is worth, where a tail is contaminated.

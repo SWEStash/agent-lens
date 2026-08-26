@@ -703,10 +703,10 @@ export interface DashTimeseries {
 /**
  * Time analytics: when work happened, rather than how much of it there was.
  *
- * `burn_hours` is the one series in the whole dashboard bucketed by **event** time rather than by
- * `sessions.started_at` — see ADR-033. It is deliberately raw hourly UTC rows: the browser folds
- * them into local weekday/hour, so one exported snapshot reads correctly in every viewer's zone and
- * across DST transitions, neither of which a server-side offset could manage.
+ * `burn_hours` is bucketed by **event** time rather than by `sessions.started_at` — see ADR-033. It
+ * is deliberately raw hourly UTC rows: the browser folds them into local weekday/hour, so one
+ * exported snapshot reads correctly in every viewer's zone and across DST transitions, neither of
+ * which a server-side offset could manage.
  */
 export interface DashTime {
   /** Work tokens (input + output + cache-creation) per UTC hour per source. `hour` is `YYYY-MM-DDTHH`. */
@@ -784,6 +784,7 @@ export interface DashAudit {
   file_rework: Array<{ band: string; pairs: number; changes: number }>;
   /** Security findings per bucket by severity. Bucketed on the finding's OWN event timestamp, not
    *  its session's `started_at` — `findings` has no time column of its own and every row joins to a
-   *  timestamped event. This is the dashboard's only security chart; /security stays the surface. */
+   *  timestamped event, so a bucket is when the risky thing was done. /security stays the surface
+   *  for reading the findings themselves. */
   findings_over_time: Array<{ bucket: string; info: number; low: number; medium: number; high: number; critical: number }>;
 }

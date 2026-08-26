@@ -800,13 +800,12 @@ function fileRework(db: DB, w: Where): DashAudit["file_rework"] {
 }
 
 /**
- * Security findings per bucket by severity — the dashboard's only security chart. The /security page
- * remains the surface for reading individual findings; this exists because a trend is the one thing
- * that page cannot show.
+ * Security findings per bucket by severity. The /security page remains the surface for reading
+ * individual findings; this exists because a trend is the one thing that page cannot show.
  *
  * Bucketed on the finding's OWN event timestamp rather than its session's `started_at`. `findings`
  * carries no time column, and every row on the real corpus joins to a timestamped event, so the
- * honest time is available — the one series on this endpoint whose x-axis is derived that way.
+ * honest time is available. `bucketExpr` takes a column parameter for this reason.
  */
 function findingsOverTime(db: DB, w: Where, bucket: Bucket): DashAudit["findings_over_time"] {
   const ew = withModel(w, "e.model");

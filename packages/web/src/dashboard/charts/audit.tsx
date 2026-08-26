@@ -195,10 +195,10 @@ export function FileRework({ hidden, audit }: ChartProps) {
 }
 
 /**
- * Security findings per bucket, stacked by severity — the dashboard's only security chart.
+ * Security findings per bucket, stacked by severity.
  *
  * The /security page remains the surface for reading individual findings; a trend is the one thing
- * that page cannot show, which is what makes a single chart here worth the exception.
+ * that page cannot show, which is what makes a chart here worth the exception (ADR-036).
  */
 export function FindingsOverTime({ hidden, audit }: ChartProps) {
   const { C, SEVERITY_COLORS, axisProps, gridProps, tooltipStyle } = useChartTokens();
@@ -227,9 +227,9 @@ export function FindingsOverTime({ hidden, audit }: ChartProps) {
             <dd>findings raised in that bucket, stacked with the most severe on top.</dd>
           </dl>
           <p>
-            <strong>Dated by the finding's own moment</strong>, not by when its session started — the
-            only series on this dashboard that is. A finding belongs to the tool call that triggered
-            it, and a long session can raise one hours after it began.
+            <strong>Dated by the finding's own moment</strong>, not by when its session started. A
+            finding belongs to the tool call that triggered it, and a long session can raise one
+            hours after it began — so a bucket here is when the risky thing was done.
           </p>
           <p>
             A rising low-severity band is usually the detector getting better, not the work getting
