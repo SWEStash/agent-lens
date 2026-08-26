@@ -1,8 +1,8 @@
-import { useEffect, useRef, useState } from "react";
+import { useState } from "react";
 import { ResponsiveContainer, AreaChart, Area, LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend } from "recharts";
 import { ChartCard, useChartTokens } from "../../charts/theme";
 import { fmtCost, fmtTokens } from "../../format";
-import { CHART_MARGIN, unitLabel, type ChartProps } from "./common";
+import { CHART_MARGIN, Y_AXIS_W, unitLabel, useBarsFit, type ChartProps } from "./common";
 
 /** Stacked token components per bucket. The legend toggles series: hiding the dominant cache-read
  * series lets the others use the full scale, and the stack recomputes automatically. */
@@ -100,28 +100,6 @@ export function CostOverTime({ hidden, ts }: ChartProps) {
   );
 }
 
-/** Pixels a bucket needs before its bars survive as solid rectangles. Below this recharts emits
- * sub-pixel-wide bars, which antialias into faint slivers — the fill reads as washed out rather than
- * thin, and on a long date range the whole series looks empty. */
-const PX_PER_BUCKET = 6;
-/** Y axis reservation, subtracted from the measured width to get the plot area. */
-const Y_AXIS_W = 36;
-
-/** Measure the chart body and say whether `count` buckets still fit as bars. Attach the ref to a
- * full-size wrapper around the chart. Before the first observation lands — and in jsdom, which has no
- * ResizeObserver — width is 0 and bars are assumed to fit. */
-function useBarsFit(count: number) {
-  const ref = useRef<HTMLDivElement>(null);
-  const [width, setWidth] = useState(0);
-  useEffect(() => {
-    if (!ref.current || typeof ResizeObserver === "undefined") return;
-    const ro = new ResizeObserver(([entry]) => setWidth(entry.contentRect.width));
-    ro.observe(ref.current);
-    return () => ro.disconnect();
-  }, []);
-  return [ref, width === 0 || count * PX_PER_BUCKET <= width - Y_AXIS_W] as const;
-}
-
 /** Sessions & turns per bucket. Bars while the buckets are wide enough to read; past that density the
  * same two series switch to lines, which stay 2px wide no matter how many buckets are in range. */
 export function Activity({ hidden, ts }: ChartProps) {
@@ -150,6 +128,12 @@ export function Activity({ hidden, ts }: ChartProps) {
             <dt>y-axis</dt>
             <dd>count. <strong>sessions</strong> = sessions that started in the bucket, subagent runs included; <strong>turns</strong> = prompt-and-response exchanges within them.</dd>
           </dl>
+          <p>
+            <strong>Under a model filter this counts whole sessions, not model-attributable rows.</strong>{" "}
+            A session has no single model, so it is counted here whenever it used any model you ticked
+            — including the work it did with the others. That is why a session count and a token total
+            move by different amounts when you untick a model.
+          </p>
           <p>Bars become lines once the range holds more buckets than can be drawn as readable bars.</p>
         </>
       }

@@ -145,6 +145,12 @@ export function Category({ hidden, bd }: ChartProps) {
             <dd>number of sessions.</dd>
           </dl>
           <p>
+            <strong>Under a model filter this counts whole sessions, not model-attributable rows.</strong>{" "}
+            A session has no single model, so it is counted here whenever it used any model you ticked
+            — including the work it did with the others. That is why a session count and a token total
+            move by different amounts when you untick a model.
+          </p>
+          <p>
             <strong>Main sessions only</strong>: subagents inherit their parent's task and would
             multiply-count it. The label is inferred from the transcript rather than declared by you,
             so read it as a rough shape, not a ledger.
@@ -189,6 +195,12 @@ export function Complexity({ hidden, bd }: ChartProps) {
             <dt>y-axis</dt>
             <dd>number of sessions.</dd>
           </dl>
+          <p>
+            <strong>Under a model filter this counts whole sessions, not model-attributable rows.</strong>{" "}
+            A session has no single model, so it is counted here whenever it used any model you ticked
+            — including the work it did with the others. That is why a session count and a token total
+            move by different amounts when you untick a model.
+          </p>
           <p>
             <strong>Main sessions only.</strong> Most sessions landing in the lower bands is the real
             shape of the corpus, not a bug. Complexity measures effort spent — not difficulty, and not

@@ -135,6 +135,10 @@ export function listProjects(db: DB): Project[] {
 }
 
 export function listModels(db: DB): string[] {
+  // Every distinct model, `<synthetic>` included. It is not a model — it marks a reply generated
+  // without an API call — but it IS a value the sessions list can usefully filter on, and 2,094
+  // sessions carry it. The dashboard's model filter drops it from its own options instead
+  // (ADR-035), which is where that judgement belongs.
   return queryAll<ModelRow>(db, `SELECT DISTINCT model FROM token_usage WHERE model IS NOT NULL ORDER BY model`).map(
     (r) => r.model,
   );

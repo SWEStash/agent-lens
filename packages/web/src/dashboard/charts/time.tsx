@@ -7,6 +7,8 @@ import { burnBySource, heatCells, heatRows, rampColor, rampPosition, rampTicks, 
 import { CHART_MARGIN, decadeDomain, unitLabel, type ChartProps } from "./common";
 
 const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+/** Spelled out where the word takes a plural: "13 Thus" is not a word. */
+const WEEKDAYS_LONG = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 
 /** How many models the latency tile shows BY DEFAULT. Two lines each, so this is the real series
  *  budget — but every other model is still offered in the legend rather than dropped, so a reader
@@ -185,6 +187,13 @@ export function BurnHeatmap({ hidden, time, range }: ChartProps) {
               </div>
               <div className="burn-tip-row">
                 {fmtVal(hover.cell.mean)} {unit} · average {WEEKDAYS[hover.cell.weekday]}
+              </div>
+              {/* The support behind that average. A cell reading "0.1 turns" is a very different
+                  claim when it rests on one observed day than on twelve, and the mean alone cannot
+                  say which — the denominator is the same either way. */}
+              <div className="burn-tip-row burn-tip-support">
+                on {hover.cell.observed} of {hover.cell.days} {WEEKDAYS_LONG[hover.cell.weekday]}
+                {hover.cell.days === 1 ? "" : "s"}
               </div>
             </div>
           )}
@@ -451,10 +460,18 @@ export function ModelLatency({ hidden, time }: ChartProps) {
             excluded here — their elapsed time is not a model response time.
           </p>
           <p>
+            <strong>The filter bar moves this chart less than it moves the token charts.</strong> A
+            model is counted here once per turn it answered, but in the token charts by everything it
+            spent — so a model doing subagent work, haiku above all, can be a top-three consumer while
+            contributing almost nothing to this tile. Unticking it visibly moves one and not the other.
+          </p>
+          <p>
             <strong>Every model is in the legend; click one to show or hide it</strong>, and the axis
             rescales around what is left. Only the highest-volume few start switched on, so a model
             you do not see is off rather than absent — though a low-volume one may plot as a point or
-            two, since a bucket under 5 turns is dropped.
+            two, since a bucket under 5 turns is dropped. The legend is a <em>view</em> control over
+            whatever the filter bar admits: unticking a model up there removes it from every chart,
+            while hiding it here only takes it off this one.
           </p>
           <p>
             Main sessions only, and only the highest-volume models are plotted. A {bucket} holding

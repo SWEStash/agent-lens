@@ -39,6 +39,18 @@ describe("heatCells", () => {
     expect(at(3, 12)).toMatchObject({ total: 60, mean: 30 }); // 2 Wednesdays: the 4th and the 11th
   });
 
+  it("reports how many days a cell's mean actually rests on", () => {
+    // The same mean from very different support: 100 on one of four Sundays reads identically to
+    // 25 on each of four, and only the observed count separates them. A zero-valued row is an hour
+    // that produced nothing, not an hour that was worked, so it does not count as observed.
+    const rows = [cellRow("2026-03-01T12", 100), cellRow("2026-03-08T12", 0)];
+    const cells = heatCells(rows, "UTC", { from: "2026-03-01", to: "2026-03-28" }).cells;
+    const sun12 = cells.find((c) => c.weekday === 0 && c.hour === 12)!;
+    expect(sun12).toMatchObject({ mean: 25, total: 100, observed: 1, days: 4 });
+    // An untouched cell still carries the denominator, so the tooltip can say "0 of 4".
+    expect(cells.find((c) => c.weekday === 0 && c.hour === 3)!).toMatchObject({ observed: 0, days: 4 });
+  });
+
   it("normalizes over the requested range, including the empty days at its edges", () => {
     // One worked Sunday, but the reader asked for four weeks — the other three Sundays are zeros
     // that only the range knows about, since no row can carry a day with no usage on it.

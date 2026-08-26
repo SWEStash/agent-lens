@@ -17,7 +17,7 @@
 import { describe, it, expect } from "vitest";
 import type { DatabaseSync } from "node:sqlite";
 import { resolvePricing } from "@agent-lens/core";
-import { addSession, appFor, freshDb, seedBasic } from "./helpers/seed";
+import { addEvent, addSession, addTokens, appFor, freshDb, seedBasic } from "./helpers/seed";
 
 /** Exact-key assertion. Sorted so the failure message reads as a set diff, not an ordering complaint. */
 function expectKeys(actual: unknown, expected: string[], what: string) {
@@ -70,6 +70,7 @@ const DASH_OVERVIEW_KEYS = [
 ];
 
 const DASH_TIME_KEYS = ["burn_hours", "turn_hours", "latency", "review"];
+const DASH_AUDIT_KEYS = ["bucket", "edit_reliability", "plan_rejections", "file_rework", "findings_over_time"];
 const REVIEW_LATENCY_KEYS = ["n", "under_10s", "under_30s", "under_2min"];
 
 const DASH_BREAKDOWN_KEYS = [
@@ -149,6 +150,19 @@ describe("response contracts — populated DB", () => {
     const app = await appFor(seedBasic());
     const body = (await app.inject({ method: "GET", url: "/api/models" })).json();
     expect(body).toEqual(["claude-opus-4-8"]);
+    await app.close();
+  });
+
+  it("GET /api/models keeps <synthetic>, which the sessions list filters on", async () => {
+    // It is not a model, and the dashboard's model filter drops it from its own options — but 2,094
+    // sessions carry it, so removing it from the endpoint would silently delete a working filter
+    // from a different surface. That regression shipped once; this is the guard.
+    const db = seedBasic();
+    addSession(db, "synthetic-only", { startedAt: "2026-01-03T00:00:00Z" });
+    addEvent(db, "synthetic-only", "syn-ev", { timestamp: "2026-01-03T00:00:01Z" });
+    addTokens(db, "syn-ev", "synthetic-only", "<synthetic>", { input: 5, output: 5 });
+    const app = await appFor(db);
+    expect((await app.inject({ method: "GET", url: "/api/models" })).json()).toContain("<synthetic>");
     await app.close();
   });
 
@@ -232,7 +246,7 @@ describe("response contracts — populated DB", () => {
     const overview = (await app.inject({ method: "GET", url: "/api/dashboard/overview" })).json();
     expectKeys(overview, DASH_OVERVIEW_KEYS, "dash overview");
     expectKeys(overview.tokens, TOKEN_SPLIT_KEYS, "dash overview tokens");
-    expectKeys(overview.range, ["from", "to", "source"], "dash overview range");
+    expectKeys(overview.range, ["from", "to", "source", "models"], "dash overview range");
     expectKeys(overview.turn_duration_ms, ["p50", "p95", "count"], "turn_duration_ms");
     expectKeys(overview.session_duration_ms, ["p50", "p95", "count"], "session_duration_ms");
     expectKeys(
@@ -267,6 +281,14 @@ describe("response contracts — populated DB", () => {
     expectKeys(time.review.none, REVIEW_LATENCY_KEYS, "review latency (none)");
     expectKeys(time.burn_hours[0], ["hour", "source", "work"], "burn hour row");
     expectKeys(time.turn_hours[0], ["hour", "source", "turns"], "turn hour row");
+
+    const audit = (await app.inject({ method: "GET", url: "/api/dashboard/audit" })).json();
+    expectKeys(audit, DASH_AUDIT_KEYS, "dash audit");
+    // `file_rework` is the one series that is never empty — all five bands ship even at zero, which
+    // is what keeps the chart's x-axis stable. The other three carry no rows under seedBasic (it has
+    // no Edit/Write call, no plan, no finding); their row shapes are pinned by dashboard.test.ts.
+    expectKeys(audit.file_rework[0], ["band", "pairs", "changes"], "file rework row");
+    expect(audit.file_rework).toHaveLength(5);
     await app.close();
   });
 
@@ -435,6 +457,12 @@ describe("response contracts — degraded DBs keep the shape stable", () => {
     expect(time.latency.series).toEqual([]);
     expectKeys(time.review.wrote, REVIEW_LATENCY_KEYS, "review latency (empty)");
     expect(time.review.wrote.n).toBe(0);
+    const audit = (await app.inject({ method: "GET", url: "/api/dashboard/audit" })).json();
+    expectKeys(audit, DASH_AUDIT_KEYS, "dash audit (empty)");
+    expect(audit.edit_reliability).toEqual([]);
+    expect(audit.plan_rejections).toEqual([]);
+    expect(audit.findings_over_time).toEqual([]);
+    expect(audit.file_rework.map((b: { band: string }) => b.band)).toEqual(["1", "2-3", "4-6", "7-12", "13+"]);
     await app.close();
   });
 });

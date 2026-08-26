@@ -339,6 +339,11 @@ corpus by `node scripts/screenshots.mjs`.
     order of magnitude larger than the rest and would flatten every message to the same size.
   - **Colour** is the message type, and the rail beneath the baseline marks the audit-worthy events:
     failed tool calls, security findings, file changes, and subagent spawns.
+  - **A line over the bars** is **context occupancy** — how full the prompt was at each message
+    (input + cache-write + cache-read), with the session's own peak named in the legend. Shape only:
+    a fuller context is not a worse one. Nothing here warns you to start fresh: what little the data
+    supports points away from prompt size as the thing that goes wrong, and Agent Lens does not
+    claim an efficiency measure it cannot defend.
   - **Hover** a mark to see which message it is — turn, type, time, size and any flags on it. The
     marks are only a few pixels wide, so the hover target is much larger than the mark itself.
   - **Click** a mark to jump to that message (its turn expands and the message is highlighted, the
@@ -390,15 +395,18 @@ successful `Edit`/`Write` tool call in the archive. Answers the inverse of the t
   expanded to the specific turns, each **deep-linking to the exact Edit/Write call in the
   transcript** (scrolled to and highlighted).
 - See a **"files changed" roll-up** on each session page (header, collapsible) — per-file change
-  counts and line deltas, each linking to the file's history.
+  counts and line deltas, each linking to the file's history. When a session kept returning to the
+  same file (seven touches or more) the roll-up names those files and how many times each was
+  touched. It is a count and a list, not a verdict: rework was measured against session cost in both
+  directions and the relationship is flat.
 
 > **Honest limits:** the index is built from Edit/Write tool calls only. Changes made via shell
 > commands (`sed`, redirects), by you in an editor, by formatters, or on other machines are **not
 > captured**; deletions/renames aren't tracked yet (see the ADR's roadmap). Treat it as agent
 > provenance, not a complete file history.
 
-**Dashboard** (`/dashboard`) — server-side aggregates over the whole store (filter by source and a
-date range):
+**Dashboard** (`/dashboard`) — server-side aggregates over the whole store (filter by source, a date
+range, and models):
 
 - **KPI cards** — sessions, tokens (split input/output/cache-creation/cache-read), estimated
   cost (cache-aware), and a cache-read-ratio explainer.
@@ -411,6 +419,14 @@ date range):
   failure-vs-rejection split are a heuristic over the tool result text — see [ADR-019](decisions/ADR-019-tool-error-observability.md).
 - **Unpriced models** (e.g. `claude-fable-5`) are surfaced explicitly, not silently zeroed, so cost
   reads as a lower bound rather than a wrong number.
+- **Model filter** — a multi-select beside the source and date controls, applying to every chart at
+  once. Every model starts ticked, which is the *unfiltered* state; the parameter is written only
+  once you narrow. Each chart filters where its own rows carry a model — spend on `token_usage`,
+  turns and latency on `turns`, tool counts through the event that issued the call — while anything
+  counted per session counts sessions that used one of the ticked models, whole. So a session count
+  and a token total move by different amounts from the same click; see
+  [ADR-035](decisions/ADR-035-dashboard-model-filter.md), which also covers why the workflow KPIs and
+  the review-latency tile do not respond to it.
 - **Time analytics** — *when* the work happened, rather than how much of it there was. These four
   tiles share one endpoint, and the dashboard skips fetching it entirely while all of them are
   hidden:
@@ -430,10 +446,12 @@ date range):
     Colour is a **continuous gradient**, not a set of bands, and it runs out of the empty cell's own
     colour — so a barely-used hour is barely coloured rather than jumping to a first band that has to
     be visible. That does mean a near-zero cell is close to invisible, deliberately; hover any cell
-    for its exact figure, and the strip under the grid maps colour to number. Uniquely among the
-    charts it buckets by **when the work happened** — the usage event's own timestamp, or the turn's
-    start — not the session's start: a session a human sat through runs mostly idle and often spans
-    hours, so session-start bucketing would drop a whole day's spend into the hour it began. It
+    for its exact figure **and how many days it rests on** ("on 1 of 14 Sundays") — an average over
+    one observed day and one over twelve read identically without it — and the strip under the grid
+    maps colour to number. It buckets by **when the work happened** — the usage event's own
+    timestamp, or the turn's start — rather than by the session's start: a session a human sat
+    through runs mostly idle and often spans hours, so session-start bucketing would drop a whole
+    day's spend into the hour it began. It
     therefore **will not tie out against "Tokens over time"** — that is deliberate, see
     [ADR-033](decisions/ADR-033-time-analytics-bucketing.md).
   - ***Burn by source*** — work tokens over time, one line per source. Sources are plotted
@@ -459,6 +477,32 @@ date range):
   **Timezone:** hour-of-day and weekday are *local*, resolved from your browser and named on each
   tile. The server computes and returns UTC; the browser localizes, so an exported snapshot reads
   correctly in every viewer's zone and across daylight-saving changes.
+- **Audit tiles** — *how the work went*. Four more tiles behind one endpoint, fetched and skipped on
+  visibility exactly like the time analytics. None of them is an efficiency measure: there is no
+  defensible one here, and the two obvious framings — tokens per line of churn, and a composite
+  score over errors and rework — were tested against the corpus and rejected, the first as
+  sign-inverted and the second as flat. See [ADR-036](decisions/ADR-036-dashboard-audit-endpoint.md).
+
+  - ***Edit failures by model*** — the share of a model's `Edit`/`Write`/`NotebookEdit` calls that
+    came back as errors. A failed edit usually means the model got the file's existing contents
+    wrong, so this is a capability signal rather than a speed one. Ranked by call volume rather than
+    by failure rate, because rate-ranking promotes whichever model made nine calls; the sample size
+    is in every tooltip. **Confounded by era and task mix** — read it inside a date range, not as a
+    standing leaderboard.
+  - ***Plans & questions sent back*** — the share of `ExitPlanMode` and `AskUserQuestion` calls you
+    rejected, per bucket, **main sessions only**. Alignment measured before the work happens rather
+    than after. This is **not** the rejection-rate KPI, which counts every rejected or blocked tool
+    call over a far larger denominator; a bucket containing none of that kind plots as a gap rather
+    than as a flawless 0%.
+  - ***Repeat edits per file*** — (session, file) pairs banded by how many times that session touched
+    that file, with the edits each band accounts for beside it. The two series disagree on purpose:
+    most pairs sit in the left band while a large share of all edits lands in the right ones. A count
+    and a list, never a score.
+  - ***Findings over time*** — detector findings per bucket, stacked by severity. It earns a place
+    here because a trend is the one thing the **Security** page (`/security`) cannot show; individual
+    findings, their evidence and their mute state still live there. Dated by **the finding's own
+    moment** rather than by its session's start — a long session can raise one hours after it began,
+    so a bucket is when the risky thing was done.
 - **Reading a chart** — every card carries an **ⓘ** beside its title. It opens a short panel saying
   what the axes are in, how the number is computed, and the caveats that decide whether a reading is
   fair — which population it counts, what a heuristic label is worth, where a tail is contaminated.
@@ -645,7 +689,7 @@ below is relative to `<dataDir>`; run `agent-lens config` to print the resolved 
 | `GET /api/health` | liveness, last-ingest time, schema version + staleness, and the running build (`version`, `version_source`) |
 | `GET /api/sources` | configured sources + session counts |
 | `GET /api/projects` | projects (cwd) + session counts |
-| `GET /api/models` | distinct model ids |
+| `GET /api/models` | distinct model ids, including Claude Code's `<synthetic>` marker (replies generated without an API call) — the dashboard's model filter omits that one from its own options |
 | `GET /api/sessions` | filtered, paginated session list (see query params) |
 | `GET /api/sessions/:id` | session meta + turns + events (transcript) + classification |
 | `GET /api/sessions/:id/export.md` | Markdown export (attachment) |
@@ -653,6 +697,7 @@ below is relative to `<dataDir>`; run `agent-lens config` to print the resolved 
 | `GET /api/dashboard/timeseries` | tokens/cost/activity over time (adaptive buckets) |
 | `GET /api/dashboard/breakdowns` | by model / category / complexity / tool / skill / subagent / error type |
 | `GET /api/dashboard/time` | when work happened: hourly token burn, model latency, review latency |
+| `GET /api/dashboard/audit` | how the work went: file-edit failures by model, plan/question rejections, repeat edits per file, findings over time |
 | `GET /api/workflows/:run_id` | workflow run detail (phase graph, returned result, run log, per-agent rows) |
 | `GET /api/skills` | skills list (optional `q`, `source`, `project` filters) |
 | `GET /api/skills/:name` | skill detail (content-addressed versions + firings) |
@@ -668,8 +713,10 @@ below is relative to `<dataDir>`; run `agent-lens config` to print the resolved 
 `q` (full-text), `from`, `to` (date-inclusive), `severity` (comma-separated; sessions with a finding of
 that severity), `error_type` (comma-separated; sessions with a failed tool call of that error type),
 `sort`, `dir`, `limit` (≤200), `offset`.
-`/api/dashboard/*` query params: `source`, `from`, `to`; `timeseries` also accepts `bucket`
-(`day`\|`week`\|`month`, otherwise chosen adaptively from the data span).
+`/api/dashboard/*` query params: `source`, `from`, `to`, `models` (comma-separated; **absent means
+every model**, which is not the same query as listing them all — [ADR-035](decisions/ADR-035-dashboard-model-filter.md));
+`timeseries`, `time` and `audit` also accept `bucket` (`day`\|`week`\|`month`, otherwise chosen
+adaptively from the data span).
 `/api/security/findings` query params: `severity`, `category`, `rule`, `session`, `source`,
 `project`, `from`, `to` (date-inclusive), `status` (`open` default \| `dismissed` \| `muted` \|
 `all`), `sort`, `dir`, `limit`, `offset`.

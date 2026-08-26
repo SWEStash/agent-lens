@@ -36,6 +36,7 @@ const props: ChartProps = {
   ts: null,
   bd: null,
   time: null,
+  audit: null,
   expand: noopExpand,
   drill: { drillFilter: () => {}, drillTo: () => () => {} } as never,
   range: {},

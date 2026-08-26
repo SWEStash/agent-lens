@@ -1,6 +1,6 @@
-import type { ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { ResponsiveContainer, BarChart, CartesianGrid, XAxis } from "recharts";
-import type { DashBreakdowns, DashTime, DashTimeseries } from "../../api";
+import type { DashAudit, DashBreakdowns, DashTime, DashTimeseries } from "../../api";
 import { useChartTokens } from "../../charts/theme";
 import type { Expanded } from "../useExpanded";
 import type { Drilldown } from "../useDrilldown";
@@ -23,6 +23,9 @@ export interface ChartProps {
   /** Time analytics. Fetched separately from the other three and skipped entirely when every tile
    *  that reads it is hidden, so it is null more often than `ts`/`bd` — see Dashboard.tsx. */
   time: DashTime | null;
+  /** Audit aggregates. Fetched and gated exactly like `time` — null while every tile that reads it
+   *  is hidden, and null on its own fetch error without blanking the rest of the dashboard. */
+  audit: DashAudit | null;
   expand: Expanded;
   drill: Drilldown;
   /** The dashboard's own date inputs, as local `YYYY-MM-DD` days. Only the burn heatmap reads them:
@@ -69,6 +72,28 @@ export function unitLabel(value: string, fill: string) {
 /** Chart margin with room reserved above the plot for `unitLabel` — enough that the caption clears
  *  the topmost tick value rather than sitting on it. */
 export const CHART_MARGIN = { top: 30, right: 8, left: 0, bottom: 0 };
+
+/** Pixels a bucket needs before its bars survive as solid rectangles. Below this recharts emits
+ * sub-pixel-wide bars, which antialias into faint slivers — the fill reads as washed out rather than
+ * thin, and on a long date range the whole series looks empty. */
+const PX_PER_BUCKET = 6;
+/** Y axis reservation, subtracted from the measured width to get the plot area. */
+export const Y_AXIS_W = 36;
+
+/** Measure the chart body and say whether `count` buckets still fit as bars. Attach the ref to a
+ * full-size wrapper around the chart. Before the first observation lands — and in jsdom, which has no
+ * ResizeObserver — width is 0 and bars are assumed to fit. */
+export function useBarsFit(count: number) {
+  const ref = useRef<HTMLDivElement>(null);
+  const [width, setWidth] = useState(0);
+  useEffect(() => {
+    if (!ref.current || typeof ResizeObserver === "undefined") return;
+    const ro = new ResizeObserver(([entry]) => setWidth(entry.contentRect.width));
+    ro.observe(ref.current);
+    return () => ro.disconnect();
+  }, []);
+  return [ref, width === 0 || count * PX_PER_BUCKET <= width - Y_AXIS_W] as const;
+}
 
 /** The scaffolding every ranked horizontal bar card repeats: a full-size vertical-layout BarChart with
  * a numeric X axis and no horizontal grid lines. `yAxis` and the bars/tooltip differ per card, so they

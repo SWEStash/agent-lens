@@ -28,6 +28,9 @@ export interface Mark {
   durationMs: number;
   /** The chosen metric's value; 0 when the event has no usage row. */
   value: number;
+  /** Prompt size for this request — how full the context window was at this message. 0 when the
+   *  event has no usage row. Independent of the metric toggle: it answers a different question. */
+  context: number;
   /** Audit annotations for the rail below the baseline. */
   error: boolean;
   finding: Severity | null;
@@ -55,6 +58,24 @@ export function metricValue(e: EventNode, metric: TokenMetric): number {
   if (metric === "output") return e.usage.output;
   if (metric === "total") return workTokens(e.usage) + e.usage.cache_read;
   return workTokens(e.usage);
+}
+
+/**
+ * How much of the context window this request occupied: the whole prompt the model was sent, which is
+ * input + cache-write + cache-read on the usage row. Output is deliberately absent — it is what came
+ * back, not what was carried in.
+ *
+ * Purely descriptive, and it must stay that way — the line has no threshold, no warning colour and no
+ * "start a fresh session" prompt, and that is a decision rather than an omission.
+ *
+ * The obvious gauge would flag a filling context as a problem. The only measure available for testing
+ * that was work tokens per line of churn, which is disqualified on its own terms (it scores a surgical
+ * fix as the worst outcome), and even under it the relationship was U-shaped rather than monotonic —
+ * so the warning would have been backwards over most of its range even by its own broken yardstick.
+ * Two independent reasons not to ship it; neither licenses the inverse claim either.
+ */
+export function contextTokens(e: EventNode): number {
+  return e.usage ? e.usage.input + e.usage.cache_creation + e.usage.cache_read : 0;
 }
 
 /** Most-severe-first, so an event carrying several findings shows its worst one. */
@@ -101,6 +122,7 @@ export function buildMarks({ events, points, findings, fileChanges, turnSeqById,
       t: p.t,
       durationMs: p.durationMs,
       value: metricValue(e, metric),
+      context: contextTokens(e),
       error: e.toolCalls.some((t) => t.status === "error"),
       finding: worstFinding.get(p.uuid) ?? null,
       fileChange: (changed.get(p.uuid) ?? 0) > 0,

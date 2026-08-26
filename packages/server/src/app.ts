@@ -10,7 +10,7 @@ import fastifyStatic from "@fastify/static";
 import { resolveVersion } from "@agent-lens/core";
 import { renderSessionExport, parseRedactionLevel } from "./export.js";
 import { type DB, lastIngested, schemaStatus, listSources, listProjects, listModels, listSessions, getSession, getWorkflow, listSkills, getSkill, listFindings, openFindingIds, securitySummary, listFiles, getFileTimeline, safeJson } from "./db.js";
-import { dashboardOverview, dashboardTimeseries, dashboardBreakdowns, dashboardTime, type DashFilters } from "./dashboard.js";
+import { dashboardOverview, dashboardTimeseries, dashboardBreakdowns, dashboardTime, dashboardAudit, type DashFilters } from "./dashboard.js";
 import { writeBlocked, runRefresh, LOOPBACK_HOSTS } from "./refresh.js";
 import { openTriage, dismiss, reopen, muteRule, unmute, listMutes, type TriageDB, type MuteScope } from "./triage.js";
 import { about, type AboutContext } from "./about.js";
@@ -144,10 +144,12 @@ export async function createApp(db: DB, opts: CreateAppOpts = {}): Promise<Fasti
   app.get("/api/projects", async () => listProjects(db));
   app.get("/api/models", async () => listModels(db));
 
-  // Dashboard aggregates. All read-only; filters: source, from, to.
+  // Dashboard aggregates. All read-only; filters: source, from, to, models.
+  // `models` is a comma-joined include-list (same convention as severity/error_type below). Absent
+  // means no model predicate at all, which is what the client sends when every model is ticked.
   const dashFilters = (req: any): DashFilters => {
     const q = req.query as Record<string, string>;
-    return { source: q.source, from: q.from, to: q.to };
+    return { source: q.source, from: q.from, to: q.to, models: q.models?.split(",").filter(Boolean) };
   };
   app.get("/api/dashboard/overview", async (req) => dashboardOverview(db, dashFilters(req)));
   app.get("/api/dashboard/timeseries", async (req) => {
@@ -158,6 +160,10 @@ export async function createApp(db: DB, opts: CreateAppOpts = {}): Promise<Fasti
   app.get("/api/dashboard/time", async (req) => {
     const q = req.query as Record<string, string>;
     return dashboardTime(db, dashFilters(req), q.bucket);
+  });
+  app.get("/api/dashboard/audit", async (req) => {
+    const q = req.query as Record<string, string>;
+    return dashboardAudit(db, dashFilters(req), q.bucket);
   });
 
   // UI preferences (chart/column visibility, per-chart toggles). Stored in the writable sidecar

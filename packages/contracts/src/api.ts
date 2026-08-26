@@ -656,7 +656,9 @@ export interface WorkflowDetail {
 // ---- Dashboard aggregates -----------------------------------------------
 
 export interface DashOverview {
-  range: { from: string | null; to: string | null; source: string | null };
+  /** The filters this payload was computed under. `models` is null when no model filter was
+   *  applied — which is not the same as every model being listed (see ADR-035). */
+  range: { from: string | null; to: string | null; source: string | null; models: string[] | null };
   sessions: number;
   sessions_main: number;
   sessions_subagent: number;
@@ -701,10 +703,10 @@ export interface DashTimeseries {
 /**
  * Time analytics: when work happened, rather than how much of it there was.
  *
- * `burn_hours` is the one series in the whole dashboard bucketed by **event** time rather than by
- * `sessions.started_at` — see ADR-033. It is deliberately raw hourly UTC rows: the browser folds
- * them into local weekday/hour, so one exported snapshot reads correctly in every viewer's zone and
- * across DST transitions, neither of which a server-side offset could manage.
+ * `burn_hours` is bucketed by **event** time rather than by `sessions.started_at` — see ADR-033. It
+ * is deliberately raw hourly UTC rows: the browser folds them into local weekday/hour, so one
+ * exported snapshot reads correctly in every viewer's zone and across DST transitions, neither of
+ * which a server-side offset could manage.
  */
 export interface DashTime {
   /** Work tokens (input + output + cache-creation) per UTC hour per source. `hour` is `YYYY-MM-DDTHH`. */
@@ -753,4 +755,36 @@ export interface DashBreakdowns {
     failures: number;
     rejections: number;
   };
+}
+
+/**
+ * Audit aggregates (ADR-036): four questions about how the work went, none of them about efficiency.
+ *
+ * Every series here is **row-grain for the model filter** — each aggregate's rows reach a model
+ * through `events.model`, so none of them falls back to the session-grain "used at least one
+ * selected model" rule that the model-less breakdowns use. `events.model` is populated on 100% of
+ * the rows these joins reach on the real corpus.
+ */
+export interface DashAudit {
+  /** The resolved bucket for the two time series below, echoed like `DashTimeseries.bucket`. */
+  bucket: "day" | "week" | "month";
+  /** File-writing tool calls and how many of them errored, by the model that issued them. Both
+   *  populations — a subagent's edits are real edits. A failed Edit means the model got the file's
+   *  contents wrong, so this is a capability signal; it is confounded by era and task mix and is
+   *  only comparable within a time window. */
+  edit_reliability: Array<{ model: string; calls: number; errors: number }>;
+  /** ExitPlanMode / AskUserQuestion calls and how many the user sent back, per bucket. **Main
+   *  sessions only** — a subagent has no human to reject it. "Sent back" is
+   *  `error_type = 'user-rejected'`, which is narrower than `error_types.rejections`. */
+  plan_rejections: Array<{ bucket: string; plan_calls: number; plan_rejected: number; question_calls: number; question_rejected: number }>;
+  /** How often a session goes back to the same file, as a histogram over (session, file) pairs.
+   *  All five bands are always present, at zero when empty, so the x-axis is stable. Descriptive:
+   *  rework does not correlate with anything useful (the "struggle score" framing was tested and is
+   *  flat), so this ships as a count and a list, never a score. */
+  file_rework: Array<{ band: string; pairs: number; changes: number }>;
+  /** Security findings per bucket by severity. Bucketed on the finding's OWN event timestamp, not
+   *  its session's `started_at` — `findings` has no time column of its own and every row joins to a
+   *  timestamped event, so a bucket is when the risky thing was done. /security stays the surface
+   *  for reading the findings themselves. */
+  findings_over_time: Array<{ bucket: string; info: number; low: number; medium: number; high: number; critical: number }>;
 }

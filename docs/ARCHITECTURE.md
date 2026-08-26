@@ -173,3 +173,5 @@ erDiagram
 | [032](decisions/ADR-032-per-event-token-attribution.md) | Per-event token usage is attributed to the message that renders it, not the raw `token_usage` row |
 | [033](decisions/ADR-033-time-analytics-bucketing.md) | Time analytics bucket token burn by event time, and the browser localizes the hours |
 | [034](decisions/ADR-034-heatmap-metric.md) | The weekday × hour heatmap counts turns, not tokens, and encodes them as a continuous gradient |
+| [035](decisions/ADR-035-dashboard-model-filter.md) | The dashboard's model filter narrows each aggregate at its own grain; an empty selection filters nothing |
+| [036](decisions/ADR-036-dashboard-audit-endpoint.md) | Four audit tiles behind one endpoint, reporting observables rather than scoring efficiency |

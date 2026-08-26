@@ -34,6 +34,10 @@ export interface HeatCell {
   /** Mean of the metric per calendar occurrence of this weekday in range (an unworked day is a zero). */
   mean: number;
   total: number;
+  /** Distinct local days on which this cell saw any activity at all. */
+  observed: number;
+  /** Calendar occurrences of this weekday in range — the denominator behind `mean`. */
+  days: number;
 }
 
 /** The local calendar range a heatmap normalizes over: the dashboard's own date inputs when both are
@@ -80,6 +84,10 @@ export function heatCells(
   range?: HeatRange,
 ): { cells: HeatCell[]; max: number } {
   const totals = new Map<string, number>();
+  // Distinct days per cell, kept alongside the totals. It is not derivable from `mean` and `total`:
+  // both are consistent with one busy day or with fifteen quiet ones, and 17 of the author's active
+  // cells rest on a single observed day. The gradient makes a one-off faint; only this makes it legible.
+  const observed = new Map<string, Set<string>>();
   let firstDay: string | null = null;
   let lastDay: string | null = null;
   for (const r of rows) {
@@ -89,6 +97,8 @@ export function heatCells(
     if (lastDay === null || p.dayKey > lastDay) lastDay = p.dayKey;
     const k = `${p.weekday}:${p.hour}`;
     totals.set(k, (totals.get(k) ?? 0) + r.value);
+    // A payload row with a zero value is an hour that produced nothing, not an hour that was worked.
+    if (r.value > 0) (observed.get(k) ?? observed.set(k, new Set()).get(k)!).add(p.dayKey);
   }
 
   // The dashboard's range wins when it is complete, because it knows about the empty days at the
@@ -107,7 +117,7 @@ export function heatCells(
       const total = totals.get(`${weekday}:${hour}`) ?? 0;
       const mean = days ? total / days : 0;
       if (mean > max) max = mean;
-      cells.push({ weekday, hour, mean, total });
+      cells.push({ weekday, hour, mean, total, observed: observed.get(`${weekday}:${hour}`)?.size ?? 0, days });
     }
   }
   return { cells, max };
