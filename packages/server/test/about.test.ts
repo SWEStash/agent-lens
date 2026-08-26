@@ -14,7 +14,7 @@
 import { describe, it, expect } from "vitest";
 import { DatabaseSync } from "node:sqlite";
 import { PRICE_TABLE, resolvePricing, SCHEMA_SQL, usePricing } from "@agent-lens/core";
-import { addEvent, addTokens, appFor, freshDb, seedBasic } from "./helpers/seed";
+import { addEvent, addTokens, appFor, freshDb, seedBasic } from "./helpers/seed.js";
 
 const CTX = {
   db: { path: "/tmp/nowhere/custom.db", origin: "flag" as const },

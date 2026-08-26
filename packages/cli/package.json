@@ -45,7 +45,7 @@
   "scripts": {
     "build": "tsup && node scripts/copy-web.mjs",
     "prepack": "pnpm build",
-    "typecheck": "tsc -p tsconfig.json --noEmit"
+    "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.test.json"
   },
   "dependencies": {
     "@fastify/static": "^10.1.0",

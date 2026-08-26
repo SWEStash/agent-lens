@@ -5,7 +5,7 @@
  * (and what makes the static snapshot build work at all).
  */
 import { describe, it, expect } from "vitest";
-import { appFor, seedBasic } from "./helpers/seed";
+import { appFor, seedBasic } from "./helpers/seed.js";
 
 const KEY = "/api/prefs/dashboard.charts";
 const sameOrigin = { origin: "http://localhost", "content-type": "application/json" };

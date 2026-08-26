@@ -10,7 +10,7 @@ import { mkdtempSync, writeFileSync, mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { appFor, seedBasic } from "./helpers/seed";
+import { appFor, seedBasic } from "./helpers/seed.js";
 
 let app: Awaited<ReturnType<typeof appFor>>;
 

@@ -14,7 +14,7 @@
  */
 import { describe, it, expect } from "vitest";
 import type { SessionDetail } from "@agent-lens/contracts";
-import { addEvent, addSession, addTokens, addTool, addTurn, appFor, freshDb } from "./helpers/seed";
+import { addEvent, addSession, addTokens, addTool, addTurn, appFor, freshDb } from "./helpers/seed.js";
 
 const SPLIT = { input: 10, output: 20, cache_creation: 30, cache_read: 40 };
 const seedTokens = { input: 10, output: 20, cacheCreate: 30, cacheRead: 40 };

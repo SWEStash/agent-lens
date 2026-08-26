@@ -8,7 +8,7 @@
  * notification when both exist.
  */
 import { describe, it, expect } from "vitest";
-import { addEvent, addSession, addTool, addTurn, appFor, freshDb } from "./helpers/seed";
+import { addEvent, addSession, addTool, addTurn, appFor, freshDb } from "./helpers/seed.js";
 
 /** An orchestrator session whose turn 0 launches run `wf_run1` via a Workflow tool call. */
 function seedOrchestrator(opts: { title?: string | null; status?: string; resultSummary?: string; inputJson?: string } = {}) {

@@ -1,0 +1,11 @@
+// Typechecks test/ (jsx + DOM settings inherited from the main config). Kept separate rather than
+// widened into `include` so `build` — which runs `tsc --noEmit && vite build` — stays about src;
+// the tests are the `typecheck` script's job. This is the only package whose tests import source
+// rather than a built dist, so it is also the only one where the check doesn't need a prior build.
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": true
+  },
+  "include": ["test/**/*"]
+}
