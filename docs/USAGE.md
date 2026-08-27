@@ -696,7 +696,7 @@ below is relative to `<dataDir>`; run `agent-lens config` to print the resolved 
 | `GET /api/health` | liveness, last-ingest time, schema version + staleness, and the running build (`version`, `version_source`) |
 | `GET /api/sources` | configured sources + session counts |
 | `GET /api/projects` | projects (cwd) + session counts |
-| `GET /api/models` | distinct model ids, including Claude Code's `<synthetic>` marker (replies generated without an API call) — the dashboard's model filter omits that one from its own options |
+| `GET /api/models` | distinct **canonical** model ids — a dated snapshot resolves to its minor version ([ADR-037](decisions/ADR-037-canonical-model-key.md)). Includes Claude Code's `<synthetic>` marker (replies generated without an API call), which the dashboard's model filter omits from its own options |
 | `GET /api/sessions` | filtered, paginated session list (see query params) |
 | `GET /api/sessions/:id` | session meta + turns + events (transcript) + classification |
 | `GET /api/sessions/:id/export.md` | Markdown export (attachment) |
