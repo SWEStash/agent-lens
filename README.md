@@ -12,11 +12,11 @@
 ![Platform: Linux · macOS · Windows](https://img.shields.io/badge/platform-Linux%20%C2%B7%20macOS%20%C2%B7%20Windows-lightgrey)
 ![Privacy: local-only](https://img.shields.io/badge/privacy-local--only-success)
 
-Claude Code records rich per-session telemetry under `~/.claude/`, but prunes it on a rolling
-**30-day window**. Agent Lens continuously copies that data out before it's lost, normalizes it into
-a queryable SQLite store, and gives you three things over it — a searchable transcript browser,
-usage/cost dashboards, and a deterministic, no-AI **audit of what the agent actually did on your
-machine** — without a single byte leaving your machine.
+**Take control of your Claude Code session traces.** Every session leaves a detailed record — what
+you asked, what the agent ran, what it changed on disk. Agent Lens collects that record
+automatically, keeps it for as long as *you* decide, and makes it yours to work with: a searchable
+transcript browser, usage and cost dashboards, and a deterministic, no-AI **audit of what the agent
+actually did on your machine**. Without a single byte leaving your machine.
 
 ## Table of contents
 
@@ -39,7 +39,7 @@ machine** — without a single byte leaving your machine.
 Point it at your Claude install(s) and every session becomes queryable — in three local stages:
 
 **1 · Collect** — a background timer mirrors each account's transcripts into a local archive before
-Claude Code's 30-day prune (never deletes, never copies secrets):
+they age out of Claude Code's own rolling window (never deletes, never copies secrets):
 
 ```text
 data/archive/
@@ -77,8 +77,8 @@ agent-lens-ingest: files=312 skipped=298 new_events=1840 malformed=0
 
 ## Features
 
-- **Passive collection** — copies each account's transcripts into a local archive before Claude
-  Code's 30-day prune, on a schedule or on file change. Never deletes, never copies secrets. Runs as
+- **Passive collection** — copies each account's transcripts into a local archive before they age out
+  of Claude Code's own rolling window, on a schedule or on file change. Never deletes, never copies secrets. Runs as
   portable Node (`agent-lens collect`) — no `rsync`/bash required.
 - **One cross-platform CLI** — `agent-lens <collect | ingest | serve | watch | metrics | export | service | config>`, a single
   bundled binary that runs on Linux, macOS, and Windows (you already have Node from the Claude Code CLI).
