@@ -114,6 +114,11 @@ canonicalized, which is a worse failure mode than a duplicated regex.
   string `claude-haiku-4-5-20251001` → `claude-haiku-4-5` is normalized out. An independent
   recomputation straight from SQLite, sharing no code with the server, agrees field by field on
   tokens, session counts, cost, and edit-reliability calls/errors.
+
+  If you repeat that capture, **freeze the DB first**. The corpus is live: an ingest between the two
+  captures moves the numbers on its own, and re-running this comparison across one produced 47
+  differing files that had nothing to do with the change — the same 47 appear when the *identical*
+  build is run against the two DB vintages, which is the control worth keeping.
 - The fixture in `dashboard.test.ts` seeding one model under both ids is the regression guard this
   whole change exists for; without a collision in the corpus it is the only place the case is real.
 - **Noted, not fixed:** `PRICE_TABLE` has no `[1m]` entry at all, so `claude-opus-4-8[1m]` currently
