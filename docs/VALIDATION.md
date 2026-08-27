@@ -64,7 +64,9 @@ pnpm sandbox                                # Layer 5 end-to-end over the corpus
     `total_tokens`, `cache_read_ratio`, cost, `unpriced_models`, p50/p95 turn
     duration, per-model/source/category breakdowns, subagent fan-out, source
     filter, the model filter at each aggregate's own grain, and the four audit
-    aggregates) with hand-computed numbers.
+    aggregates) with hand-computed numbers, plus the canonical-key collision
+    fixture — one model ingested under a dated id *and* its alias, which the real
+    corpus has never carried (ADR-037).
   - `ingest/test/classify.test.ts` — complexity sub-scores + weighted total
     (zero, all-ceilings → 100.0, exact half-ceilings), LoC parsing, category
     keywords + structural signals + subagent-role override.
@@ -107,7 +109,7 @@ pnpm sandbox                                # Layer 5 end-to-end over the corpus
 
 **Layer 0 — type gate (`pnpm typecheck`):** clean across all 7 packages, `src` and `test`.
 
-**Layer 1/3/4-unit + corpus scenarios + web — `pnpm test`:** 943 tests pass (74 files).
+**Layer 1/3/4-unit + corpus scenarios + web — `pnpm test`:** 982 tests pass (75 files).
 
 **Layer 2 — invariants on the live corpus (~632-session snapshot):** all hard invariants PASS.
 
