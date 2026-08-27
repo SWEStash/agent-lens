@@ -44,6 +44,21 @@ export function pushDateRange(clauses: string[], params: unknown[], col: string,
   }
 }
 
+/**
+ * The SQL twin of `canonicalModel` — strips a trailing `-YYYYMMDD` so a dated snapshot groups and
+ * filters as its minor version (ADR-037). `col` is an internal column expression, never user input.
+ *
+ * `GLOB`, not `LIKE`: `_` is a LIKE wildcard and model ids contain them — the same trap `ratesCte`
+ * documents. The pattern anchors the hyphen at `length - 9`, so a 7- or 9-digit tail is left alone.
+ *
+ * Per row this costs 10–20ms on a 1GB corpus, so apply it over a DISTINCT set where the query shape
+ * allows (see `listModels`). Rewriting `by_model` that way was measured too, and gained nothing.
+ */
+export function canonModelSql(col: string): string {
+  return `CASE WHEN ${col} GLOB '*-[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]'
+      THEN substr(${col}, 1, length(${col}) - 9) ELSE ${col} END`;
+}
+
 /** The subagent-meta LEFT JOIN, present only when the `session_meta` table exists (pre-ingest DBs). */
 export function metaJoin(hasMeta: boolean): string {
   return hasMeta ? "LEFT JOIN session_meta sm ON sm.session_id = s.id" : "";

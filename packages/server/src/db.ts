@@ -1,5 +1,5 @@
 import { DatabaseSync } from "node:sqlite";
-import { SCHEMA_VERSION, severityRank, activePricing, SECURITY_CATEGORIES, errorKind, type ToolErrorType, type Rate } from "@agent-lens/core";
+import { SCHEMA_VERSION, severityRank, activePricing, canonicalModel, SECURITY_CATEGORIES, errorKind, type ToolErrorType, type Rate } from "@agent-lens/core";
 import { TASK_FAILURES_TAG, TASK_NOTIFICATION_TAG, TASK_RESULT_TAG, TASK_STATUS_TAG, TASK_SUMMARY_TAG, xmlTag } from "@agent-lens/transcript-format";
 import type {
   Finding,
@@ -36,7 +36,7 @@ import type {
   WorkflowRunResult,
   FindingsPage,
 } from "@agent-lens/contracts";
-import { tableExists, queryAll, queryGet, orderBy, pushGrouped, pushDateRange, metaJoin, metaProjection } from "./sql-util.js";
+import { tableExists, canonModelSql, queryAll, queryGet, orderBy, pushGrouped, pushDateRange, metaJoin, metaProjection } from "./sql-util.js";
 import type {
   CategoryRow,
   ToolCallProjection,
@@ -139,9 +139,19 @@ export function listModels(db: DB): string[] {
   // without an API call — but it IS a value the sessions list can usefully filter on, and 2,094
   // sessions carry it. The dashboard's model filter drops it from its own options instead
   // (ADR-035), which is where that judgement belongs.
-  return queryAll<ModelRow>(db, `SELECT DISTINCT model FROM token_usage WHERE model IS NOT NULL ORDER BY model`).map(
-    (r) => r.model,
-  );
+  //
+  // Canonical ids (ADR-037): a dated snapshot and its alias are one option, so the filter can never
+  // offer two identical-looking choices that each admit half the model's work. `<synthetic>` carries
+  // no date, so it survives this untouched.
+  //
+  // Canonicalize over the DISTINCT set, not per row — `ratesCte`'s lesson applied again. Stripping
+  // 61,447 model strings and then de-duplicating measured 32ms; de-duplicating first and stripping
+  // the 8 survivors measures 11ms, faster than the original undecorated query (21ms).
+  return queryAll<ModelRow>(
+    db,
+    `SELECT DISTINCT ${canonModelSql("m")} AS model
+     FROM (SELECT DISTINCT model m FROM token_usage WHERE model IS NOT NULL) ORDER BY 1`,
+  ).map((r) => r.model);
 }
 
 /**
@@ -234,8 +244,10 @@ export function listSessions(db: DB, f: SessionFilters): SessionsPage {
     params.push(...f.errorType);
   }
   if (f.model) {
-    where.push("EXISTS (SELECT 1 FROM token_usage t WHERE t.session_id = s.id AND t.model = ?)");
-    params.push(f.model);
+    // Family match, not exact (ADR-037): canonical on both sides, so picking a model admits every
+    // dated snapshot of it — and a saved link carrying a raw dated id still resolves.
+    where.push(`EXISTS (SELECT 1 FROM token_usage t WHERE t.session_id = s.id AND ${canonModelSql("t.model")} = ?)`);
+    params.push(canonicalModel(f.model));
   }
   if (f.q && f.q.trim()) {
     // Match transcript text (FTS) OR the session's own name (slug/ai_title) OR its project path, so a
@@ -256,7 +268,7 @@ export function listSessions(db: DB, f: SessionFilters): SessionsPage {
 
   const baseSelect = `SELECT s.id, s.ai_title, s.slug, s.source_id, s.is_sidechain, s.started_at,
               s.duration_ms, s.event_count, s.turn_count, p.path AS project_path,
-              (SELECT GROUP_CONCAT(DISTINCT model) FROM token_usage t WHERE t.session_id = s.id) AS models,
+              (SELECT GROUP_CONCAT(DISTINCT ${canonModelSql("model")}) FROM token_usage t WHERE t.session_id = s.id) AS models,
               (SELECT COUNT(*) FROM tool_calls tc WHERE tc.session_id = s.id) AS tool_call_count,
               (SELECT COUNT(*) FROM tool_calls tc WHERE tc.session_id = s.id AND tc.status = 'error') AS tool_error_count,
               (SELECT COUNT(*) FROM findings fd WHERE fd.session_id = s.id) AS finding_count,
@@ -569,7 +581,7 @@ function loadChildren(db: DB, id: string): SessionChild[] {
   const children = queryAll<SessionChildRow>(
     db,
     `SELECT s.id, s.ai_title, s.slug, s.turn_count, s.started_at, s.workflow_run_id,
-            (SELECT GROUP_CONCAT(DISTINCT model) FROM token_usage t WHERE t.session_id = s.id) AS models
+            (SELECT GROUP_CONCAT(DISTINCT ${canonModelSql("model")}) FROM token_usage t WHERE t.session_id = s.id) AS models
             ${metaProjection(hasMeta)}
      FROM sessions s ${metaJoin(hasMeta)}
      WHERE s.parent_session_id = ? ORDER BY s.started_at`,
@@ -706,7 +718,7 @@ function loadAgents(db: DB, runId: string): { agents: WorkflowAgent[]; stats: Wo
   const agentRows = queryAll<WorkflowAgentRow>(
     db,
     `SELECT s.id, s.ai_title, s.slug, s.turn_count, s.started_at, s.ended_at, s.duration_ms,
-            (SELECT GROUP_CONCAT(DISTINCT model) FROM token_usage t WHERE t.session_id = s.id) AS models
+            (SELECT GROUP_CONCAT(DISTINCT ${canonModelSql("model")}) FROM token_usage t WHERE t.session_id = s.id) AS models
             ${metaProjection(hasMeta)}
      FROM sessions s ${metaJoin(hasMeta)}
      WHERE s.workflow_run_id = ? ORDER BY s.started_at`,

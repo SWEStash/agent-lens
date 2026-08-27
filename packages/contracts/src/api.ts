@@ -182,11 +182,15 @@ export interface SessionSummary {
   event_count: number;
   turn_count: number;
   project_path: string | null;
+  /** CSV of the CANONICAL model ids this session spent on (ADR-037) — a dated snapshot and its alias
+   *  are one tag, not two identical-looking ones. */
   models: string | null;
   tokens: number;
   token_split: TokenSplit;
   cost: number;
-  /** Models in this session with no list price, so `cost` understates it. Empty when fully priced. */
+  /** Models in this session with no list price, so `cost` understates it. Empty when fully priced.
+   *  RAW ids, deliberately — unlike `models` above, which is canonical: a rate is looked up on the
+   *  id as ingested (ADR-037), so this names exactly what to add a rate for. */
   unpriced_models: string[];
   /** Tool-call roll-ups for the sessions-list Errors + Security columns. */
   tool_call_count: number;
@@ -290,6 +294,7 @@ export interface SessionChild {
   title: string | null;
   turn_count: number;
   started_at: string | null;
+  /** CSV of canonical model ids — see {@link SessionSummary.models}. */
   models: string | null;
   tokens: number;
   cost: number;
@@ -333,7 +338,9 @@ export interface SessionDetailData extends SessionRow {
   tokens: number;
   token_split: TokenSplit;
   cost: number;
-  /** Models in this session with no list price, so `cost` understates it. Empty when fully priced. */
+  /** Models in this session with no list price, so `cost` understates it. Empty when fully priced.
+   *  RAW ids, deliberately — unlike `models` above, which is canonical: a rate is looked up on the
+   *  id as ingested (ADR-037), so this names exactly what to add a rate for. */
   unpriced_models: string[];
   title: string | null;
   tool_call_count: number;
@@ -573,6 +580,7 @@ export interface WorkflowAgent {
   started_at: string | null;
   ended_at: string | null;
   duration_ms: number | null;
+  /** CSV of canonical model ids — see {@link SessionSummary.models}. */
   models: string | null;
   tokens: number;
   cost: number;
@@ -657,7 +665,8 @@ export interface WorkflowDetail {
 
 export interface DashOverview {
   /** The filters this payload was computed under. `models` is null when no model filter was
-   *  applied — which is not the same as every model being listed (see ADR-035). */
+   *  applied — which is not the same as every model being listed (see ADR-035). Values are echoed
+   *  CANONICAL (ADR-037): a raw dated id is accepted on input and comes back as its family key. */
   range: { from: string | null; to: string | null; source: string | null; models: string[] | null };
   sessions: number;
   sessions_main: number;
@@ -669,6 +678,7 @@ export interface DashOverview {
   total_tokens: number;
   cache_read_ratio: number;
   cost: number;
+  /** RAW model ids with usage but no rate — see {@link SessionSummary.unpriced_models}. */
   unpriced_models: string[];
   turn_duration_ms: { p50: number; p95: number; count: number };
   /** End-to-end session-length percentiles over main sessions (excludes subagents & null durations). */
@@ -715,7 +725,8 @@ export interface DashTime {
    *  the metric: tokens are spend and count subagents too, a turn is a human sitting down to
    *  prompt. Same raw-hourly shape as `burn_hours`, folded to local time in the browser. */
   turn_hours: Array<{ hour: string; source: string | null; turns: number }>;
-  /** Prompt to first assistant token, per bucket per model. Main sessions only. Never a mean. */
+  /** Prompt to first assistant token, per bucket per model. Main sessions only. Never a mean.
+   *  `model` is the canonical id (ADR-037), `(unknown)` for a turn with no model. */
   latency: {
     bucket: "day" | "week" | "month";
     series: Array<{ bucket: string; model: string; p50_ms: number; p90_ms: number; n: number }>;
@@ -733,7 +744,11 @@ export interface ReviewLatency {
 }
 
 export interface DashBreakdowns {
-  /** `token_usage.model` is nullable and this group-by (unlike the model *filter* list) does not
+  /** Keyed by the CANONICAL model id (ADR-037), so a dated snapshot groups with its alias. `cost`
+   *  is still summed from the RAW ids underneath, so a dated pricing override keeps applying, and
+   *  `priced` is false if ANY raw id in the family lacks a rate.
+   *
+   *  `token_usage.model` is nullable and this group-by (unlike the model *filter* list) does not
    *  exclude nulls, so the query COALESCEs the bucket to `(unknown)` — same convention as by_source. */
   by_model: Array<{ model: string; tokens: TokenSplit; total_tokens: number; cost: number; sessions: number; priced: boolean }>;
   by_source: Array<{ source: string; sessions: number; turns: number }>;
@@ -771,7 +786,7 @@ export interface DashAudit {
   /** File-writing tool calls and how many of them errored, by the model that issued them. Both
    *  populations — a subagent's edits are real edits. A failed Edit means the model got the file's
    *  contents wrong, so this is a capability signal; it is confounded by era and task mix and is
-   *  only comparable within a time window. */
+   *  only comparable within a time window. `model` is the canonical id (ADR-037). */
   edit_reliability: Array<{ model: string; calls: number; errors: number }>;
   /** ExitPlanMode / AskUserQuestion calls and how many the user sent back, per bucket. **Main
    *  sessions only** — a subagent has no human to reject it. "Sent back" is

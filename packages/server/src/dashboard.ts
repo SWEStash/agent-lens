@@ -5,10 +5,10 @@
  * (input / output / cache-creation / cache-read); cache-read is never folded into a single
  * "tokens" number because it dominates and misleads. Cost is derived via the shared pricing table.
  */
-import { costForUsage, rateForModel, errorKind, type ToolErrorType } from "@agent-lens/core";
+import { canonicalModel, costForUsage, rateForModel, errorKind, type ToolErrorType } from "@agent-lens/core";
 import type { DashAudit, DashBreakdowns, DashOverview, DashTime, DashTimeseries, ReviewLatency, TimeseriesPoint } from "@agent-lens/contracts";
 import type { DB } from "./db.js";
-import { tableExists, pushDateRange, queryAll, queryGet } from "./sql-util.js";
+import { tableExists, canonModelSql, pushDateRange, queryAll, queryGet } from "./sql-util.js";
 import type {
   BucketCountRow,
   BucketErrorRow,
@@ -49,9 +49,14 @@ function sessionWhere(f: DashFilters): Where {
   // "sessions that used at least one selected model". A correlated EXISTS is the cheap form here —
   // token_usage is indexed by session_id, so this measures 15ms on a 1GB corpus (the materialized
   // set reviewLatency needs is for file_changes.turn_id, which has no index).
-  const models = f.models?.length ? f.models : undefined;
+  // Canonical on both sides (ADR-037): the column is stripped of its dated suffix and so is every
+  // incoming value, so one tick admits the whole family — and a shared link that still carries a raw
+  // dated id keeps resolving instead of silently matching nothing.
+  const models = f.models?.length ? [...new Set(f.models.map((m) => canonicalModel(m)))] : undefined;
   if (models) {
-    where.push(`EXISTS (SELECT 1 FROM token_usage t WHERE t.session_id = s.id AND t.model IN (${placeholders(models)}))`);
+    where.push(
+      `EXISTS (SELECT 1 FROM token_usage t WHERE t.session_id = s.id AND ${canonModelSql("t.model")} IN (${placeholders(models)}))`,
+    );
     params.push(...models);
   }
   return { sql: where.length ? `WHERE ${where.join(" AND ")}` : "", params, models };
@@ -69,7 +74,8 @@ const and = (w: Where, sql: string, params: unknown[] = []): Where => ({
 /**
  * Narrow an aggregate to the selected models at ITS OWN grain — token_usage.model, turns.model or
  * events.model — because a session routinely uses several and the session-level restriction above
- * only says the session touched one of them.
+ * only says the session touched one of them. The comparison is canonical on both sides, as in
+ * {@link sessionWhere}.
  *
  * Rows whose model is NULL are dropped, deliberately: an unattributable row cannot answer "was this
  * opus-5". Note that this is an `IN` list, so the drop is silent — unlike the `IS NOT '<synthetic>'`
@@ -77,7 +83,7 @@ const and = (w: Where, sql: string, params: unknown[] = []): Where => ({
  * predicate is absent entirely, so the default keeps every null-model row.
  */
 const withModel = (w: Where, col: string): Where =>
-  w.models ? and(w, `${col} IN (${placeholders(w.models)})`, w.models) : w;
+  w.models ? and(w, `${canonModelSql(col)} IN (${placeholders(w.models)})`, w.models) : w;
 
 /** A tool call carries no model of its own; its event does, on every row of the real corpus. Joined
  *  only when a model is actually selected, so the unfiltered query plan is untouched. */
@@ -265,7 +271,9 @@ export function dashboardOverview(db: DB, f: DashFilters): DashOverview {
   const sessDur = percentiles(db, `SELECT s.duration_ms v FROM sessions s ${mw.sql} AND s.duration_ms IS NOT NULL`, mw.params);
 
   return {
-    range: { from: f.from ?? null, to: f.to ?? null, source: f.source ?? null, models: f.models?.length ? f.models : null },
+    // `w.models`, not `f.models`: the echo names the models actually queried, so a link that arrived
+    // with a raw dated id reports the family key it resolved to rather than the string it was sent.
+    range: { from: f.from ?? null, to: f.to ?? null, source: f.source ?? null, models: w.models ?? null },
     sessions: counts.sessions ?? 0,
     sessions_main: counts.main ?? 0,
     sessions_subagent: counts.subagent ?? 0,
@@ -362,27 +370,57 @@ export function dashboardTimeseries(db: DB, f: DashFilters, bucketParam?: string
   return { bucket, series };
 }
 
+/**
+ * Tokens, sessions and cost per model — keyed by the CANONICAL id (ADR-037), so a dated snapshot and
+ * its alias are one bar rather than two identically-labelled ones.
+ *
+ * Two aggregates rather than one, because the two measures want different grouping keys:
+ *
+ * - **Tokens and sessions** group canonically in SQL. `COUNT(DISTINCT session_id)` in particular
+ *   *must* be computed at the canonical grain — folding raw rows in JS would count a session that
+ *   used both ids of one family twice.
+ * - **Cost** groups on the RAW id and folds here, because `rateForModel` matches by longest prefix
+ *   and pricing is config-overridable (ADR-028): an override keyed to a dated id must keep pricing
+ *   that id. Canonicalizing before the rate lookup would silently bypass it. Same reason `priced`
+ *   is an AND over the family's raw ids — one unpriced member makes the bucket's cost understated.
+ */
 function modelBreakdown(db: DB, w: Where): DashBreakdowns["by_model"] {
   const uw = withModel(w, "t.model");
+  // COALESCE the bucket label, exactly as by_source does for a null source_id: token_usage.model is
+  // nullable and this GROUP BY — unlike the model FILTER list — does not exclude nulls, so a
+  // null-model bucket reaches the chart. It used to render as a nameless bar.
+  const canon = canonModelSql("t.model");
   const modelRows = queryAll<ModelBreakdownRow>(
     db,
-    // COALESCE the bucket label, exactly as by_source does for a null source_id: token_usage.model is
-    // nullable and this GROUP BY — unlike the model FILTER list — does not exclude nulls, so a
-    // null-model bucket reaches the chart. It used to render as a nameless bar.
-    `SELECT COALESCE(t.model, '(unknown)') model, SUM(t.input_tokens) i, SUM(t.output_tokens) o,
+    `SELECT COALESCE(${canon}, '(unknown)') model, SUM(t.input_tokens) i, SUM(t.output_tokens) o,
             SUM(t.cache_creation_input_tokens) cw, SUM(t.cache_read_input_tokens) cr,
             COUNT(DISTINCT t.session_id) sessions
      FROM token_usage t JOIN sessions s ON s.id = t.session_id ${uw.sql}
-     GROUP BY t.model ORDER BY (SUM(t.input_tokens)+SUM(t.output_tokens)+SUM(t.cache_creation_input_tokens)+SUM(t.cache_read_input_tokens)) DESC`,
+     GROUP BY 1 ORDER BY (SUM(t.input_tokens)+SUM(t.output_tokens)+SUM(t.cache_creation_input_tokens)+SUM(t.cache_read_input_tokens)) DESC`,
     ...uw.params,
   );
+
+  const cost = new Map<string, number>();
+  const unpriced = new Set<string>();
+  for (const u of queryAll<ModelBreakdownRow>(
+    db,
+    `SELECT COALESCE(t.model, '(unknown)') model, SUM(t.input_tokens) i, SUM(t.output_tokens) o,
+            SUM(t.cache_creation_input_tokens) cw, SUM(t.cache_read_input_tokens) cr
+     FROM token_usage t JOIN sessions s ON s.id = t.session_id ${uw.sql} GROUP BY t.model`,
+    ...uw.params,
+  )) {
+    const key = canonicalModel(u.model);
+    cost.set(key, (cost.get(key) ?? 0) + costForUsage(u.model, usageForCost(u)));
+    if (!rateForModel(u.model)) unpriced.add(key);
+  }
+
   return modelRows.map((u) => ({
     model: u.model,
     tokens: { input: u.i ?? 0, output: u.o ?? 0, cache_creation: u.cw ?? 0, cache_read: u.cr ?? 0 },
     total_tokens: (u.i ?? 0) + (u.o ?? 0) + (u.cw ?? 0) + (u.cr ?? 0),
-    cost: Number(costForUsage(u.model, usageForCost(u)).toFixed(4)),
+    cost: Number((cost.get(u.model) ?? 0).toFixed(4)),
     sessions: u.sessions ?? 0,
-    priced: !!rateForModel(u.model),
+    priced: !unpriced.has(u.model),
   }));
 }
 
@@ -392,7 +430,7 @@ function sourceBreakdown(db: DB, w: Where): DashBreakdowns["by_source"] {
   // count rides `idx_turns_session`. Placeholders here precede the WHERE clause, so its params bind
   // first.
   const perSourceTurns = w.models
-    ? `SUM((SELECT COUNT(*) FROM turns tn WHERE tn.session_id = s.id AND tn.model IN (${placeholders(w.models)})))`
+    ? `SUM((SELECT COUNT(*) FROM turns tn WHERE tn.session_id = s.id AND ${canonModelSql("tn.model")} IN (${placeholders(w.models)})))`
     : "SUM(s.turn_count)";
   return queryAll<DashBreakdowns["by_source"][number]>(
     db,
@@ -630,7 +668,7 @@ function modelLatency(db: DB, mw: Where, bucket: Bucket): DashTime["latency"] {
   const series = queryAll<LatencyRow>(
     db,
     `WITH lat AS MATERIALIZED (
-       SELECT ${expr} b, COALESCE(tn.model, '(unknown)') model,
+       SELECT ${expr} b, COALESCE(${canonModelSql("tn.model")}, '(unknown)') model,
               (julianday(MIN(e.timestamp)) - julianday(tn.started_at)) * 86400000.0 ms
        FROM turns tn
        JOIN sessions s ON s.id = tn.session_id
@@ -730,7 +768,7 @@ function editReliability(db: DB, w: Where): DashAudit["edit_reliability"] {
   const ew = withModel(w, "e.model");
   return queryAll<DashAudit["edit_reliability"][number]>(
     db,
-    `SELECT COALESCE(e.model, '(unknown)') model, COUNT(*) calls,
+    `SELECT COALESCE(${canonModelSql("e.model")}, '(unknown)') model, COUNT(*) calls,
             SUM(CASE WHEN tc.status = 'error' THEN 1 ELSE 0 END) errors
      FROM tool_calls tc ${eventJoin} JOIN sessions s ON s.id = tc.session_id
      ${andWhere(ew)} tc.tool_name IN ('Edit', 'Write', 'NotebookEdit')

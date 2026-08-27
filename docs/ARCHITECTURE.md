@@ -175,3 +175,4 @@ erDiagram
 | [034](decisions/ADR-034-heatmap-metric.md) | The weekday × hour heatmap counts turns, not tokens, and encodes them as a continuous gradient |
 | [035](decisions/ADR-035-dashboard-model-filter.md) | The dashboard's model filter narrows each aggregate at its own grain; an empty selection filters nothing |
 | [036](decisions/ADR-036-dashboard-audit-endpoint.md) | Four audit tiles behind one endpoint, reporting observables rather than scoring efficiency |
+| [037](decisions/ADR-037-canonical-model-key.md) | A model id groups and filters at its minor version; a dated snapshot and its alias are one model |
