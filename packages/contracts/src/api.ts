@@ -317,7 +317,8 @@ export interface WorkflowRun {
   status: string | null;
 }
 
-/** One derived file modification (ADR-022): a successful Edit/Write/NotebookEdit tool call's target. */
+/** One derived file modification (ADR-022): a file a successful Edit/Write/NotebookEdit call, or a
+ * Bash call's shell write, targeted. */
 export interface FileChangeRow {
   id: string;
   tool_call_id: string;
@@ -359,8 +360,8 @@ export interface SessionDetail {
   workflow_runs: WorkflowRun[];
   /** Security findings across this session (ADR-017), most-severe first — for the header summary. */
   findings: Finding[];
-  /** File modifications derived from this session's Edit/Write tool calls (ADR-022), chronological —
-   * for the "Files changed" header roll-up. Empty on a pre-v14 DB. */
+  /** File modifications derived from this session's file-tool calls and Bash shell writes (ADR-022),
+   * chronological — for the "Files changed" header roll-up. Empty on a pre-v14 DB. */
   file_changes: FileChangeRow[];
 }
 

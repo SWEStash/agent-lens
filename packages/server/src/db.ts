@@ -613,8 +613,8 @@ function loadWorkflowRuns(db: DB, id: string): WorkflowRun[] {
   );
 }
 
-/** File-modification provenance (ADR-022): the session's derived Edit/Write/NotebookEdit file
- * changes, for the "Files changed" header roll-up. Guarded for a pre-v14 read-only DB. */
+/** File-modification provenance (ADR-022): the session's derived file changes (Edit/Write/
+ * NotebookEdit calls and Bash shell writes), for the "Files changed" header roll-up. Guarded for a pre-v14 read-only DB. */
 function loadFileChanges(db: DB, id: string): FileChangeRow[] {
   if (!tableExists(db, "file_changes")) return [];
   return queryAll<FileChangeRow>(

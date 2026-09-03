@@ -1,22 +1,27 @@
 /**
  * File-modification provenance (ADR-022, level 1) — derive `file_changes` rows from successful
- * Edit/Write/NotebookEdit tool calls' verbatim input_json.
+ * Edit/Write/NotebookEdit tool calls' verbatim input_json, plus the unambiguous file writes a Bash
+ * call performs (shellwrites.ts).
  *
  * Deterministic and re-runnable, modeled on detect.ts: 0..N rows per tool call ⇒ incremental runs
  * delete-then-insert the dirty sessions' rows; null/undefined dirty ⇒ full rescan. Failed calls
- * (status='error') are skipped — a failed edit did not change the file. Only these tools are
- * covered: Bash-driven writes, deletions, and renames are deliberately out of scope here (they are
- * a lower confidence class; tracked-file deletions/renames arrive with the git-composed level 2 —
- * see the ADR).
+ * (status='error') are skipped — a failed edit did not change the file.
+ *
+ * Bash was originally scoped out here as a lower-confidence class, but profiling showed that left a
+ * third of main sessions changing project files invisibly, so the constructs that ARE unambiguous
+ * from the command text (heredoc writes, tee, sed -i, echo/printf redirects) now derive rows too.
+ * The genuinely ambiguous rest stays out — see shellwrites.ts for what is excluded and why.
+ * Deletions and renames remain level 2's git-composed territory.
  */
 import { createHash } from "node:crypto";
 import { posix as path } from "node:path";
 import { transaction } from "@agent-lens/core";
+import { parseShellWrites } from "./shellwrites.js";
 import type { DB } from "./db.js";
 
-export const FILECHANGES_VERSION = 1;
+export const FILECHANGES_VERSION = 2;
 
-const FILE_TOOLS = ["Edit", "Write", "NotebookEdit"] as const;
+const FILE_TOOLS = ["Edit", "Write", "NotebookEdit", "Bash"] as const;
 
 /** Deterministic row id — stable across runs so re-derivation reproduces identical rows. */
 function fileChangeId(toolCallId: string, filePath: string): string {
@@ -114,35 +119,47 @@ export function deriveFileChanges(db: DB, dirty?: Set<string> | null): { count: 
       }
       if (!input) continue;
       const p = proj.get(row.session_id);
-      const filePath = normalizeFilePath(input.file_path ?? input.notebook_path, p?.path ?? null);
-      if (!filePath) continue;
 
-      // Magnitude signal only, not a diff: newline-count deltas of the verbatim strings. Edit with
-      // replace_all counts the strings once (occurrence count is unknowable from the input alone);
-      // Write's prior content is unseen, so removed stays NULL; NotebookEdit carries no line info.
-      let added: number | null = null;
-      let removed: number | null = null;
-      if (row.tool_name === "Edit") {
-        added = lineCount(input.new_string);
-        removed = lineCount(input.old_string);
-      } else if (row.tool_name === "Write") {
-        added = lineCount(input.content);
+      // One entry per file the call touched — the file tools write exactly one, a Bash call may
+      // write several. Magnitude is a signal only, not a diff: newline counts of the verbatim
+      // strings. Edit with replace_all counts the strings once (occurrence count is unknowable from
+      // the input alone); Write's prior content is unseen, so removed stays NULL; NotebookEdit and
+      // in-place shell edits carry no line info at all.
+      const targets: Array<{ filePath: string; added: number | null; removed: number | null }> = [];
+      if (row.tool_name === "Bash") {
+        // A leading `cd` is the command's own cwd and outranks the session's project root.
+        const { cwd, writes } = parseShellWrites(input.command);
+        for (const w of writes) {
+          const filePath = normalizeFilePath(w.path, cwd ?? p?.path ?? null);
+          if (filePath) targets.push({ filePath, added: w.linesAdded, removed: null });
+        }
+      } else {
+        const filePath = normalizeFilePath(input.file_path ?? input.notebook_path, p?.path ?? null);
+        if (filePath) {
+          targets.push({
+            filePath,
+            added: row.tool_name === "Edit" ? lineCount(input.new_string) : row.tool_name === "Write" ? lineCount(input.content) : null,
+            removed: row.tool_name === "Edit" ? lineCount(input.old_string) : null,
+          });
+        }
       }
 
-      insert.run({
-        id: fileChangeId(row.id, filePath),
-        tool_call_id: row.id,
-        session_id: row.session_id,
-        turn_id: row.turn_id,
-        event_uuid: row.event_uuid,
-        project_id: p?.id ?? null,
-        file_path: filePath,
-        tool_name: row.tool_name,
-        lines_added: added,
-        lines_removed: removed,
-        timestamp: row.timestamp,
-        derive_version: FILECHANGES_VERSION,
-      });
+      for (const t of targets) {
+        insert.run({
+          id: fileChangeId(row.id, t.filePath),
+          tool_call_id: row.id,
+          session_id: row.session_id,
+          turn_id: row.turn_id,
+          event_uuid: row.event_uuid,
+          project_id: p?.id ?? null,
+          file_path: t.filePath,
+          tool_name: row.tool_name,
+          lines_added: t.added,
+          lines_removed: t.removed,
+          timestamp: row.timestamp,
+          derive_version: FILECHANGES_VERSION,
+        });
+      }
     }
   });
   tx();

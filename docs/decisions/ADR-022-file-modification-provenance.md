@@ -68,7 +68,8 @@ timeline). Levels 2–3 are recorded as the roadmap, pending their own technical
   they land, an additive `op` column (default `'modify'`) extends `file_changes` without migration
   pain.
 - **Bash-write heuristics** (literal-path `rm`/`tee`/redirect parsing): parked; serves the same need
-  level 2 serves better, and it is the first crack in the determinism claim.
+  level 2 serves better, and it is the first crack in the determinism claim. *(Partly revisited — see
+  the amendment below.)*
 - **Git command execution at ingest.** Level 1 runs zero git commands. Level 2's design must bound
   git usage to per-repo batch reads (`git log --since=<last ingest>`), never per-edit calls, and
   degrade gracefully when a repo is missing — that validation is a precondition for level 2, not an
@@ -112,3 +113,25 @@ timeline). Levels 2–3 are recorded as the roadmap, pending their own technical
 - **Real-time capture via PostToolUse hooks** instead of derivation. Would observe writes the
   transcript misses, but breaks the passive, zero-config collection model (ADR-003 posture) and
   captures nothing retroactively.
+
+## Amendment — 2026-09-02: shell writes are in scope after all
+
+Profiling the corpus put a number on what parking Bash writes cost. Of the shell writes that resolve
+to a source file inside a known project, **83% (896 of 1,074) had no `file_changes` row, across 131
+of 390 main sessions** — a third of sessions changing project files invisibly, while the UI told the
+reader that provenance was tracked. The gap was concentrated in `.md`, `.mjs`, `.py`, `.yaml` and
+`.ts` files.
+
+`shellwrites.ts` therefore derives rows from the shell constructs whose target is unambiguous in the
+command text alone: heredoc writes (`cat > f <<EOF`), `tee`, `sed -i`, and `echo`/`printf`
+redirects. `FILECHANGES_VERSION` is 2; `file_changes.tool_name` can now be `Bash`.
+
+The determinism claim holds because the ambiguous cases are still excluded rather than guessed:
+interpreter-embedded writes (`p.write_text(...)`, `fs.writeFileSync(...)`), any target carrying an
+unexpanded variable, glob or command substitution, and `cp`/`mv`/`rm`. Heredoc **bodies are blanked
+before scanning**, so a `>` inside a document being written never invents a file change. Deletions
+and renames remain level 2's territory.
+
+Relative targets resolve against the command's own leading `cd` when it is absolute, else the
+session's project root — and are skipped when neither anchors them, on the same reasoning as level
+1's relative-path stance: an unanchored path would poison per-file grouping with false identities.

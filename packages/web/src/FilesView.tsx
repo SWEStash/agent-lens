@@ -37,7 +37,7 @@ export function LinesDelta({ added, removed }: { added: number | null; removed: 
 }
 
 /**
- * Files list (ADR-022) — every file touched by a session's Edit/Write tool calls, aggregated per
+ * Files list (ADR-022) — every file touched by a session's file-tool calls or shell writes, aggregated per
  * (project, file). Server-side sort + paging (the list can span thousands of files); filters mirror
  * the sessions list. Each row links to the file's provenance timeline.
  */
@@ -156,7 +156,7 @@ export default function FilesView() {
       )}
 
       <p className="muted pad">
-        Tracked from Edit/Write tool calls — changes made via shell commands or outside sessions aren’t captured.
+        Tracked from Edit/Write tool calls plus unambiguous shell writes (heredoc, tee, sed -i, redirects) — other shell changes and edits made outside sessions aren’t captured.
       </p>
     </div>
   );

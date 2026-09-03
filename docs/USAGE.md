@@ -386,13 +386,14 @@ keyboard focus there as well as the scroll position.
 
 **Files** (`/files`) — file-modification provenance ([ADR-022](decisions/ADR-022-file-modification-provenance.md)):
 which sessions (and which turns) changed which files, derived deterministically from every
-successful `Edit`/`Write` tool call in the archive. Answers the inverse of the transcript view:
+successful `Edit`/`Write`/`NotebookEdit` tool call in the archive, plus the file writes a `Bash`
+call performs through an unambiguous shell construct (heredoc, `tee`, `sed -i`, a redirect). Answers the inverse of the transcript view:
 *"this file changed — under what circumstances?"* You can:
 
 - **Browse & filter** every touched file by path substring, source, and project; sort by last
   touched, change count, or session count.
 - Open a file for its **provenance timeline**: every changing session (title, category, date),
-  expanded to the specific turns, each **deep-linking to the exact Edit/Write call in the
+  expanded to the specific turns, each **deep-linking to the exact tool call in the
   transcript** (scrolled to and highlighted).
 - See a **"files changed" roll-up** on each session page (header, collapsible) — per-file change
   counts and line deltas, each linking to the file's history. When a session kept returning to the
@@ -400,10 +401,12 @@ successful `Edit`/`Write` tool call in the archive. Answers the inverse of the t
   touched. It is a count and a list, not a verdict: rework was measured against session cost in both
   directions and the relationship is flat.
 
-> **Honest limits:** the index is built from Edit/Write tool calls only. Changes made via shell
-> commands (`sed`, redirects), by you in an editor, by formatters, or on other machines are **not
-> captured**; deletions/renames aren't tracked yet (see the ADR's roadmap). Treat it as agent
-> provenance, not a complete file history.
+> **Honest limits:** the index is built from Edit/Write/NotebookEdit tool calls plus the shell
+> writes whose target is unambiguous in the command text (heredoc, `tee`, `sed -i`, redirects).
+> Writes a script performs from inside an interpreter, targets built from variables or globs, edits
+> you make in an editor, formatter runs, and changes on other machines are **not captured**;
+> deletions/renames aren't tracked yet (see the ADR's roadmap). Treat it as agent provenance, not a
+> complete file history.
 
 **Dashboard** (`/dashboard`) — server-side aggregates over the whole store (filter by source, a date
 range, and models):
