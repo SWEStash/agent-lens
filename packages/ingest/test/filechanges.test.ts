@@ -95,7 +95,8 @@ describe("deriveFileChanges", () => {
     const db = freshDb();
     addSession(db, "s", "/proj");
     addTool(db, "s", "Edit", { input: { file_path: "/proj/x.ts", old_string: "a", new_string: "b" }, status: "error" });
-    addTool(db, "s", "Bash", { input: { command: "echo hi > /proj/y.ts" } });
+    addTool(db, "s", "Bash", { input: { command: "echo hi > /proj/y.ts" }, status: "error" });
+    addTool(db, "s", "Bash", { input: { command: "grep -rn foo src | head -20" } }); // reads only
     addTool(db, "s", "Edit", { input: { old_string: "a", new_string: "b" } }); // no path
     const bad = addTool(db, "s", "Write", {});
     db.prepare("UPDATE tool_calls SET input_json = '{not json' WHERE id = ?").run(bad);
@@ -143,5 +144,84 @@ describe("deriveFileChanges", () => {
     deriveFileChanges(db, new Set(["s1"]));
     expect(rowsFor(db, "s1")).toHaveLength(0);
     expect(rowsFor(db, "s2")).toHaveLength(1);
+  });
+});
+
+describe("deriveFileChanges — shell writes", () => {
+  it("derives a row from a heredoc write, with the body's line count", () => {
+    const db = freshDb();
+    addSession(db, "s", "/proj");
+    const t = addTool(db, "s", "Bash", {
+      input: { command: "cat > /proj/docs/notes.md <<'EOF'\none\ntwo\nEOF" },
+      ts: "2026-07-03T09:00:00Z",
+    });
+    deriveFileChanges(db);
+    expect(rowsFor(db, "s")).toHaveLength(1);
+    expect(rowsFor(db, "s")[0]).toMatchObject({
+      tool_call_id: t,
+      file_path: "/proj/docs/notes.md",
+      tool_name: "Bash",
+      lines_added: 2,
+      lines_removed: null,
+      project_id: "p-s",
+      timestamp: "2026-07-03T09:00:00Z",
+    });
+  });
+
+  it("leaves lines unknown for an in-place edit", () => {
+    const db = freshDb();
+    addSession(db, "s", "/proj");
+    addTool(db, "s", "Bash", { input: { command: "sed -i 's/a/b/' /proj/src/x.ts" } });
+    expect(deriveFileChanges(db).count).toBe(1);
+    expect(rowsFor(db, "s")[0]).toMatchObject({ file_path: "/proj/src/x.ts", lines_added: null });
+  });
+
+  it("resolves a relative target against the command's own cd, not the project root", () => {
+    const db = freshDb();
+    addSession(db, "s", "/proj");
+    addTool(db, "s", "Bash", { input: { command: "cd /elsewhere/repo && echo x > out.txt" } });
+    deriveFileChanges(db);
+    expect(rowsFor(db, "s")[0].file_path).toBe("/elsewhere/repo/out.txt");
+  });
+
+  it("resolves a relative target against the project root when the command does not cd", () => {
+    const db = freshDb();
+    addSession(db, "s", "/proj");
+    addTool(db, "s", "Bash", { input: { command: "echo x > src/out.txt" } });
+    deriveFileChanges(db);
+    expect(rowsFor(db, "s")[0].file_path).toBe("/proj/src/out.txt");
+  });
+
+  it("skips a relative target it cannot anchor to any directory", () => {
+    const db = freshDb();
+    addSession(db, "s"); // no project
+    addTool(db, "s", "Bash", { input: { command: "echo x > out.txt" } });
+    deriveFileChanges(db);
+    expect(rowsFor(db, "s")).toHaveLength(0);
+  });
+
+  it("emits one row per file when a command writes several", () => {
+    const db = freshDb();
+    addSession(db, "s", "/proj");
+    addTool(db, "s", "Bash", {
+      input: { command: "echo a > /proj/one.txt && sed -i 's/x/y/' /proj/two.ts" },
+    });
+    deriveFileChanges(db);
+    const rows = rowsFor(db, "s");
+    expect(rows).toHaveLength(2);
+    expect(new Set(rows.map((r) => r.id)).size).toBe(2);
+    expect(rows.map((r) => r.file_path).sort()).toEqual(["/proj/one.txt", "/proj/two.ts"]);
+  });
+
+  it("groups a shell write and a tool write of the same file under one path", () => {
+    const db = freshDb();
+    addSession(db, "s", "/proj");
+    addTool(db, "s", "Write", { input: { file_path: "/proj/a.md", content: "x" } });
+    addTool(db, "s", "Bash", { input: { command: "echo more >> /proj/a.md" } });
+    deriveFileChanges(db);
+    const rows = rowsFor(db, "s");
+    expect(rows).toHaveLength(2);
+    expect(new Set(rows.map((r) => r.file_path))).toEqual(new Set(["/proj/a.md"]));
+    expect(new Set(rows.map((r) => r.tool_name))).toEqual(new Set(["Write", "Bash"]));
   });
 });

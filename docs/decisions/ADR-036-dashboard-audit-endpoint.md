@@ -96,9 +96,11 @@ The panel names the files and stops.
 - **Every future aggregate on this endpoint must declare its model grain**, or it will silently
   ignore a control the reader believes is global. That failure is invisible: a plausible number, no
   error.
-- **`edit_reliability` includes `NotebookEdit`**, for parity with `file_changes.tool_name`. Earlier
-  analysis in the design notes covered Edit and Write only, so its figures differ slightly from the
-  shipped tile.
+- **`edit_reliability` includes `NotebookEdit`**, which was parity with `file_changes.tool_name` when
+  this shipped; that table also carries `Bash` shell writes since ADR-022's 2026-09-02 amendment,
+  which this tile deliberately does not count — it measures the file-editing tools' failure rate.
+  Earlier analysis in the design notes covered Edit and Write only, so its figures differ slightly
+  from the shipped tile.
 - **The tile is confounded by era and task mix** and says so in its guide: older models ran on older
   sessions doing different work. It is a comparison within a time window, not a leaderboard.
 - **A bucket with no plans in it plots as a gap, not as 0%** — an empty week must not read as a

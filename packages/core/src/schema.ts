@@ -239,9 +239,9 @@ CREATE INDEX IF NOT EXISTS idx_findings_category ON findings(category);
 CREATE INDEX IF NOT EXISTS idx_findings_rule     ON findings(rule_id);
 CREATE INDEX IF NOT EXISTS idx_findings_tool_call ON findings(tool_call_id);
 
--- File modifications derived from tool calls (ADR-022). One row per (tool_call, file): today
--- Edit/Write/NotebookEdit are 1:1, but the hash id leaves room for multi-file sources (e.g. a
--- future Bash-write heuristic) without a schema break. Failed calls (status='error') are excluded
+-- File modifications derived from tool calls (ADR-022). One row per (tool_call, file):
+-- Edit/Write/NotebookEdit are 1:1; a Bash call can write several files, which the hash id already
+-- accommodated without a schema break. Failed calls (status='error') are excluded
 -- at derivation — they didn't change the file. Re-runnable like findings: incremental runs DELETE
 -- the dirty sessions' rows and re-INSERT (delete-then-insert). Populated by ingest's
 -- deriveFileChanges (filechanges.ts).
@@ -253,7 +253,7 @@ CREATE TABLE IF NOT EXISTS file_changes (
   event_uuid     TEXT,                            -- jump-to-transcript anchor (#ev-<uuid>)
   project_id     TEXT REFERENCES projects(id),    -- from the session, for per-project grouping
   file_path      TEXT NOT NULL,                   -- normalized absolute path
-  tool_name      TEXT NOT NULL,                   -- Edit | Write | NotebookEdit
+  tool_name      TEXT NOT NULL,                   -- Edit | Write | NotebookEdit | Bash
   lines_added    INTEGER,                         -- newline-count delta (NULL when unknowable)
   lines_removed  INTEGER,
   timestamp      TEXT,                            -- ISO8601, from the tool call's event

@@ -6,7 +6,7 @@ import { fmtDate } from "./format";
 import { LinesDelta, relPath } from "./FilesView";
 
 /**
- * File provenance timeline (ADR-022) — every session (and turn) whose Edit/Write tool calls touched
+ * File provenance timeline (ADR-022) — every session (and turn) whose file-tool calls or shell writes touched
  * this file, newest-changing session first. Each change deep-links to its tool call's transcript
  * event (#ev-<uuid>), which the session page scrolls to, expands, and flashes. The file path travels
  * as a query param (it contains slashes).
@@ -127,7 +127,7 @@ function FileTimelineView({ data }: { data: FileTimeline }) {
       })}
 
       <p className="muted pad">
-        Tracked from Edit/Write tool calls — changes made via shell commands or outside sessions aren’t captured.
+        Tracked from Edit/Write tool calls plus unambiguous shell writes (heredoc, tee, sed -i, redirects) — other shell changes and edits made outside sessions aren’t captured.
       </p>
     </div>
   );

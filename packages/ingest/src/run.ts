@@ -280,7 +280,8 @@ export function runIngest(argv: string[] = process.argv.slice(2)): void {
   // the same expanded dirty set. Powers the sessions error-type filter + dashboard/detail breakdowns.
   classifyErrors(db, args.full ? null : expanded);
 
-  // File-modification provenance (ADR-022) from Edit/Write/NotebookEdit inputs. Deterministic +
+  // File-modification provenance (ADR-022) from Edit/Write/NotebookEdit inputs and Bash shell
+  // writes. Deterministic +
   // re-runnable; reuses the same expanded dirty set and delete-then-inserts per touched session.
   const fileChanges = deriveFileChanges(db, args.full ? null : expanded);
 
