@@ -104,6 +104,8 @@ export interface EventOpts {
   raw?: string | Buffer;
   meta?: boolean;
   sidechain?: boolean;
+  /** Archive file this line came from — the only place the on-disk transcript path is recorded. */
+  sourceFile?: string | null;
 }
 
 export function addEvent(db: DatabaseSync, session: string, uuid: string, o: EventOpts = {}) {
@@ -112,8 +114,8 @@ export function addEvent(db: DatabaseSync, session: string, uuid: string, o: Eve
     o.raw ??
     JSON.stringify(role === "user" ? { message: { content: o.text ?? "" } } : { message: { content: o.text ? [{ type: "text", text: o.text }] : [] } });
   db.prepare(
-    `INSERT INTO events (uuid, session_id, turn_id, seq, type, role, timestamp, model, is_sidechain, is_meta, text, thinking, raw_json)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT INTO events (uuid, session_id, turn_id, seq, type, role, timestamp, model, is_sidechain, is_meta, text, thinking, raw_json, source_file)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     uuid,
     session,
@@ -128,6 +130,7 @@ export function addEvent(db: DatabaseSync, session: string, uuid: string, o: Eve
     o.text ?? null,
     o.thinking ?? null,
     raw,
+    o.sourceFile ?? null,
   );
 }
 

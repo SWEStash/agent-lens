@@ -34,7 +34,7 @@ export default function BackToTop() {
   };
 
   return (
-    <button type="button" className="to-top" onClick={toTop} title="Back to top">
+    <button type="button" className="to-top" onClick={toTop} data-tip="Back to top">
       <span aria-hidden="true">↑</span>
       <span className="sr-only">Back to top</span>
     </button>

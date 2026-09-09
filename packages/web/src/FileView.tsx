@@ -37,7 +37,7 @@ function FileTimelineView({ data }: { data: FileTimeline }) {
       <header className="skill-head">
         <h1>📄 {relPath(data.file_path, data.project_path)}</h1>
         <div className="skill-head-meta muted">
-          <span title={data.file_path}>{data.file_path}</span>
+          <span data-tip={data.file_path}>{data.file_path}</span>
           {data.project_path ? <> · in {data.project_path.replace(/^.*\//, "")}</> : null}
         </div>
       </header>
@@ -76,7 +76,7 @@ function FileTimelineView({ data }: { data: FileTimeline }) {
               <Link
                 to={`/session/${s.session_id}${firstEv ? `#ev-${firstEv}` : ""}`}
                 className="title"
-                title={firstEv ? "Open the session at this file's first change" : undefined}
+                data-tip={firstEv ? "Open the session at this file's first change" : undefined}
               >
                 {s.title || <span className="muted">{s.session_id.slice(0, 12)}</span>}
               </Link>
@@ -101,7 +101,7 @@ function FileTimelineView({ data }: { data: FileTimeline }) {
                 <tr key={c.id}>
                   <td>
                     {c.event_uuid ? (
-                      <Link to={`/session/${s.session_id}#ev-${c.event_uuid}`} className="title" title="Jump to this change in the transcript">
+                      <Link to={`/session/${s.session_id}#ev-${c.event_uuid}`} className="title" data-tip="Jump to this change in the transcript">
                         turn {c.turn_seq != null ? c.turn_seq + 1 : "?"}
                       </Link>
                     ) : (
@@ -114,7 +114,7 @@ function FileTimelineView({ data }: { data: FileTimeline }) {
                   <td className="num">
                     <LinesDelta added={c.lines_added} removed={c.lines_removed} />
                   </td>
-                  <td className="muted" title={c.prompt_preview ?? undefined}>
+                  <td className="muted" data-tip={c.prompt_preview ?? undefined}>
                     {c.prompt_preview ? (c.prompt_preview.length > 80 ? c.prompt_preview.slice(0, 79) + "…" : c.prompt_preview) : "—"}
                   </td>
                   <td>{fmtDate(c.timestamp)}</td>

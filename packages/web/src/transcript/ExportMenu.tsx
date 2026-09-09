@@ -8,7 +8,7 @@ export function ExportMenu({ id }: { id: string }) {
   const ref = useDetailsAutoClose();
   return (
     <details className="export-menu col-customizer" ref={ref}>
-      <summary className="export" title="Export this session as Markdown">⬇ Export Markdown</summary>
+      <summary className="export" data-tip="Download this session as a Markdown transcript, redacted by default, with a structure-only scrub and a verbatim option.">⬇ Export Markdown</summary>
       <div className="col-menu" role="group" aria-label="Export options">
         <a href={exportUrl(id)} download>Redacted <span className="muted small">(secrets masked)</span></a>
         <a href={exportUrl(id, "structure")} download>Structure only <span className="muted small">(scrubbed)</span></a>

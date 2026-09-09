@@ -296,8 +296,11 @@ table.sessions { width: 100%; border-collapse: collapse; }
 .detail-meta { display: flex; flex-wrap: wrap; gap: 14px; align-items: center; color: var(--text); font-size: 13px; }
 .detail-meta .path { color: var(--muted); }
 .spawned-by { color: var(--muted); }
-.export { margin-left: auto; border: 1px solid var(--border); border-radius: 6px; padding: 6px 12px; }
 /* Export dropdown: reuses .col-customizer/.col-menu; the menu items are links, not checkbox labels. */
+/* The archive-path copy button and the export menu are the row's two actions: push the pair to the
+   right together (the button carries the auto margin; the menu then just follows it). */
+.copy-archive-path { margin-left: auto; }
+.copy-archive-path + .export-menu { margin-left: 0; }
 .export-menu { margin-left: auto; }
 .export-menu > summary.export { display: inline-block; list-style: none; cursor: pointer; }
 .export-menu > summary.export::-webkit-details-marker { display: none; }
@@ -1089,15 +1092,29 @@ button.small { padding: 2px 8px; font-size: 12px; }
   padding-left: 8px;
 }
 
-/* --- Copy-to-clipboard button --- */
-.copy-btn {
-  font-size: 11px;
-  padding: 2px 7px;
+/* --- Action chip: the copy-to-clipboard buttons and the export menu's summary ---
+   The export control is a <summary> rather than a <button> because it opens a menu (three redaction
+   levels) and <details> is how every menu in this app is built — but it is an action sitting next to
+   the copy buttons, so it gets the same chip here rather than a second look. */
+/* `button.copy-btn`, not `.copy-btn`: `button.small` (which CopyButton also carries) sets its own
+   size and would otherwise win on order. `font-family: inherit` because a bare <button> does NOT
+   inherit it — the copy buttons were rendering in the UA's Arial next to the page's own type. */
+button.copy-btn,
+summary.export {
+  font-family: inherit;
+  font-size: 12px;
+  padding: 2px 8px;
   line-height: 1.4;
   color: var(--muted);
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  cursor: pointer;
   flex: none;
 }
-.copy-btn:hover:not(:disabled) { color: var(--text); }
+button.copy-btn:hover:not(:disabled),
+summary.export:hover,
+.export-menu[open] > summary.export { color: var(--text); border-color: var(--accent); }
 /* Appears only on hover/focus of its containing block (message meta rows). */
 .copy-hover { opacity: 0; transition: opacity 0.12s; }
 .event:hover .copy-hover,
@@ -1557,11 +1574,26 @@ table.kv .muted { font-size: 12px; margin-top: 4px; }
 .card-guide-body dd { margin: 1px 0 7px; }
 .card-guide-body dd:last-child { margin-bottom: 0; }
 
-/* Heatmap cell tooltip — hover IS right here: one short fact, tied to one mark. */
+/* The app-wide hover/focus tooltip (Tooltip.tsx), replacing native `title=`. Deliberately the same
+   surface as the chart tooltips — recharts is given `background: panel2, 1px solid border, radius 6,
+   12px` in charts/theme.tsx, and .burn-tip draws the heatmap's own — so a hint reads the same
+   wherever it appears. Fixed-positioned and click-through; the layer places it. */
+.app-tip {
+  position: fixed; z-index: 60; pointer-events: none;
+  max-width: 320px; padding: 5px 8px;
+  border: 1px solid var(--border); border-radius: 6px;
+  background: var(--panel2); color: var(--text);
+  box-shadow: 0 6px 18px rgb(0 0 0 / 35%);
+  font-size: 12px; line-height: 1.45; white-space: pre-wrap; overflow-wrap: anywhere;
+}
+
+/* Heatmap cell tooltip — hover IS right here: one short fact, tied to one mark. Same surface as
+   .app-tip; it is positioned inside the heatmap rather than by the tooltip layer because it follows
+   a cell, not an element with a hint. */
 .burn { position: relative; }
 .burn-tip {
   position: absolute; z-index: 6; pointer-events: none;
-  padding: 5px 8px; border: 1px solid var(--border); border-radius: 7px;
+  padding: 5px 8px; border: 1px solid var(--border); border-radius: 6px;
   background: var(--panel2); box-shadow: 0 6px 18px rgb(0 0 0 / 35%);
   font-size: 12px; line-height: 1.45; white-space: nowrap;
 }

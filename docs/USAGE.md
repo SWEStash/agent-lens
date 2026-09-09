@@ -380,6 +380,11 @@ corpus by `node scripts/screenshots.mjs`.
   suppressed tool card for as long as it is the active match. Since the term is in the URL (`?q=`), a
   search is shareable.
 - **Export** any session to Markdown (⬇ button, or `GET /api/sessions/:id/export.md`).
+- **Copy archive path** puts the absolute path of the session's archived `.jsonl` transcript on the
+  clipboard, so another agent running on this machine can be pointed straight at the file — including
+  for sessions Claude Code has already rotated out of `~/.claude`. The button is absent in the static
+  snapshot (it is a host path, [ADR-027](decisions/ADR-027-runtime-diagnostics-surface.md)), and for
+  a session whose archive file has since been pruned by retention the tooltip says so.
 
 On every page, a **back-to-top** control appears once you scroll away from the top, and returns
 keyboard focus there as well as the scroll position.
@@ -703,6 +708,7 @@ below is relative to `<dataDir>`; run `agent-lens config` to print the resolved 
 | `GET /api/sessions` | filtered, paginated session list (see query params) |
 | `GET /api/sessions/:id` | session meta + turns + events (transcript) + classification |
 | `GET /api/sessions/:id/export.md` | Markdown export (attachment) |
+| `GET /api/sessions/:id/location` | absolute path of the session's archived `.jsonl` (never in the static snapshot) |
 | `GET /api/dashboard/overview` | KPI aggregates (sessions, split token totals, cost) |
 | `GET /api/dashboard/timeseries` | tokens/cost/activity over time (adaptive buckets) |
 | `GET /api/dashboard/breakdowns` | by model / category / complexity / tool / skill / subagent / error type |

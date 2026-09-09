@@ -31,11 +31,11 @@ function FileTreeRows({ node, depth }: { node: FileTreeNode; depth: number }) {
             <tr key={f.path}>
               <td style={indent}>
                 {first?.event_uuid ? (
-                  <a href={`#ev-${first.event_uuid}`} className="title" title={f.path + " — jump to the first change"}>
+                  <a href={`#ev-${first.event_uuid}`} className="title" data-tip={f.path + " — jump to the first change"}>
                     {f.name}
                   </a>
                 ) : (
-                  <span title={f.path}>{f.name}</span>
+                  <span data-tip={f.path}>{f.name}</span>
                 )}
               </td>
               <td className="num">
@@ -94,7 +94,7 @@ export function FilesChangedPanel({ changes, projectPath }: { changes: FileChang
           {reworked.slice(0, REWORK_NAMED).map(([path, list], i) => (
             <Fragment key={path}>
               {i > 0 && ", "}
-              <span title={path}>
+              <span data-tip={path}>
                 {rel(path).split("/").pop()} ({list.length}×)
               </span>
             </Fragment>

@@ -365,6 +365,19 @@ export interface SessionDetail {
   file_changes: FileChangeRow[];
 }
 
+/** Where a session's transcript lives in the Agent Lens archive — served by
+ * GET /api/sessions/:id/location, so another local agent can be pointed straight at the file.
+ * Deliberately NOT part of SessionDetail: that payload is published to the static snapshot and this
+ * is an absolute host path (ADR-027). */
+export interface SessionLocation {
+  session_id: string;
+  /** Absolute path to the archived .jsonl transcript. */
+  path: string;
+  /** Whether that file is still on disk — retention pruning can remove it after ingest. */
+  exists: boolean;
+  source_id: string | null;
+}
+
 // ---- Security findings (ADR-017) + triage (ADR-018) ---------------------
 
 /** The explainability blob behind a finding, written verbatim by the detector (detect.ts). */

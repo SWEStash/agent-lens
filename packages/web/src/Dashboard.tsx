@@ -89,7 +89,7 @@ export default function Dashboard() {
           onChange={(next) => setParam({ models: next.length === models.length ? "" : next.join(",") })}
           reset={{ label: "select all", to: models }}
           disabled={SNAPSHOT}
-          title={
+          tip={
             SNAPSHOT
               ? "The exported demo serves one pre-computed view, so filters do not apply to it."
               : "Applies to every chart. Spend, turns and tool calls filter on the model that produced them; anything counted per session counts sessions that used one of these."

@@ -34,7 +34,7 @@ export function StripCustomizer({
   const ref = useDetailsAutoClose();
   return (
     <details className="col-customizer" ref={ref}>
-      <summary aria-label={`Customize ${label.toLowerCase()}`} title={`Show, hide and reorder ${label.toLowerCase()}`}>
+      <summary aria-label={`Customize ${label.toLowerCase()}`} data-tip={`Show, hide and reorder ${label.toLowerCase()}`}>
         ⚙
       </summary>
       <div className="col-menu strip-menu" role="group" aria-label={`Customize ${label.toLowerCase()}`}>

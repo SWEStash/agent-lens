@@ -12,7 +12,7 @@ export function CommandBlock({ cmd }: { cmd: ParsedCommand }) {
   if (cmd.kind === "invocation")
     return (
       <div className="cmd">
-        <span className="cmd-chip" title="Slash command">⌘ {cmd.name}</span>
+        <span className="cmd-chip" data-tip="Slash command">⌘ {cmd.name}</span>
         {cmd.args && <code className="cmd-args">{cmd.args}</code>}
       </div>
     );

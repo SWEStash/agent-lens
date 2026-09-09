@@ -60,8 +60,18 @@ export function SkillTooltip({ active, payload, versionsByName }: TooltipProps &
  * the label value. Styled via `.axis-link` (muted → accent + underline on hover). */
 export function AxisLink({ x, y, payload, onSelect, title }: AxisTickProps & { onSelect: (value: string) => void; title?: string }) {
   return (
-    <text x={x} y={y} dy={4} textAnchor="end" className="axis-link" fontSize={11} onClick={() => payload?.value && onSelect(payload.value)}>
-      {title && <title>{title}</title>}
+    <text
+      x={x}
+      y={y}
+      dy={4}
+      textAnchor="end"
+      className="axis-link"
+      fontSize={11}
+      onClick={() => payload?.value && onSelect(payload.value)}
+      // `data-tip`, not an SVG <title>: that one is drawn by the browser, and these hints share the
+      // app's tooltip (Tooltip.tsx) like every other one.
+      data-tip={title}
+    >
       {payload?.value}
     </text>
   );

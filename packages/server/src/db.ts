@@ -1,3 +1,4 @@
+import { existsSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
 import { SCHEMA_VERSION, severityRank, activePricing, canonicalModel, SECURITY_CATEGORIES, errorKind, type ToolErrorType, type Rate } from "@agent-lens/core";
 import { TASK_FAILURES_TAG, TASK_NOTIFICATION_TAG, TASK_RESULT_TAG, TASK_STATUS_TAG, TASK_SUMMARY_TAG, xmlTag } from "@agent-lens/transcript-format";
@@ -17,6 +18,7 @@ import type {
   SessionChild,
   SessionDetail,
   SessionDetailData,
+  SessionLocation,
   SessionParent,
   SessionRow,
   SessionSummary,
@@ -690,6 +692,34 @@ export function getSession(db: DB, id: string): SessionDetail | null {
     findings,
     file_changes: loadFileChanges(db, id),
   };
+}
+
+/**
+ * Where session `id`'s transcript sits in the archive, for handing the file to another local agent.
+ *
+ * There is no path column on `sessions` — the archive path is recorded per event as
+ * `events.source_file` (schema.ts), so the canonical file is picked from what ingest saw. A session
+ * can have several: retention snapshots under `.versions/`, and (for a parent) its subagents' files
+ * are separate sessions entirely. Prefer the live copy named after the session, then any live copy,
+ * then whatever there is.
+ *
+ * Returns null when no event carries a source_file (nothing to point at).
+ */
+export function sessionLocation(db: DB, id: string): SessionLocation | null {
+  const session = queryGet<{ source_id: string | null }>(db, "SELECT source_id FROM sessions WHERE id = ?", id);
+  if (!session) return null;
+  const files = queryAll<{ source_file: string }>(
+    db,
+    "SELECT DISTINCT source_file FROM events WHERE session_id = ? AND source_file IS NOT NULL",
+    id,
+  ).map((r) => r.source_file);
+  if (files.length === 0) return null;
+
+  const live = files.filter((f) => !f.includes("/.versions/"));
+  const path = live.find((f) => f.endsWith(`/${id}.jsonl`)) ?? live[0] ?? files[0];
+  // Reported, not enforced: the file may have been pruned by retention since ingest, and the caller
+  // should be told that rather than handed a path that silently isn't there.
+  return { session_id: id, path, exists: existsSync(path), source_id: session.source_id };
 }
 
 /**

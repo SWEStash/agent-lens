@@ -9,7 +9,7 @@ import Fastify, { type FastifyInstance, type FastifyReply } from "fastify";
 import fastifyStatic from "@fastify/static";
 import { resolveVersion } from "@agent-lens/core";
 import { renderSessionExport, parseRedactionLevel } from "./export.js";
-import { type DB, lastIngested, schemaStatus, listSources, listProjects, listModels, listSessions, getSession, getWorkflow, listSkills, getSkill, listFindings, openFindingIds, securitySummary, listFiles, getFileTimeline, safeJson } from "./db.js";
+import { type DB, lastIngested, schemaStatus, listSources, listProjects, listModels, listSessions, getSession, sessionLocation, getWorkflow, listSkills, getSkill, listFindings, openFindingIds, securitySummary, listFiles, getFileTimeline, safeJson } from "./db.js";
 import { dashboardOverview, dashboardTimeseries, dashboardBreakdowns, dashboardTime, dashboardAudit, type DashFilters } from "./dashboard.js";
 import { writeBlocked, runRefresh, LOOPBACK_HOSTS } from "./refresh.js";
 import { openTriage, dismiss, reopen, muteRule, unmute, listMutes, type TriageDB, type MuteScope } from "./triage.js";
@@ -211,6 +211,17 @@ export async function createApp(db: DB, opts: CreateAppOpts = {}): Promise<Fasti
     const { id } = req.params as { id: string };
     const result = getSession(db, id);
     if (!result) return notFound(reply);
+    return result;
+  });
+
+  // Where this session's transcript lives in the archive, so the local user can hand the file to
+  // another agent on this machine. Its own route, NOT a SessionDetail field, for one reason: detail
+  // payloads are published to the static Pages snapshot and this is an absolute host path (ADR-027).
+  // Keep it out of the exporter — scripts/export-snapshot.mjs says so in the same words.
+  app.get("/api/sessions/:id/location", async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const result = sessionLocation(db, id);
+    if (!result) return notFound(reply, "no archive path recorded for this session");
     return result;
   });
 

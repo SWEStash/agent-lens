@@ -75,6 +75,11 @@ and must not spawn anything.
 |---|---|---|
 | app version + provenance, schema version, `schema_stale` | `/api/health` (the SPA already fetches it) | **yes** — a version string discloses nothing |
 | paths, sources, storage, server binding | `/api/about` | **no** |
+| a session's archived transcript path | `/api/sessions/:id/location` | **no** |
+
+The session-location route (the session page's "Copy archive path" button) follows this split rather
+than adding a field to `/api/sessions/:id`: that payload *is* exported, so a path field on it would
+publish `/home/<user>/…` for every session in the demo.
 
 The topbar version badge is therefore live everywhere including the Pages demo, while `/about` is
 hidden in snapshot mode via the established `{!SNAPSHOT && …}` pattern (`App.tsx:95` for Refresh;

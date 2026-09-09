@@ -27,7 +27,7 @@ export function AgentRow({ a }: { a: AgentRowData }) {
       <Link to={`/session/${a.id}`}>{title}</Link>
       {a.agent_type && <span className="tag subagent meta-type">{a.agent_type}</span>}
       {a.spawn_depth != null && a.spawn_depth > 1 && (
-        <span className="tag meta-depth" title={`nested ${a.spawn_depth} levels deep`}>
+        <span className="tag meta-depth" data-tip={`nested ${a.spawn_depth} levels deep`}>
           ↳{a.spawn_depth}
         </span>
       )}

@@ -40,7 +40,7 @@ export function TranscriptToolbar({
         className={"ghost small" + (hideTools ? " is-active" : "")}
         aria-pressed={hideTools}
         onClick={onToggleHideTools}
-        title="Hide Bash/Edit/Skill and other tool calls — show only assistant answers, plans and questions"
+        data-tip="Hide Bash/Edit/Skill and other tool calls — show only assistant answers, plans and questions"
       >
         {hideTools ? "☑ " : "☐ "}Hide tool messages
       </button>

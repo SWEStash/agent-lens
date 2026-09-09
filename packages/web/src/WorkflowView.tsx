@@ -118,7 +118,7 @@ function WorkflowRunDetail({ d }: { d: WorkflowDetail }) {
           <span>{agentCount} agent{agentCount === 1 ? "" : "s"}</span>
           <span>{fmtTokens(totalTokens)} tok</span>
           {d.run?.total_tool_calls != null && <span>{d.run.total_tool_calls} tool calls</span>}
-          <span title="Estimated from ingested agent transcripts at API list prices (cache-aware)">{fmtCost(d.stats.total_cost)}</span>
+          <span data-tip="Estimated from ingested agent transcripts at API list prices (cache-aware)">{fmtCost(d.stats.total_cost)}</span>
           <span>{fmtDuration(durationMs)}</span>
           <span className="muted">{fmtDate(d.run?.started_at ?? d.stats.started_at)}</span>
         </div>

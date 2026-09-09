@@ -376,7 +376,7 @@ export function TimelineBand(props: TimelineBandProps) {
             type="button"
             className="link-btn tl-axis"
             onClick={() => onAxisMode(axisMode === "compressed" ? "literal" : "compressed")}
-            title={
+            data-tip={
               axisMode === "compressed"
                 ? "Idle gaps are collapsed. Switch to literal wall-clock."
                 : "Literal wall-clock. Switch to collapsed idle gaps."
@@ -556,7 +556,7 @@ export function TimelineBand(props: TimelineBandProps) {
             "context used" or anything implying a budget: the corpus says a fuller context is not a
             worse one over most of the range. */}
         {ctxPeak > 0 && (
-          <span className="tl-key" title="Prompt size per message — input + cache-write + cache-read. Shape only; a fuller context is not a worse one.">
+          <span className="tl-key" data-tip="Prompt size per message — input + cache-write + cache-read. Shape only; a fuller context is not a worse one.">
             <span className="tl-swatch is-line" />
             context, peak {fmtTokens(ctxPeak)}
           </span>

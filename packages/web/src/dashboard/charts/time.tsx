@@ -332,7 +332,7 @@ function LatencyLegend({
             className="lat-chip"
             aria-pressed={on}
             onClick={() => onToggle(m, !on)}
-            title={`${on ? "Hide" : "Show"} ${shortModel(m)}`}
+            data-tip={`${on ? "Hide" : "Show"} ${shortModel(m)}`}
             style={{ opacity: on ? 1 : 0.4 }}
           >
             {swatch(colorFor(m))}
