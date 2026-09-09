@@ -1,0 +1,41 @@
+name: PR title
+
+# This repo squash-merges, so the PR title becomes the commit subject on main — and that subject is
+# the only thing @semantic-release/commit-analyzer reads. A non-conventional title therefore does not
+# fail anything; it silently produces a release-less merge (that is how #54 shipped with no 0.17.0).
+# This check moves that failure to where it can still be fixed: the PR itself.
+on:
+  pull_request:
+    types: [opened, edited, reopened, synchronize]
+
+permissions:
+  pull-requests: read
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: amannn/action-semantic-pull-request@v6.1.1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          # Types accepted in commit subjects here. feat/fix/perf are the ones that release
+          # (angular preset); the rest are valid subjects that deliberately release nothing.
+          types: |
+            feat
+            fix
+            perf
+            refactor
+            test
+            docs
+            build
+            ci
+            chore
+            revert
+          # A scope is optional, but when present it must be lowercase like the rest of the history.
+          requireScope: false
+          subjectPattern: ^(?![A-Z]).+$
+          subjectPatternError: |
+            The subject "{subject}" of pull request "{title}" is invalid: start it lowercase, the way
+            the commit history does.

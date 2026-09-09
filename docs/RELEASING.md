@@ -33,11 +33,34 @@ On every push to `main`, `.github/workflows/release.yml`:
    only gate that exercises the tsup **bundle** rather than per-package `tsc` output; the test
    suite cannot see bundle-only breakage.
 2. **Releases** via `semantic-release` (config in `.releaserc.json`, run from the repo root with
-   `pkgRoot: packages/cli`): computes the next version, updates `CHANGELOG.md` and
-   `packages/cli/package.json`, publishes to npm (with provenance), creates the `vX.Y.Z` git tag,
-   and opens a GitHub Release.
+   `pkgRoot: packages/cli`): computes the next version, sets it in `packages/cli/package.json`,
+   publishes to npm (with provenance), creates the `vX.Y.Z` git tag, and opens a GitHub Release.
+   Nothing is committed back — there is no `@semantic-release/changelog` or `/git` plugin, so the
+   notes live on the GitHub Release rather than in a committed changelog.
 
 There is nothing to do to cut a release beyond **merging conventional commits to `main`**.
+
+## The PR title *is* the commit subject
+
+`main` is merged into with **squash merges**, so GitHub uses the **pull request title** as the
+subject of the single commit that lands. That subject is the only thing
+`@semantic-release/commit-analyzer` reads — conventional prefixes on the individual commits inside
+the PR are collapsed into the squash body, where the parser never looks for a type.
+
+A non-conventional PR title therefore fails nothing and releases nothing: the work merges, no version
+is cut, and the omission is only visible later as a missing release. That is how
+`Copy a session's archive path, and one tooltip everywhere (#54)` shipped without a `0.17.0`.
+
+`.github/workflows/pr-title.yml` checks the title on every PR so this fails while it is still a title
+edit. **Title the PR the way you would write the commit** — `feat(web): …`, `fix(server): …` — and
+let the merge inherit it.
+
+If a release was missed this way, the recovery is an empty commit carrying the conventional subject,
+landed through a PR like any other change:
+
+```bash
+git commit --allow-empty -m "feat(web): <what actually shipped>"
+```
 
 ## One-time setup
 
