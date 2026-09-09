@@ -91,7 +91,8 @@ agent-lens-ingest: files=312 skipped=298 new_events=1840 malformed=0
   full-text search. The archive is the source of truth; the DB is a rebuildable projection.
 - **Rich transcript viewer** — turn-segmented sessions, a navigable timeline band, and purpose-built
   rendering per tool: Bash as a shell console, `Edit`/`MultiEdit`/`Write` as colored diffs, plans and
-  `AskUserQuestion` as cards, workflow runs with a phase graph. One-click **Markdown export** and a
+  `AskUserQuestion` as cards, workflow runs with a phase graph. One-click **Markdown export**, a
+  **copy-archive-path** button that hands another local agent the session's raw `.jsonl` trace, and a
   **light/dark theme toggle** (dark by default).
 - **Session timeline** — a minimap under each session's header showing where the work, the waiting and
   the audit-worthy moments are. Idle gaps are collapsed by default (a real session is mostly waiting —
