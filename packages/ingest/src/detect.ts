@@ -189,7 +189,7 @@ const TEMP_PATH = /^(\/tmp\/|\/var\/folders\/|\/private\/var\/folders\/)/;
  * Paths the agent legitimately owns, so writing there is expected, not a finding: its own config/work
  * dir (e.g. plans, memory, todos, projects, settings, skills) and temp dirs. The config roots are the
  * `config_dir`s of the configured sources (the `sources` table, seeded from the project config file),
- * NOT a hardcoded `.claude` pattern — that way side-by-side installs (~/.claude, ~/.claude-isf, …) and
+ * NOT a hardcoded `.claude` pattern — that way side-by-side installs (~/.claude, ~/.claude-work, …) and
  * any relocated config dir are covered from a single source of truth. Neutralizes the biggest
  * write_outside_project false-positive source.
  */
@@ -683,7 +683,7 @@ export function detect(db: DB, dirty?: Set<string> | null): { count: number; ver
 
   // Agent-owned config roots — the configured sources' `config_dir`s (seeded from the project config
   // file at ingest). Single source of truth for the write_outside_project allowlist, so relocated or
-  // side-by-side installs (~/.claude, ~/.claude-isf, …) are covered without a hardcoded path pattern.
+  // side-by-side installs (~/.claude, ~/.claude-work, …) are covered without a hardcoded path pattern.
   const ownedConfigDirs = (db.prepare("SELECT config_dir FROM sources WHERE config_dir IS NOT NULL").all() as Array<{ config_dir: string }>)
     .map((r) => r.config_dir.replace(/\/$/, ""))
     .filter(Boolean);
