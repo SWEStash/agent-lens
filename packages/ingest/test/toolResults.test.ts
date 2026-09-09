@@ -29,7 +29,7 @@ function db() {
 
 beforeEach(() => {
   root = mkdtempSync(join(tmpdir(), "al-tr."));
-  archive = join(root, "isf");
+  archive = join(root, "work");
 });
 afterEach(() => rmSync(root, { recursive: true, force: true }));
 

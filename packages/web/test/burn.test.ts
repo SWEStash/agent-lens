@@ -5,7 +5,7 @@
 import { describe, it, expect } from "vitest";
 import { heatCells, heatRows, rampColor, rampPosition, rampTicks, burnBySource, isoWeek, type BurnHour, type HeatRow } from "../src/dashboard/burn";
 
-const row = (hour: string, work: number, source: string | null = "isf"): BurnHour => ({ hour, source, work });
+const row = (hour: string, work: number, source: string | null = "work"): BurnHour => ({ hour, source, work });
 /** heatCells folds whichever metric is selected, so its rows carry a bare `value`, not `work`. */
 const cellRow = (hour: string, value: number): HeatRow => ({ hour, value });
 
@@ -86,8 +86,8 @@ describe("heatCells", () => {
 
 describe("heatRows", () => {
   const time = {
-    burn_hours: [{ hour: "2026-03-02T12", source: "isf", work: 900 }],
-    turn_hours: [{ hour: "2026-03-02T12", source: "isf", turns: 3 }],
+    burn_hours: [{ hour: "2026-03-02T12", source: "work", work: 900 }],
+    turn_hours: [{ hour: "2026-03-02T12", source: "work", turns: 3 }],
   } as never;
 
   it("plots turns and tokens from their own series, not one converted into the other", () => {
@@ -189,13 +189,13 @@ describe("rampTicks", () => {
 describe("burnBySource", () => {
   it("keeps sources separate rather than summing them", () => {
     const { points, sources } = burnBySource(
-      [row("2026-03-02T12", 10, "isf"), row("2026-03-03T12", 5, "personal")],
+      [row("2026-03-02T12", 10, "work"), row("2026-03-03T12", 5, "personal")],
       "UTC",
       "week",
     );
-    expect(sources).toEqual(["isf", "personal"]);
+    expect(sources).toEqual(["personal", "work"]); // alphabetical, per burnBySource
     expect(points).toHaveLength(1);
-    expect(points[0].bySource).toEqual({ isf: 10, personal: 5 });
+    expect(points[0].bySource).toEqual({ work: 10, personal: 5 });
   });
 
   it("buckets by the LOCAL week, so a UTC Monday can belong to the previous one", () => {
@@ -210,12 +210,12 @@ describe("burnBySource", () => {
     expect(burnBySource(rows, "UTC", "week").points).toHaveLength(1);
     const { points } = burnBySource(rows, "UTC", "day");
     expect(points.map((p) => p.bucket)).toEqual(["2026-03-02", "2026-03-03"]);
-    expect(points.map((p) => p.bySource.isf)).toEqual([10, 5]);
+    expect(points.map((p) => p.bySource.work)).toEqual([10, 5]);
   });
 
   it("folds a whole month into one bucket when asked", () => {
     const { points } = burnBySource([row("2026-03-02T12", 10), row("2026-03-30T12", 5)], "UTC", "month");
-    expect(points).toEqual([{ bucket: "2026-03", bySource: { isf: 15 } }]);
+    expect(points).toEqual([{ bucket: "2026-03", bySource: { work: 15 } }]);
   });
 
   it("sorts buckets chronologically at every granularity", () => {

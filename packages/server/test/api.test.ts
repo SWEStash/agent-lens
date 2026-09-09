@@ -307,22 +307,22 @@ describe("getSession attaches spilled full tool results", () => {
 // sessions wildly inflates it (the reported 327-vs-27 bug).
 describe("source session_count counts main sessions only", () => {
   it("GET /api/sources → excludes subagent sidechains", async () => {
-    const db = freshDb({ source: "isf" });
-    addSession(db, "m1", { source: "isf", events: 3 });
-    for (const id of ["a1", "a2", "a3"]) addSession(db, id, { source: "isf", sidechain: true, events: 2 });
+    const db = freshDb({ source: "work" });
+    addSession(db, "m1", { source: "work", events: 3 });
+    for (const id of ["a1", "a2", "a3"]) addSession(db, id, { source: "work", sidechain: true, events: 2 });
     const local = await appFor(db);
 
     const r = await local.inject({ method: "GET", url: "/api/sources" });
     expect(r.statusCode).toBe(200);
-    const src = r.json().find((s: { id: string }) => s.id === "isf");
+    const src = r.json().find((s: { id: string }) => s.id === "work");
     expect(src.session_count).toBe(1); // 1 main, not 4 (3 subagents excluded)
     await local.close();
   });
 
   it("GET /api/sources → a source with no sessions still lists, at zero", async () => {
-    const db = freshDb({ source: "isf" });
+    const db = freshDb({ source: "work" });
     addSource(db, "empty");
-    addSession(db, "m1", { source: "isf" });
+    addSession(db, "m1", { source: "work" });
     const local = await appFor(db);
 
     const rows = (await local.inject({ method: "GET", url: "/api/sources" })).json();

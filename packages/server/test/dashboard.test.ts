@@ -14,11 +14,11 @@ function seed(): DatabaseSync {
   const db = new DatabaseSync(":memory:");
   db.exec(SCHEMA_SQL);
   db.exec("PRAGMA foreign_keys = OFF"); // test aggregation SQL, not the full FK graph
-  // Sessions: m1 (isf, main, cache-heavy opus), a1 (isf, subagent, dated haiku), m2 (personal, main, <synthetic>).
+  // Sessions: m1 (work, main, cache-heavy opus), a1 (work, subagent, dated haiku), m2 (personal, main, <synthetic>).
   db.exec(`
     INSERT INTO sessions (id, agent_id, source_id, is_sidechain, started_at, duration_ms, turn_count) VALUES
-      ('m1','claude-code','isf',0,'2026-01-01T00:00:00Z',1000,2),
-      ('a1','claude-code','isf',1,'2026-01-01T00:00:00Z',500,0),
+      ('m1','claude-code','work',0,'2026-01-01T00:00:00Z',1000,2),
+      ('a1','claude-code','work',1,'2026-01-01T00:00:00Z',500,0),
       ('m2','claude-code','personal',0,'2026-01-02T00:00:00Z',3000,1);
     INSERT INTO token_usage (event_uuid, session_id, model, input_tokens, output_tokens, cache_creation_input_tokens, cache_read_input_tokens) VALUES
       ('m1e','m1','claude-opus-4-8',1000000,1000000,1000000,10000000),
@@ -36,9 +36,9 @@ function seed(): DatabaseSync {
       ('session','m2','bugfix',20,'small',2),
       ('session','a1','review',5,'trivial',2);
     INSERT INTO workflow_results (run_id, source_id, status, total_tokens, duration_ms, started_at) VALUES
-      ('wf1','isf','completed',1000,2000,'2026-01-01T00:00:00Z'),
-      ('wf2','isf','completed',3000,4000,'2026-01-01T00:00:00Z'),
-      ('wf3','isf','failed',500,1000,'2026-01-02T00:00:00Z'),
+      ('wf1','work','completed',1000,2000,'2026-01-01T00:00:00Z'),
+      ('wf2','work','completed',3000,4000,'2026-01-01T00:00:00Z'),
+      ('wf3','work','failed',500,1000,'2026-01-02T00:00:00Z'),
       ('wf4','personal','running',NULL,NULL,'2026-01-02T00:00:00Z');
   `);
   return db;
@@ -103,10 +103,10 @@ describe("dashboardBreakdowns", () => {
   });
 
   it("counts sessions+turns per source (all sessions, incl. subagents)", () => {
-    const isf = b.by_source.find((s: any) => s.source === "isf");
+    const work = b.by_source.find((s: any) => s.source === "work");
     const personal = b.by_source.find((s: any) => s.source === "personal");
-    expect(isf.sessions).toBe(2); // m1 + a1
-    expect(isf.turns).toBe(2); // turn_count 2 + 0
+    expect(work.sessions).toBe(2); // m1 + a1
+    expect(work.turns).toBe(2); // turn_count 2 + 0
     expect(personal.sessions).toBe(1);
   });
 
@@ -165,8 +165,8 @@ function seedTime(): DatabaseSync {
   db.exec("PRAGMA foreign_keys = OFF");
   db.exec(`
     INSERT INTO sessions (id, agent_id, source_id, is_sidechain, started_at) VALUES
-      ('long','claude-code','isf',0,'2026-03-01T22:00:00Z'),
-      ('sub','claude-code','isf',1,'2026-03-01T22:00:00Z');
+      ('long','claude-code','work',0,'2026-03-01T22:00:00Z'),
+      ('sub','claude-code','work',1,'2026-03-01T22:00:00Z');
     INSERT INTO events (uuid, session_id, turn_id, type, role, timestamp, raw_json) VALUES
       ('e1','long','long:0','assistant','assistant','2026-03-01T22:00:30Z',x''),
       ('e2','long','long:0','assistant','assistant','2026-03-01T23:10:00Z',x''),
@@ -206,7 +206,7 @@ function seedLatency(): DatabaseSync {
     });
   db.exec(`
     INSERT INTO sessions (id, agent_id, source_id, is_sidechain, started_at) VALUES
-      ('lat','claude-code','isf',0,'2026-03-02T10:00:00Z');
+      ('lat','claude-code','work',0,'2026-03-02T10:00:00Z');
     INSERT INTO turns (id, session_id, seq, model, started_at, ended_at) VALUES ${rows.map((r) => r.turn).join(",")};
     INSERT INTO events (uuid, session_id, turn_id, type, role, timestamp, raw_json) VALUES ${rows.map((r) => r.event).join(",")};
   `);
@@ -216,10 +216,10 @@ function seedLatency(): DatabaseSync {
 describe("dashboardTime", () => {
   it("buckets burn by the usage event's own hour, not the session's start hour", () => {
     const t = dashboardTime(seedTime(), {});
-    const isf = t.burn_hours.filter((r: any) => r.source === "isf");
-    expect(isf.map((r: any) => r.hour)).toEqual(["2026-03-01T22", "2026-03-01T23", "2026-03-02T01"]);
+    const work = t.burn_hours.filter((r: any) => r.source === "work");
+    expect(work.map((r: any) => r.hour)).toEqual(["2026-03-01T22", "2026-03-01T23", "2026-03-02T01"]);
     // 22:00 holds e1 (60) plus the subagent's s1 (15) — spend counts both populations.
-    expect(isf.map((r: any) => r.work)).toEqual([75, 3, 300]);
+    expect(work.map((r: any) => r.work)).toEqual([75, 3, 300]);
   });
 
   it("counts turns by their own start hour, main sessions only", () => {
@@ -333,9 +333,9 @@ function seedModels(): DatabaseSync {
   db.exec("PRAGMA foreign_keys = OFF");
   db.exec(`
     INSERT INTO sessions (id, agent_id, source_id, is_sidechain, started_at, turn_count) VALUES
-      ('mix','claude-code','isf',0,'2026-04-01T10:00:00Z',3),
-      ('solo','claude-code','isf',0,'2026-04-01T12:00:00Z',1),
-      ('synth','claude-code','isf',0,'2026-04-01T14:00:00Z',0);
+      ('mix','claude-code','work',0,'2026-04-01T10:00:00Z',3),
+      ('solo','claude-code','work',0,'2026-04-01T12:00:00Z',1),
+      ('synth','claude-code','work',0,'2026-04-01T14:00:00Z',0);
     INSERT INTO events (uuid, session_id, turn_id, type, role, timestamp, model, raw_json) VALUES
       ('eo','mix','mix:0','assistant','assistant','2026-04-01T10:00:10Z','claude-opus-5',x''),
       ('eh','mix','mix:1','assistant','assistant','2026-04-01T10:05:10Z','claude-haiku-4-5-20251001',x''),
@@ -356,7 +356,7 @@ function seedModels(): DatabaseSync {
       ('tch','eh','mix','mix:1','Bash','ok'),
       ('tcf','ef','solo','solo:0','Read','ok');
     INSERT INTO workflow_results (run_id, source_id, status, total_tokens, duration_ms, started_at) VALUES
-      ('wf1','isf','completed',1000,2000,'2026-04-01T10:00:00Z');
+      ('wf1','work','completed',1000,2000,'2026-04-01T10:00:00Z');
   `);
   return db;
 }
@@ -478,8 +478,8 @@ function seedAudit(): DatabaseSync {
   db.exec("PRAGMA foreign_keys = OFF");
   db.exec(`
     INSERT INTO sessions (id, agent_id, source_id, is_sidechain, started_at, turn_count) VALUES
-      ('m','claude-code','isf',0,'2026-04-01T09:00:00Z',2),
-      ('sub','claude-code','isf',1,'2026-04-01T12:00:00Z',1),
+      ('m','claude-code','work',0,'2026-04-01T09:00:00Z',2),
+      ('sub','claude-code','work',1,'2026-04-01T12:00:00Z',1),
       ('m2','claude-code','personal',0,'2026-05-02T09:00:00Z',1);
     INSERT INTO events (uuid, session_id, type, role, timestamp, model, raw_json) VALUES
       ('e1','m','assistant','assistant','2026-04-01T10:00:00Z','claude-opus-5',x''),
@@ -604,7 +604,7 @@ function seedCollision(): DatabaseSync {
   db.exec("PRAGMA foreign_keys = OFF");
   db.exec(`
     INSERT INTO sessions (id, agent_id, source_id, is_sidechain, started_at, turn_count) VALUES
-      ('s','claude-code','isf',0,'2026-04-01T09:00:00Z',1);
+      ('s','claude-code','work',0,'2026-04-01T09:00:00Z',1);
     INSERT INTO events (uuid, session_id, type, role, timestamp, model, raw_json) VALUES
       ('e1','s','assistant','assistant','2026-04-01T10:00:00Z','claude-haiku-4-5-20251001',x''),
       ('e2','s','assistant','assistant','2026-04-01T11:00:00Z','claude-haiku-4-5',x'');

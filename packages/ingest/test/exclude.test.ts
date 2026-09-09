@@ -18,7 +18,7 @@ const jsonl = (...l: unknown[]) => l.map((x) => JSON.stringify(x)).join("\n") + 
 
 describe("path encoding + exclusion matchers", () => {
   it("encodes a real cwd to its projects/<encodedDir> name ('/' and '.' → '-')", () => {
-    expect(encodeProjectPath("/home/m4pre/git-projects/swestash/agent-lens")).toBe("-home-m4pre-git-projects-swestash-agent-lens");
+    expect(encodeProjectPath("/home/jdoe/git-projects/swestash/agent-lens")).toBe("-home-jdoe-git-projects-swestash-agent-lens");
     expect(encodeProjectPath("/home/u/proj/")).toBe("-home-u-proj"); // trailing separator dropped
     expect(encodeProjectPath("/home/u/.config/app")).toBe("-home-u--config-app");
   });

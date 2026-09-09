@@ -22,10 +22,27 @@ export AGENT_LENS_EXCLUDE="${AGENT_LENS_EXCLUDE:-$REPO}"
 export AGENT_LENS_REDACT_SALT="${AGENT_LENS_REDACT_SALT:-agent-lens-corpus-v1}"
 
 # Chosen sessions: "<srcLabel>|<encodedDir>|<sessionUUID>|<outLabel>". Small, with subagents, no agent-lens.
-SESSIONS=(
-  "isf|-home-m4pre|3d2f5a38-3e12-423e-870b-c1f402993a29|team-a"
-  "personal|-home-m4pre-git-projects-saberes-monte-cms|a5723896-1f9a-4416-9f7d-f81844585ae8|team-b"
-)
+#
+# The selection is NOT committed: it names a real source label, a real project directory (which
+# carries the operator's username) and real session ids — the very things the redactor exists to keep
+# out of this repo. Keep it in scripts/corpus-sessions.local (gitignored), one spec per line, e.g.
+#
+#   work|-home-jdoe-git-projects-example-app|3d2f5a38-3e12-423e-870b-c1f402993a29|team-a
+#
+# Only whoever holds the matching archive can regenerate the corpus anyway, which is why nothing is
+# lost by keeping the list beside it rather than in git.
+SPEC_FILE="${AL_CORPUS_SESSIONS:-scripts/corpus-sessions.local}"
+if [ ! -f "$SPEC_FILE" ]; then
+  echo "build-corpus: no session list at $SPEC_FILE" >&2
+  echo "  Write one spec per line: <srcLabel>|<encodedDir>|<sessionUUID>|<outLabel>" >&2
+  echo "  (or point AL_CORPUS_SESSIONS at another file). See the comment in $0." >&2
+  exit 1
+fi
+SESSIONS=()
+while IFS= read -r line; do
+  [ -z "${line%%#*}" ] && continue   # skip blanks and comment lines
+  SESSIONS+=("$line")
+done < "$SPEC_FILE"
 
 # Regenerate only the redacted real sources; the synthetic scenarios source is rebuilt separately.
 rm -rf "$RAW" "$CORPUS/team-a" "$CORPUS/team-b"

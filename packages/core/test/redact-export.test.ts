@@ -118,10 +118,10 @@ describe("exportMarkdown — off (verbatim opt-out)", () => {
 });
 
 describe("exportMarkdown — encoded project-dir paths (regression)", () => {
-  // Claude Code encodes a project path by replacing "/" with "-", so /home/m4pre/git-projects/x
-  // becomes -home-m4pre-git-projects-x. This leaked the username through scratchpad/task paths that
+  // Claude Code encodes a project path by replacing "/" with "-", so /home/jdoe/git-projects/x
+  // becomes -home-jdoe-git-projects-x. This leaked the username through scratchpad/task paths that
   // appear verbatim in transcript text — the slash-form home-strip walked right past it.
-  const ENCODED = "/tmp/claude-1000/-home-m4pre-git-projects-swestash-agent-lens/ce037d95/tasks/a96a.output";
+  const ENCODED = "/tmp/claude-1000/-home-jdoe-git-projects-swestash-agent-lens/ce037d95/tasks/a96a.output";
 
   it("secrets level strips the username from an ENCODED home path in narrative text", () => {
     const session: MarkdownSession = { ...fixture().session, project: "/tmp/x" };
@@ -129,14 +129,14 @@ describe("exportMarkdown — encoded project-dir paths (regression)", () => {
       { type: "message", role: "assistant", timestamp: "t", text: `wrote output to ${ENCODED}`, thinking: null, toolCalls: [] },
     ];
     const { markdown, residualLeak } = exportMarkdown(session, events, { level: "secrets" });
-    expect(markdown).not.toContain("m4pre");
+    expect(markdown).not.toContain("jdoe");
     expect(markdown).toContain("-home-user-git-projects-swestash-agent-lens"); // structure kept, user stripped
     expect(findShareLeak(markdown)).toBeNull();
     expect(residualLeak).toBe(false);
   });
 
   it("findShareLeak flags an un-masked encoded home path", () => {
-    expect(findShareLeak("ran in -home-m4pre-git-projects-swestash-agent-lens/x")).not.toBeNull();
+    expect(findShareLeak("ran in -home-jdoe-git-projects-swestash-agent-lens/x")).not.toBeNull();
     expect(findShareLeak("ran in -home-user-git-projects-swestash-agent-lens/x")).toBeNull();
   });
 });
@@ -190,13 +190,13 @@ describe("maskSecrets — additional secret token formats", () => {
 
 describe("exportMarkdown — derive & scrub the session's username", () => {
   it("scrubs the home-dir owner everywhere it appears (URLs, prose), not just in /home paths", () => {
-    const session: MarkdownSession = { ...fixture().session, title: null, project: "/home/m4pre/git-projects/x" };
+    const session: MarkdownSession = { ...fixture().session, title: null, project: "/home/jdoe/git-projects/x" };
     const events: MarkdownEvent[] = [
       { type: "message", role: "assistant", timestamp: "t", thinking: null, toolCalls: [],
-        text: "pushed to github.com/m4pre/site and pinged m4pre about it" },
+        text: "pushed to github.com/jdoe/site and pinged jdoe about it" },
     ];
     const { markdown } = exportMarkdown(session, events, { level: "secrets" });
-    expect(markdown).not.toContain("m4pre");
+    expect(markdown).not.toContain("jdoe");
     expect(markdown).toContain("[USER]");
     expect(markdown).toContain("github.com/[USER]/site");
     expect(markdown).toContain("/home/user/git-projects/x"); // home path still stripped structurally
