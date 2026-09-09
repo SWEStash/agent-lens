@@ -74,7 +74,7 @@ const COLUMNS: ColumnDef[] = [
     defaultVisible: true,
     sortKey: "tokens",
     thClassName: "num",
-    cell: (s) => <td className="num" title={tokenSplitTitle(s.token_split)}>{fmtTokens(s.tokens)}</td>,
+    cell: (s) => <td className="num" data-tip={tokenSplitTitle(s.token_split)}>{fmtTokens(s.tokens)}</td>,
   },
   {
     id: "security",
@@ -92,7 +92,7 @@ const COLUMNS: ColumnDef[] = [
           <span
             className="sec-count"
             aria-label={`${s.finding_count} finding${s.finding_count === 1 ? "" : "s"}, highest severity ${s.worst_severity}`}
-            title={`${s.finding_count} finding${s.finding_count === 1 ? "" : "s"} · highest severity: ${s.worst_severity}`}
+            data-tip={`${s.finding_count} finding${s.finding_count === 1 ? "" : "s"} · highest severity: ${s.worst_severity}`}
           >
             <span className={"sev-dot sev-" + s.worst_severity} aria-hidden="true" />
             {s.finding_count}
@@ -113,7 +113,7 @@ const COLUMNS: ColumnDef[] = [
     cell: (s) => (
       <td
         className="num"
-        title={
+        data-tip={
           s.tool_call_count > 0
             ? `${s.tool_error_count}/${s.tool_call_count} tool calls returned an error (includes user-rejected/guardrail-blocked; see the session for the failure vs declined split)`
             : "no tool calls"
@@ -132,7 +132,7 @@ const COLUMNS: ColumnDef[] = [
     sortKey: "cost",
     thClassName: "num",
     cell: (s) => (
-      <td className="num" title={costTitle(s.unpriced_models)}>
+      <td className="num" data-tip={costTitle(s.unpriced_models)}>
         {fmtCost(s.cost)}
         {s.unpriced_models?.length ? <span className="warn-tag"> ⚠</span> : null}
       </td>
@@ -188,7 +188,7 @@ function ColumnCustomizer({ visible, onToggle }: { visible: Set<string>; onToggl
   const ref = useDetailsAutoClose();
   return (
     <details className="col-customizer" ref={ref}>
-      <summary aria-label="Show or hide columns" title="Show/hide columns">⚙</summary>
+      <summary aria-label="Show or hide columns" data-tip="Show/hide columns">⚙</summary>
       <div className="col-menu" role="group" aria-label="Toggle columns">
         {TOGGLEABLE.map((c) => (
           <label key={c.id}>

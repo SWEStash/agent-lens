@@ -420,13 +420,13 @@ describe("privilege / guardrail-bypass rules (OWASP LLM06)", () => {
   it("does NOT flag writes to the agent's own config dir or temp (allowlist, v2)", () => {
     const db = freshDb();
     // Owned config roots come from the configured sources' config_dir (seeded from the project config),
-    // not a hardcoded pattern — two side-by-side installs here (~/.claude and ~/.claude-isf).
+    // not a hardcoded pattern — two side-by-side installs here (~/.claude and ~/.claude-work).
     db.prepare(`INSERT INTO sources (id, label, agent_id, config_dir) VALUES ('personal','personal','claude-code','/home/u/.claude')`).run();
-    db.prepare(`INSERT INTO sources (id, label, agent_id, config_dir) VALUES ('isf','isf','claude-code','/home/u/.claude-isf')`).run();
+    db.prepare(`INSERT INTO sources (id, label, agent_id, config_dir) VALUES ('work','work','claude-code','/home/u/.claude-work')`).run();
     addSession(db, "s", "/home/u/proj");
     const plan = addTool(db, "s", "Write", { input: { file_path: "/home/u/.claude/plans/my-plan.md", content: "x" } });
-    // A side-by-side install with its own config root (~/.claude-isf/**) is just as owned.
-    const planIsf = addTool(db, "s", "Write", { input: { file_path: "/home/u/.claude-isf/plans/peppy-yawning-noodle.md", content: "x" } });
+    // A side-by-side install with its own config root (~/.claude-work/**) is just as owned.
+    const planIsf = addTool(db, "s", "Write", { input: { file_path: "/home/u/.claude-work/plans/peppy-yawning-noodle.md", content: "x" } });
     const scratch = addTool(db, "s", "Write", { input: { file_path: "/tmp/claude-1000/abc/scratchpad/note.txt", content: "x" } });
     const etc = addTool(db, "s", "Write", { input: { file_path: "/etc/acme/agent.conf", content: "x" } });
     // A .claude-looking dir that is NOT a configured source is still flagged — proves the allowlist is

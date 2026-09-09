@@ -34,7 +34,7 @@ export function TurnSection({
         <span className="turn-no">turn {turn.seq + 1}</span>
         {turn.prompt_preview ? <span className="turn-preview">{previewLabel(turn.prompt_preview)}</span> : null}
         {matches > 0 && (
-          <span className="turn-matches" title={`${matches} message${matches === 1 ? "" : "s"} match the search`}>
+          <span className="turn-matches" data-tip={`${matches} message${matches === 1 ? "" : "s"} match the search`}>
             {matches}
           </span>
         )}

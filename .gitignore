@@ -38,3 +38,6 @@ dist/
 *.log
 .idea/
 .vscode/
+
+# Local corpus session selection: names real sources/projects/session ids (scripts/build-corpus.sh).
+scripts/corpus-sessions.local

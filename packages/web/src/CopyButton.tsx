@@ -8,11 +8,15 @@ export default function CopyButton({
   text,
   label,
   title = "Copy to clipboard",
+  tip,
   className = "",
 }: {
   text: string;
   label?: string;
+  /** The accessible name — kept short, since a screen reader reads it in full. */
   title?: string;
+  /** Hover/focus text when it should say more than the name does. Defaults to `title`. */
+  tip?: string;
   className?: string;
 }) {
   const [copied, setCopied] = useState(false);
@@ -44,7 +48,7 @@ export default function CopyButton({
       className={"ghost small copy-btn " + className}
       onClick={copy}
       aria-label={title}
-      title={title}
+      data-tip={tip ?? title}
     >
       {copied ? "✓ Copied" : "⧉"}
       {label ? " " + label : ""}

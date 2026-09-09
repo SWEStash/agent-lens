@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { Link, NavLink, Outlet, useLocation } from "react-router-dom";
 import BackToTop from "./BackToTop";
+import { TooltipLayer } from "./Tooltip";
 import logoUrl from "./assets/logo.png";
 import { api, apiPost, SNAPSHOT, type HealthResponse } from "./api";
 import { useTheme } from "./theme";
@@ -65,6 +66,7 @@ export default function App() {
   const wide = pathname === "/dashboard" || pathname === "/security" || pathname.startsWith("/skill/") || pathname === "/file";
   return (
     <div className="app">
+      <TooltipLayer />
       <a className="skip-link" href="#main">
         Skip to content
       </a>
@@ -76,11 +78,11 @@ export default function App() {
             paths), so the badge degrades to plain text rather than linking to a 404. */}
         {version &&
           (SNAPSHOT ? (
-            <span className="version-badge" title={`Agent Lens ${version}`}>
+            <span className="version-badge" data-tip={`Agent Lens ${version}`}>
               {version}
             </span>
           ) : (
-            <Link to="/about" className="version-badge" title={`Agent Lens ${version} — open diagnostics`}>
+            <Link to="/about" className="version-badge" data-tip={`Agent Lens ${version} — open diagnostics`}>
               {version}
             </Link>
           ))}
@@ -102,7 +104,7 @@ export default function App() {
           </NavLink>
         </nav>
         {lastIngested ? (
-          <span className="tagline" title={`Data last ingested ${new Date(lastIngested).toLocaleString()}`}>
+          <span className="tagline" data-tip={`Data last ingested ${new Date(lastIngested).toLocaleString()}`}>
             updated {relativeTime(lastIngested)}
           </span>
         ) : (
@@ -116,7 +118,7 @@ export default function App() {
               onClick={doRefresh}
               disabled={refreshing}
               aria-label="Refresh data — collect new transcripts and rebuild"
-              title={
+              data-tip={
                 refreshErr
                   ? `Refresh failed: ${refreshErr}`
                   : "Collect new transcripts and rebuild the data (runs on the host)"
@@ -134,7 +136,7 @@ export default function App() {
             onClick={toggle}
             aria-label="Toggle light or dark theme"
             aria-pressed={theme === "light"}
-            title={theme === "dark" ? "Switch to light theme" : "Switch to dark theme"}
+            data-tip={theme === "dark" ? "Switch to light theme" : "Switch to dark theme"}
           >
             {theme === "dark" ? "☀" : "☾"}
           </button>

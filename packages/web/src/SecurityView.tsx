@@ -237,7 +237,7 @@ export default function SecurityView() {
                 if (confirm(`Dismiss all ${total} open findings matching the current filter as safe?`))
                   act(() => apiPost("/security/dismiss-matching", { filter: Object.fromEntries(filterQs) }));
               }}
-              title="Mark every open finding matching the current filter as safe"
+              data-tip="Mark every open finding matching the current filter as safe"
             >
               Dismiss all {total} matching
             </button>
@@ -324,7 +324,7 @@ function FindingRow({
       )}
       <td>
         <SeverityTag severity={f.severity} />
-        {f.dismissed ? <span className="tag dismissed" title={f.dismiss_note ?? ""}>safe</span> : null}
+        {f.dismissed ? <span className="tag dismissed" data-tip={f.dismiss_note ?? ""}>safe</span> : null}
       </td>
       <td>
         <div className="finding-title">{f.title ?? f.rule_id}</div>
@@ -335,10 +335,10 @@ function FindingRow({
       </td>
       <td className="small">{f.category}</td>
       <td className="finding-evidence-cell">
-        {f.tool_name && <span className="tag tool-tag" title="Tool the finding fired on">{f.tool_name}</span>}
-        <code title={f.evidence ?? ""}>{f.evidence}</code>
+        {f.tool_name && <span className="tag tool-tag" data-tip="Tool the finding fired on">{f.tool_name}</span>}
+        <code data-tip={f.evidence ?? ""}>{f.evidence}</code>
       </td>
-      <td className="small muted" title={f.started_at ?? ""}>{fmtDate(f.started_at ?? null)}</td>
+      <td className="small muted" data-tip={f.started_at ?? ""}>{fmtDate(f.started_at ?? null)}</td>
       <td className="small">
         <Link to={to} className="title">{f.session_title || f.session_id.slice(0, 12)}</Link>
         {f.is_sidechain ? <span className="tag subagent">subagent</span> : null}
@@ -351,7 +351,7 @@ function FindingRow({
           ) : (
             <button type="button" className="linkish" disabled={busy} onClick={onDismiss}>safe</button>
           )}
-          <button type="button" className="linkish" disabled={busy} onClick={onMute} title={`Mute rule ${f.rule_id} everywhere`}>mute rule</button>
+          <button type="button" className="linkish" disabled={busy} onClick={onMute} data-tip={`Mute rule ${f.rule_id} everywhere`}>mute rule</button>
         </td>
       )}
     </tr>

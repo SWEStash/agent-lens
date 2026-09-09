@@ -78,7 +78,7 @@ detector audit.
 - Fix template exclusion when the path is followed by shell text (`.env.example | …`);
   score secret reads per pipeline segment so `file/ls … | grep` no longer counts as a
   content read; derive the agent-owned config roots from the configured sources'
-  `config_dir` (covers `~/.claude-isf` and any relocated install) instead of a hardcoded
+  `config_dir` (covers `~/.claude-work` and any relocated install) instead of a hardcoded
   `.claude` pattern.
 
 ## v3 — credential-access tightening

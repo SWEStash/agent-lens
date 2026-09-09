@@ -135,12 +135,12 @@ export default function FilesView() {
                   <Link
                     to={`/file?path=${encodeURIComponent(f.file_path)}${f.project_id ? `&project=${encodeURIComponent(f.project_id)}` : ""}`}
                     className="title"
-                    title={f.file_path}
+                    data-tip={f.file_path}
                   >
                     {relPath(f.file_path, f.project_path)}
                   </Link>
                 </td>
-                <td>{f.project_path ? <span className="tag" title={f.project_path}>{f.project_path.replace(/^.*\//, "")}</span> : <span className="muted">—</span>}</td>
+                <td>{f.project_path ? <span className="tag" data-tip={f.project_path}>{f.project_path.replace(/^.*\//, "")}</span> : <span className="muted">—</span>}</td>
                 <td className="num">{f.sessions.toLocaleString()}</td>
                 <td className="num">{f.changes.toLocaleString()}</td>
                 <td className="num"><LinesDelta added={f.lines_added} removed={f.lines_removed} /></td>

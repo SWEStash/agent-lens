@@ -50,7 +50,7 @@ export function EventBlock({ e }: { e: EventNode }) {
             none, and get no chip rather than a "0 tok" one. The label is WORK tokens (see
             workTokens); the hover carries the full four-way split including cache-read. */}
         {e.usage && (
-          <span className="muted ev-tokens" title={tokenSplitTitle(e.usage)}>
+          <span className="muted ev-tokens" data-tip={tokenSplitTitle(e.usage)}>
             {fmtTokens(workTokens(e.usage))} tok
           </span>
         )}

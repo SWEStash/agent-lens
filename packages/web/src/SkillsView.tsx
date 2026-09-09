@@ -117,7 +117,7 @@ export default function SkillsView() {
                   </Link>
                 </td>
                 <td className="num">{s.call_count.toLocaleString()}</td>
-                <td className="num" title={`${s.version_count} distinct captured ${s.version_count === 1 ? "version" : "versions"}`}>
+                <td className="num" data-tip={`${s.version_count} distinct captured ${s.version_count === 1 ? "version" : "versions"}`}>
                   {s.version_count || <span className="muted">—</span>}
                 </td>
                 <td>

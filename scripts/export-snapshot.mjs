@@ -79,12 +79,13 @@ async function main() {
   // Fixed (unfiltered) endpoints the SPA fetches. Keys are the client path passed to api(); values
   // are the snapshot file rel-path (= path with query stripped + ".json"). Keep in sync with api.ts.
   //
-  // DELIBERATELY ABSENT: /api/about (ADR-027). It carries absolute filesystem paths from the machine
-  // that ran this export, and everything written here is published to a public GitHub Pages demo.
-  // Its absence is load-bearing, not an oversight — do not "fix" it by adding it. The SPA hides the
-  // About page under SNAPSHOT so nothing links to the missing file; note that
-  // check-snapshot-links.mjs would NOT catch a regression here, because it follows links rendered by
-  // exported payloads and never parses SPA source.
+  // DELIBERATELY ABSENT: /api/about and /api/sessions/:id/location (ADR-027). Both carry absolute
+  // filesystem paths from the machine that ran this export, and everything written here is published
+  // to a public GitHub Pages demo. Their absence is load-bearing, not an oversight — do not "fix" it
+  // by adding them. The SPA hides the About page and the "Copy archive path" button under SNAPSHOT so
+  // nothing links to the missing files; note that check-snapshot-links.mjs would NOT catch a
+  // regression here, because it follows links rendered by exported payloads and never parses SPA
+  // source.
   writeSnap("health.json", await getJson("/api/health"));
   writeSnap("sources.json", await getJson("/api/sources"));
   writeSnap("projects.json", await getJson("/api/projects"));

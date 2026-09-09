@@ -158,7 +158,11 @@ sandbox/API):
 CI coverage: `corpus-scenarios.test.ts` ingests the committed corpus and asserts
 all of the above; `scripts/sandbox.sh` re-asserts them through the live API.
 Regenerate the corpus with `pnpm build-corpus` (redacted real + oracle) and
-`node scripts/build-scenarios.mjs` (synthetic).
+`node scripts/build-scenarios.mjs` (synthetic). `build-corpus` reads which real
+sessions to redact from `scripts/corpus-sessions.local` (gitignored, one
+`<srcLabel>|<encodedDir>|<sessionUUID>|<outLabel>` per line) — that list names a
+real source, project directory and session ids, so it stays beside the archive it
+refers to rather than in git.
 
 ## Findings
 

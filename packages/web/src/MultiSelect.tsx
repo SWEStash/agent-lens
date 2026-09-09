@@ -34,7 +34,7 @@ export function MultiSelect({
   onChange,
   reset = CLEAR,
   disabled,
-  title,
+  tip,
 }: {
   label: string;
   options: MultiSelectOption[];
@@ -43,7 +43,8 @@ export function MultiSelect({
   reset?: MultiSelectReset;
   /** Renders the control inert, for a surface that cannot honour the filter (the static snapshot). */
   disabled?: boolean;
-  title?: string;
+  /** Hover/focus hint for the control (Tooltip.tsx). */
+  tip?: string;
 }) {
   function toggle(value: string, on: boolean) {
     const set = new Set(selected);
@@ -59,7 +60,7 @@ export function MultiSelect({
   // reset button is the way back.
   const last = (value: string) => selected.length === 1 && selected[0] === value && reset.to.length > 0;
   return (
-    <details className="multi-select" ref={ref} title={title}>
+    <details className="multi-select" ref={ref} data-tip={tip}>
       <summary aria-label={label}>
         {label}
         {atDefault ? "" : ` (${selected.length})`} ▾

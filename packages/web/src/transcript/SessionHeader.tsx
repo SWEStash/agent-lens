@@ -3,6 +3,7 @@
 import { Link } from "react-router-dom";
 import type { SessionDetail } from "../api";
 import { costTitle, fmtCost, fmtDate, fmtDuration, fmtTokens, tokenSplitTitle } from "../format";
+import { ArchivePathButton } from "./ArchivePathButton";
 import { ExportMenu } from "./ExportMenu";
 import { ClassificationBadge } from "./Classification";
 import { SecurityBanner } from "./Findings";
@@ -29,17 +30,17 @@ export function SessionHeader({ d }: { d: SessionDetail }) {
         )}
         <span>{d.turns.length} turns</span>
         <span>{s.event_count} events</span>
-        <span title={tokenSplitTitle(s.token_split)}>{fmtTokens(s.tokens)} tok</span>
+        <span data-tip={tokenSplitTitle(s.token_split)}>{fmtTokens(s.tokens)} tok</span>
         {/* Optional-chained: a newer SPA can be served by an older server that predates this field
             (the Versions block above warns about exactly that mismatch) — degrade, don't crash. */}
-        <span title={costTitle(s.unpriced_models)}>
+        <span data-tip={costTitle(s.unpriced_models)}>
           {fmtCost(s.cost)}
           {s.unpriced_models?.length ? <span className="warn-tag"> ⚠</span> : null}
         </span>
         {s.tool_call_count > 0 && (
           <span
             className={s.tool_failure_count > 0 ? "tool-err-stat" : "muted"}
-            title={
+            data-tip={
               "Tool calls that returned is_error, of " +
               s.tool_call_count +
               ". Failures = the agent's tool errored; declined/blocked = you rejected it or a guardrail blocked it " +
@@ -53,6 +54,7 @@ export function SessionHeader({ d }: { d: SessionDetail }) {
         )}
         <span>{fmtDuration(s.duration_ms)}</span>
         <span className="muted">{fmtDate(s.started_at)}</span>
+        <ArchivePathButton id={s.id} />
         <ExportMenu id={s.id} />
       </div>
       {d.classification && <ClassificationBadge c={d.classification} />}

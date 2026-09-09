@@ -63,8 +63,18 @@ export function useChartTokens() {
     const PALETTE = [C.accent, C.green, C.gold, C.violet, C.teal, C.red, C.muted, "#d98c5f", "#5f9ed9"];
     const axisProps = { stroke: C.muted, tick: { fill: C.muted, fontSize: 11 }, tickLine: false };
     const gridProps = { stroke: C.border, strokeDasharray: "3 3", vertical: false };
+    // Recharts draws its own tooltip DOM, so this mirrors `.app-tip` in styles.css (the hover hints
+    // everywhere else) by hand — same surface, same 12px type, same shadow. Change one, change both.
     const tooltipStyle = {
-      contentStyle: { background: C.panel2, border: `1px solid ${C.border}`, borderRadius: 6, fontSize: 12 },
+      contentStyle: {
+        background: C.panel2,
+        border: `1px solid ${C.border}`,
+        borderRadius: 6,
+        boxShadow: "0 6px 18px rgb(0 0 0 / 35%)",
+        padding: "5px 8px",
+        fontSize: 12,
+        lineHeight: 1.45,
+      },
       labelStyle: { color: C.text },
       itemStyle: { color: C.text },
     };
@@ -116,7 +126,7 @@ export function ChartCard({
         // <details> rather than a custom popover: keyboard, focus and screen-reader behaviour come
         // for free, and it is the same idiom the strip customizers already use.
         <details className="card-guide">
-          <summary aria-label={`How to read "${title}"`} title="How to read this chart">
+          <summary aria-label={`How to read "${title}"`} data-tip="How to read this chart">
             ⓘ
           </summary>
           <div className="card-guide-body">{guide}</div>
@@ -126,7 +136,7 @@ export function ChartCard({
       <span className="card-actions">
         {actions}
         {!inModal && (
-          <button type="button" className="card-expand" onClick={() => setExpanded(true)} aria-label={`Expand "${title}"`} title="Expand this chart">
+          <button type="button" className="card-expand" onClick={() => setExpanded(true)} aria-label={`Expand "${title}"`} data-tip="Expand this chart">
             ⤢
           </button>
         )}
@@ -158,9 +168,9 @@ export function ChartCard({
   );
 }
 
-export function Kpi({ label, value, sub, title }: { label: string; value: ReactNode; sub?: ReactNode; title?: string }) {
+export function Kpi({ label, value, sub, tip }: { label: string; value: ReactNode; sub?: ReactNode; tip?: string }) {
   return (
-    <div className="kpi" title={title}>
+    <div className="kpi" data-tip={tip}>
       <div className="kpi-label">{label}</div>
       <div className="kpi-value">{value}</div>
       {sub != null && <div className="kpi-sub">{sub}</div>}

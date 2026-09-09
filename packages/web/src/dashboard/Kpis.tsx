@@ -16,7 +16,7 @@ function SecurityKpi({ s }: { s: SecuritySummary }) {
     <Link
       className={"kpi kpi-btn" + (critical > 0 ? " sev-critical" : high > 0 ? " sev-high" : "")}
       to="/security"
-      title="Security findings — critical / high. Opens the Security page."
+      data-tip="Security findings — critical / high. Opens the Security page."
     >
       <div className="kpi-label">Security findings</div>
       <div className="kpi-value">{value}</div>
@@ -39,7 +39,7 @@ function TokenBreakdownKpi({ t }: { t: TokenSplit }) {
     { name: "Cache read", v: t.cache_read, c: TOKEN_COLORS.cache_read },
   ];
   return (
-    <div className="kpi" title="Token totals by type: input · output · cache-write · cache-read">
+    <div className="kpi" data-tip="Token totals by type: input · output · cache-write · cache-read">
       <div className="kpi-label">Token breakdown</div>
       <ul className="kpi-bd">
         {rows.map((r) => (
@@ -99,7 +99,7 @@ export const KPI_REGISTRY: Array<{ id: string; label: string; render: (ctx: KpiC
         <Kpi
           label="Tool error rate"
           value={toolCalls ? errRate.toFixed(1) + "%" : "—"}
-          title="Genuine tool failures as a share of all tool calls (rejections/blocks excluded — see the rejection rate)."
+          tip="Genuine tool failures as a share of all tool calls (rejections/blocks excluded — see the rejection rate)."
           sub={`${failures.toLocaleString()} failed of ${toolCalls.toLocaleString()} calls`}
         />
       );
@@ -114,7 +114,7 @@ export const KPI_REGISTRY: Array<{ id: string; label: string; render: (ctx: KpiC
         <Kpi
           label="Rejection rate"
           value={toolCalls ? rejRate.toFixed(1) + "%" : "—"}
-          title="User-rejected + guardrail-blocked tool calls as a share of all tool calls. Not agent failures."
+          tip="User-rejected + guardrail-blocked tool calls as a share of all tool calls. Not agent failures."
           sub={`${rejections.toLocaleString()} rejected/blocked`}
         />
       );
@@ -127,7 +127,7 @@ export const KPI_REGISTRY: Array<{ id: string; label: string; render: (ctx: KpiC
       <Kpi
         label="Workflow runs"
         value={overview.workflows.total || "—"}
-        title="Async workflow runs in range. Success rate is over decided runs (completed vs failed); in-flight runs are excluded from the rate."
+        tip="Async workflow runs in range. Success rate is over decided runs (completed vs failed); in-flight runs are excluded from the rate."
         sub={
           overview.workflows.total
             ? `${Math.round(overview.workflows.success_rate * 100)}% success · ${fmtTokens(overview.workflows.total_tokens)}`
@@ -143,7 +143,7 @@ export const KPI_REGISTRY: Array<{ id: string; label: string; render: (ctx: KpiC
       <Kpi
         label="Est. cost (API-equiv.)"
         value={fmtCost(overview.cost)}
-        title="Estimated at API list prices for this usage (cache reads/writes included at their discounted cache rates)."
+        tip="Estimated at API list prices for this usage (cache reads/writes included at their discounted cache rates)."
         sub={overview.unpriced_models.length ? `⚠ unpriced: ${overview.unpriced_models.map(shortModel).join(", ")}` : "API list price estimate"}
       />
     ),
@@ -155,7 +155,7 @@ export const KPI_REGISTRY: Array<{ id: string; label: string; render: (ctx: KpiC
       <Kpi
         label="Cost / session"
         value={overview.sessions_main ? fmtCost(overview.cost / overview.sessions_main) : "—"}
-        title="Estimated API-equivalent cost divided by main sessions in range."
+        tip="Estimated API-equivalent cost divided by main sessions in range."
         sub="API-equiv. per main session"
       />
     ),
@@ -189,7 +189,7 @@ export const KPI_REGISTRY: Array<{ id: string; label: string; render: (ctx: KpiC
       <Kpi
         label="Session duration p50 / p95"
         value={`${fmtDuration(overview.session_duration_ms.p50)} / ${fmtDuration(overview.session_duration_ms.p95)}`}
-        title="End-to-end wall-clock length of main sessions (subagents excluded)."
+        tip="End-to-end wall-clock length of main sessions (subagents excluded)."
         sub={`${overview.session_duration_ms.count} sessions`}
       />
     ),

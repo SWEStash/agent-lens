@@ -95,6 +95,7 @@ const ABOUT_PATHS_KEYS = ["config_file", "data_dir", "archive", "db", "triage_db
 const ABOUT_SERVER_KEYS = ["host", "port", "loopback_only"];
 const ABOUT_STORAGE_KEYS = ["db_bytes", "archive_bytes", "archive_files", "last_ingested"];
 const PATH_INFO_KEYS = ["path", "origin"];
+const SESSION_LOCATION_KEYS = ["session_id", "path", "exists", "source_id"];
 
 describe("response contracts — populated DB", () => {
   it("GET /api/health matches HealthResponse", async () => {
@@ -205,6 +206,17 @@ describe("response contracts — populated DB", () => {
 
     const withTool = body.events.find((e: { toolCalls: unknown[] }) => e.toolCalls.length > 0);
     expectKeys(withTool.toolCalls[0], TOOL_CALL_KEYS, "tool call");
+    await app.close();
+  });
+
+  it("GET /api/sessions/:id/location matches SessionLocation", async () => {
+    const db = seedBasic();
+    // seedBasic's events carry no source_file (the path is per-event archive provenance), so the
+    // one this endpoint reads is seeded here.
+    db.prepare("UPDATE events SET source_file = ? WHERE session_id = 'sess1'").run("/data/archive/test/projects/-tmp-proj/sess1.jsonl");
+    const app = await appFor(db);
+    const body = (await app.inject({ method: "GET", url: "/api/sessions/sess1/location" })).json();
+    expectKeys(body, SESSION_LOCATION_KEYS, "session location");
     await app.close();
   });
 

@@ -30,7 +30,7 @@ function db() {
 
 beforeEach(() => {
   root = mkdtempSync(join(tmpdir(), "al-wf."));
-  archive = join(root, "isf");
+  archive = join(root, "work");
 });
 afterEach(() => rmSync(root, { recursive: true, force: true }));
 
@@ -57,13 +57,13 @@ describe("ingestWorkflowResults", () => {
     });
     const d = db();
     const stats = newWorkflowStats();
-    ingestWorkflowResults(d, archive, "isf", [], "2026-07-04T00:00:00Z", stats, true);
+    ingestWorkflowResults(d, archive, "work", [], "2026-07-04T00:00:00Z", stats, true);
     expect(stats.upserted).toBe(1);
 
     const row = d.prepare("SELECT * FROM workflow_results WHERE run_id = 'wf_abc'").get() as any;
     expect(row.status).toBe("completed");
     expect(row.session_id).toBe("sess1");
-    expect(row.source_id).toBe("isf");
+    expect(row.source_id).toBe("work");
     expect(row.task_id).toBe("task9");
     expect(row.default_model).toBe("claude-fable-5"); // ANSI stripped
     expect(row.agent_count).toBe(12);
@@ -80,7 +80,7 @@ describe("ingestWorkflowResults", () => {
   it("captures a failed run with no agents", () => {
     writeSidecar("sess2", "wf_bad", { runId: "wf_bad", status: "failed", agentCount: 0, durationMs: 76, result: null });
     const d = db();
-    ingestWorkflowResults(d, archive, "isf", [], "2026-07-04T00:00:00Z", newWorkflowStats(), true);
+    ingestWorkflowResults(d, archive, "work", [], "2026-07-04T00:00:00Z", newWorkflowStats(), true);
     const row = d.prepare("SELECT status, agent_count, result_json FROM workflow_results WHERE run_id = 'wf_bad'").get() as any;
     expect(row.status).toBe("failed");
     expect(row.agent_count).toBe(0);
@@ -92,15 +92,15 @@ describe("ingestWorkflowResults", () => {
     const d = db();
     // Excluded → nothing ingested.
     const s1 = newWorkflowStats();
-    ingestWorkflowResults(d, archive, "isf", [ENC], "t", s1, true);
+    ingestWorkflowResults(d, archive, "work", [ENC], "t", s1, true);
     expect(d.prepare("SELECT COUNT(*) n FROM workflow_results").get() as any).toEqual({ n: 0 });
 
     // Not excluded → ingested once, then skipped on the next (incremental) run.
     const s2 = newWorkflowStats();
-    ingestWorkflowResults(d, archive, "isf", [], "t", s2, false);
+    ingestWorkflowResults(d, archive, "work", [], "t", s2, false);
     expect(s2.upserted).toBe(1);
     const s3 = newWorkflowStats();
-    ingestWorkflowResults(d, archive, "isf", [], "t", s3, false);
+    ingestWorkflowResults(d, archive, "work", [], "t", s3, false);
     expect(s3.upserted).toBe(0);
     expect(s3.skipped).toBe(1);
   });

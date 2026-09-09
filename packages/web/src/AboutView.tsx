@@ -41,7 +41,7 @@ function PathCell({ info }: { info: PathInfo }) {
   return (
     <>
       <code className="path">{info.path}</code>{" "}
-      <span className="origin-tag" title={originHelp(info.origin)}>
+      <span className="origin-tag" data-tip={originHelp(info.origin)}>
         {info.origin}
       </span>
     </>
@@ -206,7 +206,7 @@ export default function AboutView() {
                 <tbody>
                   <Row label="Keep .versions">
                     {a.retention.versions_keep_days} day{a.retention.versions_keep_days === 1 ? "" : "s"}{" "}
-                    <span className="origin-tag" title={originHelp(a.retention.origin)}>
+                    <span className="origin-tag" data-tip={originHelp(a.retention.origin)}>
                       {a.retention.origin}
                     </span>
                     <div className="muted">
@@ -224,7 +224,7 @@ export default function AboutView() {
                 <tbody>
                   <Row label="Models priced">
                     {a.pricing.models}{" "}
-                    <span className="origin-tag" title={originHelp(a.pricing.origin)}>
+                    <span className="origin-tag" data-tip={originHelp(a.pricing.origin)}>
                       {a.pricing.origin}
                     </span>
                     <div className="muted">
