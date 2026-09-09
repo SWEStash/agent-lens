@@ -69,7 +69,19 @@ jobs:
         run: node scripts/smoke-tarball.mjs
 
       - name: sqlite3 CLI (for the sandbox harness)
-        run: sudo apt-get update && sudo apt-get install -y sqlite3
+        # `apt-get update` exits non-zero when ANY configured index fails, including the third-party
+        # repos the runner image ships (Google Chrome, Microsoft) that this job never reads — a bad
+        # Chrome index upstream failed the build with nothing wrong here. So: use the image's own
+        # sqlite3 when it has one, and otherwise drop those sources (any format, any filename) before
+        # going to the Ubuntu archive for it.
+        run: |
+          if command -v sqlite3 >/dev/null; then
+            sqlite3 --version
+            exit 0
+          fi
+          grep -rlE 'dl\.google\.com|packages\.microsoft\.com' /etc/apt/sources.list.d/ 2>/dev/null | xargs -r sudo rm -f
+          sudo apt-get update -o Acquire::Retries=3
+          sudo apt-get install -y sqlite3
 
       - name: Sandbox e2e over the committed corpus
         run: bash scripts/sandbox.sh
