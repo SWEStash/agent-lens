@@ -16,6 +16,7 @@ import { prepareStatements, ingestFile, rebuildDerived, newStats } from "../dist
 import { classify } from "../dist/classify.js";
 import { ClaudeCodeAdapter } from "../dist/adapters/claude-code.js";
 import { Redactor, findLeak } from "../dist/redact.js";
+import { DYNAMIC_PLACEHOLDER } from "../dist/skillslots.js";
 
 const SOURCE = "test";
 const AGENT = "claude-code";
@@ -166,5 +167,52 @@ describe("redactor — preserves skill bodies (the real skill content)", () => {
     const o = new Redactor("s").transcript(leaky);
     expect(o).toContain("[redacted]"); // URL in body → not preserved
     expect(findLeak(o)).toBeNull();
+  });
+});
+
+describe("redactor — drops dynamic-injection output from skill bodies", () => {
+  const EMPTY = "(Bash completed with no output)";
+  const firing = (uuid: string, output: string) =>
+    jsonl({
+      uuid, type: "user", isMeta: true, timestamp: T(1),
+      message: { role: "user", content: `Base directory for this skill: /home/alice/.claude/skills/git-workflow\n\n# Git Workflow\n\nCurrently staged:\n\n${output}\n\nIf empty, run git diff.\n\nARGUMENTS: go` },
+    });
+
+  it("masks the empty-output marker to the placeholder", () => {
+    const o = new Redactor("s").transcript(firing("d1", EMPTY));
+    expect(o).not.toContain(EMPTY);
+    expect(o).toContain(DYNAMIC_PLACEHOLDER);
+  });
+
+  it("masks real command output once the slot has been seen in an earlier firing", () => {
+    const red = new Redactor("s");
+    red.transcript(firing("d1", EMPTY));
+    const o = red.transcript(firing("d2", " evals/secret-plan.mjs | 57 +++++++--"));
+    expect(o).not.toContain("secret-plan");
+    expect(o).toContain(DYNAMIC_PLACEHOLDER);
+  });
+});
+
+describe("redactor — drops the user's arguments from skill bodies", () => {
+  it("drops a ## User Request section", () => {
+    const o = new Redactor("s").transcript(
+      jsonl({
+        uuid: "r1", type: "user", isMeta: true, timestamp: T(1),
+        message: { role: "user", content: "Base directory for this skill: /home/alice/.claude/skills/dataviz\n\n# Dataviz\n\nBody.\n\n\n## User Request\n\nchart the quarterly churn numbers" },
+      }),
+    );
+    expect(o).toContain("Dataviz");
+    expect(o).not.toContain("churn");
+  });
+
+  it("masks args the harness substituted inline, using the preceding Skill call", () => {
+    const o = new Redactor("s").transcript(
+      jsonl(
+        { uuid: "r1", type: "assistant", timestamp: T(1), message: { role: "assistant", content: [{ type: "tool_use", id: "t1", name: "Skill", input: { skill: "demo", args: "chart the quarterly churn numbers" } }] } },
+        { uuid: "r2", type: "user", isMeta: true, timestamp: T(2), message: { role: "user", content: "Base directory for this skill: /home/alice/.claude/skills/demo\n\n# Demo\n\nTask: chart the quarterly churn numbers" } },
+      ),
+    );
+    expect(o).toContain("Task: $ARGUMENTS");
+    expect(o).not.toContain("churn");
   });
 });

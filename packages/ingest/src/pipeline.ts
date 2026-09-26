@@ -9,6 +9,7 @@ import { packRaw, runNamed, transaction, type SourceAdapter, type SourceFile, ty
 import { isCommandResultCarrier } from "@agent-lens/transcript-format";
 import { type DB } from "./db.js";
 import { createDirtySet } from "./dirtyset.js";
+import { ARG_TRAILERS, maskDynamic, maskKnownValues, mergeSlots, type Slot } from "./skillslots.js";
 
 type Stmt = StatementSync;
 
@@ -39,8 +40,9 @@ function skillNameKey(name: string): string {
 /**
  * Parse a skill-body injection event. A Skill firing injects an isMeta user message of the shape
  *   `Base directory for this skill: <abs path>/<name>\n\n<SKILL.md body>\n\nARGUMENTS: <args>`
+ * (or with the args under a trailing `## User Request` section — see ARG_TRAILERS)
  * into the transcript — the only place the real skill content appears. We split off the
- * Base-directory line (path differs per install) and the trailing ARGUMENTS block (per-call) so the
+ * Base-directory line (path differs per install) and the trailing args block (per-call) so the
  * remaining body is stable across installs/args and can be content-hashed into a version.
  */
 export function parseSkillInjection(
@@ -51,11 +53,17 @@ export function parseSkillInjection(
   const firstLine = (firstNl >= 0 ? text.slice(0, firstNl) : text).slice(SKILL_INJECT_PREFIX.length).trim();
   const baseDir = firstLine || null;
   let body = firstNl >= 0 ? text.slice(firstNl + 1) : "";
-  // Strip the trailing per-call ARGUMENTS block (use lastIndexOf — the body may mention "ARGUMENTS").
+  // Strip the trailing per-call args block, in whichever harness format it came (lastIndexOf — the
+  // body may mention the marker itself; the latest-starting trailer is the real one).
   let args: string | null = null;
-  const argIdx = body.lastIndexOf("\nARGUMENTS:");
+  let argIdx = -1;
+  let trailer = "";
+  for (const t of ARG_TRAILERS) {
+    const i = body.lastIndexOf(t);
+    if (i > argIdx) [argIdx, trailer] = [i, t];
+  }
   if (argIdx >= 0) {
-    args = body.slice(argIdx + "\nARGUMENTS:".length).trim() || null;
+    args = body.slice(argIdx + trailer.length).trim() || null;
     body = body.slice(0, argIdx);
   }
   return { baseDir, nameKey: baseDir ? skillNameKey(baseDir) : "", body: body.trim(), args };
@@ -276,7 +284,10 @@ function rebuildTurns(db: DB, scope: Scope, sessionIds: Array<{ id: string }>): 
  * SKILL.md body as an isMeta user event right after the launch; we pair each Skill tool_call with
  * the following injection (by skill-name token, ARGUMENTS as tiebreak), normalize + hash the body,
  * UPSERT the version, and stamp tool_calls.skill_id. Firings without a captured body keep skill_id
- * NULL (skill_name stays set). Runs over the same scoped session set as the turn rebuild. */
+ * NULL (skill_name stays set). Runs over the same scoped session set as the turn rebuild.
+ * Dynamic-injection output (skillslots.ts) is masked before hashing; slots are learned per skill name
+ * from this run's bodies plus the linked versions already stored, and those stored versions are
+ * re-masked afterwards, so the result doesn't depend on which session revealed a slot first. */
 function linkSkillVersions(db: DB, sessionIds: Array<{ id: string }>): void {
   const selEventsOrdered = db.prepare(
     "SELECT uuid, type, is_meta, timestamp, text FROM events WHERE session_id = ?",
@@ -293,6 +304,20 @@ function linkSkillVersions(db: DB, sessionIds: Array<{ id: string }>): void {
        base_dir   = excluded.base_dir`,
   );
   const linkCall = db.prepare("UPDATE tool_calls SET skill_id = ? WHERE id = ?");
+  const selLinkedVersions = db.prepare(
+    "SELECT id, base_dir, body, first_seen, last_seen FROM skills WHERE name = ? AND id IN (SELECT skill_id FROM tool_calls WHERE skill_id IS NOT NULL)",
+  );
+  const upsertRemasked = db.prepare(
+    `INSERT INTO skills (id, name, base_dir, body, summary, body_bytes, first_seen, last_seen)
+     VALUES (@id, @name, @base_dir, @body, @summary, @body_bytes, @first_seen, @last_seen)
+     ON CONFLICT(id) DO UPDATE SET
+       last_seen  = MAX(last_seen,  excluded.last_seen),
+       first_seen = MIN(first_seen, excluded.first_seen)`,
+  );
+  const relinkVersion = db.prepare("UPDATE tool_calls SET skill_id = ? WHERE skill_id = ?");
+  const delVersion = db.prepare("DELETE FROM skills WHERE id = ?");
+
+  const matches: Array<{ callId: string; name: string; baseDir: string | null; body: string; ts: string | null }> = [];
 
   const linkTx = transaction(db, () => {
     for (const { id: sid } of sessionIds) {
@@ -339,18 +364,53 @@ function linkSkillVersions(db: DB, sessionIds: Array<{ id: string }>): void {
         if (idx < 0) idx = 0;
         const [match] = queue.splice(idx, 1);
         const c = calls.find((x) => x.id === match.id)!;
-        const name = c.skill_name!;
-        const vid = skillVersionId(name, inj.body);
-        upsertSkill.run({
+        const body = maskKnownValues(inj.body, { args: match.args ?? inj.args, baseDir: inj.baseDir, sessionId: sid });
+        matches.push({ callId: match.id, name: c.skill_name!, baseDir: inj.baseDir, body, ts: e.timestamp });
+      }
+    }
+
+    const slotsByName = new Map<string, Slot[]>();
+    const addSlots = (name: string, body: string) => slotsByName.set(name, mergeSlots(slotsByName.get(name) ?? [], body));
+    for (const m of matches) addSlots(m.name, m.body);
+    for (const name of slotsByName.keys()) {
+      for (const v of selLinkedVersions.all(name) as Array<{ body: string }>) addSlots(name, v.body);
+    }
+
+    for (const m of matches) {
+      const body = maskDynamic(m.body, slotsByName.get(m.name)!);
+      const vid = skillVersionId(m.name, body);
+      upsertSkill.run({
+        id: vid,
+        name: m.name,
+        base_dir: m.baseDir,
+        body,
+        summary: skillSummary(body),
+        body_bytes: Buffer.byteLength(body, "utf8"),
+        ts: m.ts,
+      });
+      linkCall.run(vid, m.callId);
+    }
+
+    // Re-mask versions stored before a slot was known (non-dirty sessions on an incremental run).
+    for (const [name, slots] of slotsByName) {
+      if (!slots.length) continue;
+      const versions = selLinkedVersions.all(name) as Array<{ id: string; base_dir: string | null; body: string; first_seen: string | null; last_seen: string | null }>;
+      for (const v of versions) {
+        const body = maskDynamic(v.body, slots);
+        if (body === v.body) continue;
+        const vid = skillVersionId(name, body);
+        upsertRemasked.run({
           id: vid,
           name,
-          base_dir: inj.baseDir,
-          body: inj.body,
-          summary: skillSummary(inj.body),
-          body_bytes: Buffer.byteLength(inj.body, "utf8"),
-          ts: e.timestamp,
+          base_dir: v.base_dir,
+          body,
+          summary: skillSummary(body),
+          body_bytes: Buffer.byteLength(body, "utf8"),
+          first_seen: v.first_seen,
+          last_seen: v.last_seen,
         });
-        linkCall.run(vid, match.id);
+        relinkVersion.run(vid, v.id);
+        delVersion.run(v.id);
       }
     }
   });
