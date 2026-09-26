@@ -25,6 +25,7 @@
  */
 import { createHash, randomBytes } from "node:crypto";
 import { parseSkillInjection } from "./pipeline.js";
+import { maskDynamic, maskKnownValues, mergeSlots, type Slot } from "./skillslots.js";
 
 const PLACEHOLDER = "[redacted]";
 
@@ -41,6 +42,11 @@ function dummyLines(n: number): string {
 
 export class Redactor {
   private cache = new Map<string, string>();
+  /** Dynamic-injection slots seen so far, per skill name — later firings are masked with them too. */
+  private skillSlots = new Map<string, Slot[]>();
+  /** Per-firing values the harness may substitute into the next skill body (see maskKnownValues). */
+  private lastSkillArgs: string | null = null;
+  private sessionId: string | null = null;
   constructor(private salt: string = randomBytes(8).toString("hex")) {}
 
   private hash(s: string, n = 6): string {
@@ -94,9 +100,11 @@ export class Redactor {
   /**
    * Preserve a skill-body injection ("Base directory for this skill: …\n\n<SKILL.md body>\n\nARGUMENTS:…")
    * instead of redacting it — the body is the only real skill content and drives version tracking.
-   * We strip the per-call ARGUMENTS block, replace the home-path base-dir line with a non-leaking
+   * We strip the per-call args block, replace the home-path base-dir line with a non-leaking
    * `/skills/<name>` (keeping the skill-name tail so ingest still links it), keep the body verbatim,
    * and fail closed: if the result trips the leak scan, return null so the caller fully redacts it.
+   * Args, skill dir and session id substituted into the body, and dynamic-injection output
+   * (skillslots.ts), are the user's data, so they are masked too.
    * Returns null when `s` is not a skill injection.
    */
   private skillText(s: unknown): string | null {
@@ -104,7 +112,10 @@ export class Redactor {
     const inj = parseSkillInjection(s);
     if (!inj) return null;
     const nameTail = (inj.baseDir ?? "").split("/").filter(Boolean).pop() ?? "";
-    const rebuilt = `Base directory for this skill: /skills/${nameTail}\n\n${inj.body}\n`;
+    const body = maskKnownValues(inj.body, { args: this.lastSkillArgs ?? inj.args, baseDir: inj.baseDir, sessionId: this.sessionId });
+    const slots = mergeSlots(this.skillSlots.get(nameTail) ?? [], body);
+    this.skillSlots.set(nameTail, slots);
+    const rebuilt = `Base directory for this skill: /skills/${nameTail}\n\n${maskDynamic(body, slots)}\n`;
     return findLeak(rebuilt) ? null : rebuilt;
   }
 
@@ -115,6 +126,7 @@ export class Redactor {
     // Skill name (skill_name metric); only the Skill tool's command is non-sensitive enough to keep.
     if (typeof inp.skill === "string") out.skill = inp.skill;
     if (name === "Skill" && typeof inp.command === "string") out.command = inp.command;
+    if (name === "Skill") this.lastSkillArgs = typeof inp.args === "string" ? inp.args : null;
     // Subagent type (agent_type metric).
     if ((name === "Task" || name === "Agent") && typeof inp.subagent_type === "string") out.subagent_type = inp.subagent_type;
     // LoC-bearing payloads: keep line counts + a pseudonymized path with its extension.
@@ -161,6 +173,7 @@ export class Redactor {
     if (!r || typeof r !== "object") return r;
     const rec = r as Record<string, unknown>;
     const out: Record<string, unknown> = {};
+    if (typeof rec.sessionId === "string") this.sessionId = rec.sessionId;
     // Structural / metric-bearing scalars kept verbatim.
     for (const k of ["uuid", "parentUuid", "type", "timestamp", "isSidechain", "isMeta", "agentId", "userType", "version"]) if (k in rec) out[k] = rec[k];
     if (typeof rec.cwd === "string") out.cwd = this.path(rec.cwd);
