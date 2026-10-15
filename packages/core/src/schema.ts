@@ -192,6 +192,10 @@ CREATE INDEX IF NOT EXISTS idx_tool_calls_by_skill_id ON tool_calls(skill_id, sk
 CREATE INDEX IF NOT EXISTS idx_tool_calls_by_error   ON tool_calls(error_type, status, session_id, event_uuid);
 CREATE INDEX IF NOT EXISTS idx_tool_calls_spawned ON tool_calls(spawned_session_id);
 CREATE INDEX IF NOT EXISTS idx_tool_calls_workflow_run ON tool_calls(workflow_run_id);
+-- Every column that REFERENCES turns(id) needs an index: deleting a turn makes SQLite look up its
+-- referencing rows, and without one that is a full scan of this table per deleted turn. The
+-- incremental rebuild deletes the dirty sessions' turns, so five changed files cost 12.9 GB of reads.
+CREATE INDEX IF NOT EXISTS idx_tool_calls_turn ON tool_calls(turn_id);
 
 -- Skill *versions* (content-addressed). A skill firing injects the full SKILL.md body into the
 -- transcript as an isMeta user event (begins "Base directory for this skill: …", then the body,
@@ -231,6 +235,8 @@ CREATE TABLE IF NOT EXISTS token_usage (
   service_tier                TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_token_usage_session ON token_usage(session_id);
+-- Foreign-key lookup for deleting turns; see idx_tool_calls_turn.
+CREATE INDEX IF NOT EXISTS idx_token_usage_turn ON token_usage(turn_id);
 -- Partial so rare usage rows lacking a message_id (e.g. <synthetic>) don't collide on NULL. --
 CREATE UNIQUE INDEX IF NOT EXISTS idx_token_usage_msg
   ON token_usage(session_id, message_id) WHERE message_id IS NOT NULL;
