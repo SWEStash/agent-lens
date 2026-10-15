@@ -1,4 +1,4 @@
-export { ANALYZE_SQL, SCHEMA_SQL, SCHEMA_VERSION } from "./schema.js";
+export { ANALYZE_SQL, BULK_DEFERRED, SCHEMA_SQL, SCHEMA_VERSION } from "./schema.js";
 export { transaction, runNamed, type SqliteDB } from "./sqlite.js";
 export * from "./types.js";
 export * from "./security.js";

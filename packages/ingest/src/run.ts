@@ -21,7 +21,7 @@ import {
   transaction,
   type SourceAdapter,
 } from "@agent-lens/core";
-import { openDb, openRaw, readSchemaVersion, resetSchema, type DB } from "./db.js";
+import { finishBulkLoad, openDb, openRaw, readSchemaVersion, resetSchema, type DB } from "./db.js";
 import { ClaudeCodeAdapter } from "./adapters/claude-code.js";
 import { classify, CLASSIFIER_VERSION } from "./classify.js";
 import { detect, DETECTOR_VERSION } from "./detect.js";
@@ -211,7 +211,9 @@ export function runIngest(argv: string[] = process.argv.slice(2)): void {
   let report: Omit<IngestReport, "pruned">;
   try {
     report = transaction(db, () => {
-      if (args.full) resetSchema(db);
+      // --full fills the tables from empty, so four events indexes and FTS are built once after the
+      // load rather than per row (BULK_DEFERRED).
+      if (args.full) resetSchema(db, { bulk: true });
 
       const stmts = prepareStatements(db);
       const stats = newStats();
@@ -281,6 +283,8 @@ export function runIngest(argv: string[] = process.argv.slice(2)): void {
       // Incremental derived rebuild over only the touched sessions (+ their linkage neighborhood); --full
       // rebuilds everything. classify reuses the expanded set rebuildDerived returns.
       const expanded = rebuildDerived(db, args.full ? null : dirty);
+      // After rebuildDerived's per-event turn_id update, before the passes and ANALYZE that read them.
+      if (args.full) finishBulkLoad(db);
 
       // Canonical project roots (ADR-023): fold cwd-grained project rows into their git root (or
       // observed ancestor) BEFORE the passes below — classify/detect/file-changes all consume the

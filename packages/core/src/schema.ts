@@ -30,6 +30,18 @@ export const SCHEMA_VERSION = 15;
  */
 export const ANALYZE_SQL = "PRAGMA analysis_limit = 1000; ANALYZE;";
 
+/**
+ * What `ingest --full` leaves out while it loads, then builds once from SCHEMA_SQL (resetSchema's
+ * `bulk`, finishBulkLoad). Maintaining these per row made a rebuild write ~20 GB for a 2.5 GB store:
+ * two are keyed on random UUIDs, and the triggers feed FTS one row at a time. Nothing that runs
+ * before finishBulkLoad needs them. The uuid primary key and idx_events_session stay, because the
+ * load looks rows up through both.
+ */
+export const BULK_DEFERRED = {
+  indexes: ["idx_events_type", "idx_events_ts", "idx_events_turn_reply", "idx_events_uuid_cover"],
+  triggers: ["events_ai", "events_ad", "events_au"],
+} as const;
+
 export const SCHEMA_SQL = /* sql */ `
 PRAGMA journal_mode = WAL;
 PRAGMA foreign_keys = ON;

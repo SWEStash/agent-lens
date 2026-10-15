@@ -73,6 +73,7 @@ server holds one. "Written" is physical (`write_bytes`), "read" includes page-ca
 | incremental, 5 changed files, after | ~3 s | 18 MB | — | 0.63 GB | 345 MB |
 | `--full`, before | 444–458 s | 1.7 GB | 144–146 GB | 53 GB | — |
 | `--full`, after | 301–330 s | 2.4 GB | 20 GB | 45 GB | 1.0 GB |
+| `--full`, indexes built after the load | 294–395 s | 2.4 GB | 12.5–13 GB | 43 GB | 1.0 GB |
 
 What changed:
 
@@ -85,6 +86,16 @@ What changed:
   most of the 146 GB. One transaction also means the server keeps reading the previous state until
   the run commits, where before it saw empty and half-filled tables for minutes, and a failed run
   rolls back whole (`packages/ingest/test/full-atomic.test.ts`).
+- **`--full` builds four `events` indexes and the full-text index once, after the load.** Each
+  event insert used to update the row, seven indexes (two keyed on random UUIDs) and FTS, and with
+  a small page cache the same index pages were written again and again: 37 GB of writes for a
+  1.77 GB table. `resetSchema(db, { bulk: true })` drops what `BULK_DEFERRED` names and
+  `finishBulkLoad` rebuilds it from `SCHEMA_SQL` after `rebuildDerived`. In a same-session A/B the
+  old code took 460 s and wrote 20.8 GB (63 GB of write calls); the new one wrote 12.5–13 GB (25 GB)
+  in 294–395 s, the wall time moving with machine load.
+- **Turning the journal off was measured and rejected.** `journal_mode = OFF` with
+  `synchronous = OFF` brings a rebuild's writes to ~13.5 GB, but SQLite refuses to leave WAL while
+  the server has the store open (`database is locked`), and it gives up the rollback above.
 - **A 256 MB page cache was tried and dropped.** On top of the single transaction it saved 4 s and
   3 GB of writes on `--full`, but cost 260 MB of memory there and 240 MB on incremental runs.
 

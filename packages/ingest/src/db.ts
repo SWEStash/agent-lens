@@ -1,5 +1,5 @@
 import { DatabaseSync } from "node:sqlite";
-import { SCHEMA_SQL, SCHEMA_VERSION } from "@agent-lens/core";
+import { BULK_DEFERRED, SCHEMA_SQL, SCHEMA_VERSION } from "@agent-lens/core";
 
 export type DB = DatabaseSync;
 
@@ -64,7 +64,7 @@ export function openDb(file: string): DB {
  * migration path — dropping the tables (vs. DELETE FROM) lets a SCHEMA_VERSION bump's new columns
  * take effect on an existing DB without a separate migration mechanism (ADR-001/009).
  */
-export function resetSchema(db: DB): void {
+export function resetSchema(db: DB, { bulk = false } = {}): void {
   // Disable FK enforcement during teardown: the v3 schema has cross/self references
   // (sessions.parent_turn_id → turns, parent_session_id → sessions) that otherwise make DROP order
   // matter and trip "FOREIGN KEY constraint failed". applySchema re-enables FKs (PRAGMA in SCHEMA_SQL).
@@ -95,7 +95,23 @@ export function resetSchema(db: DB): void {
       DROP TABLE IF EXISTS meta;
     `);
     applySchema(db);
+    // `bulk`: the tables are about to be filled from empty, so leave out what finishBulkLoad builds.
+    if (bulk) {
+      for (const name of BULK_DEFERRED.indexes) db.exec(`DROP INDEX IF EXISTS ${name}`);
+      for (const name of BULK_DEFERRED.triggers) db.exec(`DROP TRIGGER IF EXISTS ${name}`);
+    }
   } finally {
     db.exec("PRAGMA foreign_keys = ON");
   }
+}
+
+/**
+ * Build what `resetSchema(db, { bulk: true })` left out: one sorted pass per index instead of a
+ * B-tree update per row, and the full-text index rebuilt from `events` in one go. SCHEMA_SQL is all
+ * IF NOT EXISTS, so re-running it recreates exactly the dropped objects from their one definition.
+ * With the triggers gone nothing touched events_fts during the load, so 'rebuild' leaves it exact.
+ */
+export function finishBulkLoad(db: DB): void {
+  db.exec(SCHEMA_SQL);
+  db.exec("INSERT INTO events_fts(events_fts) VALUES('rebuild')");
 }
