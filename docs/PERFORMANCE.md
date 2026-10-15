@@ -94,3 +94,26 @@ the largest size ever written, 1.5 GB after a `--full`. Each run now ends with a
 `wal_checkpoint(TRUNCATE)`. That does not wait: if the server is mid-read it reports busy, and
 `WAL_SIZE_LIMIT` (`journal_size_limit`, 64 MB) trims the file on the next run that writes. A
 `--full` needs free disk of about the store's size again for the WAL while it runs.
+
+## Serving — 2026-10-15
+
+Real store, warm page cache, over HTTP to the running server unless noted.
+
+| | before | after |
+|---|---:|---:|
+| five dashboard endpoints, one connection (direct calls) | 1.61–1.66 s | 1.28–1.36 s |
+| dashboard, repeat of a URL already served (all five endpoints) | 1.46–1.89 s | 60–67 ms |
+| largest session page (924 messages, 16k nodes), load to painted | 1.07–1.55 s | 0.81–0.96 s |
+
+- **Read-connection page cache.** `openReadonly` sets 64 MB instead of SQLite's 2 MB, for ~75 MB
+  of RSS. 256 MB was ~8% faster still for 225 MB.
+- **Dashboard responses are kept until the store changes** (`response-cache.ts`). `PRAGMA
+  data_version` changes on every commit from another connection, so the next request after an
+  ingest recomputes. Only the dashboard endpoints use it; the triage store is ATTACHed and does not
+  invalidate it.
+- **Off-screen session messages skip layout** (`content-visibility: auto` on `.transcript .event`).
+  Layout went from ~200 ms to ~50 ms. The nodes stay in the DOM, so `#ev-` links land where they
+  did, and both find-in-session and the browser's find still see every message. React render, ~550
+  ms of what is left, would need windowing, which those three depend on not having.
+- **Not done: sending the time and audit requests after the main three.** The server answers in
+  arrival order, and the main three are already sent first, so it measured no faster.
