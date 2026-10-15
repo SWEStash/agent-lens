@@ -61,3 +61,24 @@ Times are the serial dashboard (all five endpoints), unfiltered unless noted.
 
 The index migration takes ~4 s once on the first ingest after upgrade and adds ~85 MB (~3.5%).
 `ANALYZE` adds ~0.1 s per ingest.
+
+## Ingest write volume and the WAL — 2026-10-15
+
+Measured on a `.backup` copy of the real store, with a read-only connection held open the way the
+server holds one:
+
+| run | wall | WAL peak | written (`write_bytes`) | read (`rchar`) |
+|---|---:|---:|---:|---:|
+| incremental, nothing new | 2.3 s | 0 | 0 | 0.4 GB |
+| incremental, 5 changed files | 10–14 s | 16 MB | 0.1–0.4 GB | 13.5 GB |
+| `--full` | 458 s | 1.7 GB | 144 GB | 53 GB |
+
+SQLite reuses the WAL from its start after each checkpoint but never shrinks the file. The server's
+open connection also keeps the file from being deleted when ingest closes. So the WAL stayed at the
+size of the largest write ever made, which was the 1.5 GB a `--full` rebuild left behind.
+`WAL_SIZE_LIMIT` (`packages/ingest/src/db.ts`) sets `journal_size_limit`, so the first ingest that
+writes after a checkpoint cuts the WAL back to 64 MB. On the copy above, one incremental took it
+from 1.3 GB to 64 MB. An ingest that writes nothing leaves the file as it is.
+
+The read column is the open item. An incremental that re-reads five files still reads ~13.5 GB
+through the page cache.

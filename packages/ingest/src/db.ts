@@ -3,10 +3,20 @@ import { SCHEMA_SQL, SCHEMA_VERSION } from "@agent-lens/core";
 
 export type DB = DatabaseSync;
 
+/**
+ * Cap on the WAL file size kept between writes. SQLite reuses the WAL from its start after a
+ * checkpoint but never shrinks it, and the server's open connection keeps the file from being
+ * deleted on close, so one `--full` rebuild (~1.7 GB of WAL) left that much on disk for good. With a
+ * limit, the next write after a checkpoint truncates it back. An incremental ingest peaks at ~16 MB,
+ * so a normal run never pays the shrink-and-regrow.
+ */
+export const WAL_SIZE_LIMIT = 64 * 1024 * 1024;
+
 /** Open (creating if needed) the DB and set pragmas, WITHOUT applying the schema. */
 export function openRaw(file: string): DB {
   const db = new DatabaseSync(file);
   db.exec("PRAGMA journal_mode = WAL");
+  db.exec(`PRAGMA journal_size_limit = ${WAL_SIZE_LIMIT}`);
   db.exec("PRAGMA foreign_keys = ON");
   return db;
 }
