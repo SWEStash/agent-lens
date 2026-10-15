@@ -8,6 +8,7 @@
 import { readFileSync, statSync, mkdirSync, existsSync } from "node:fs";
 import { dirname, join } from "node:path";
 import {
+  ANALYZE_SQL,
   costForUsage,
   installPricing,
   loadExcludes,
@@ -284,6 +285,10 @@ export function runIngest(argv: string[] = process.argv.slice(2)): void {
   // writes. Deterministic +
   // re-runnable; reuses the same expanded dirty set and delete-then-inserts per touched session.
   const fileChanges = deriveFileChanges(db, args.full ? null : expanded);
+
+  // Planner statistics, last, so they describe the tables as the server will read them. The
+  // dashboard's covering indexes only win with stats present (see ANALYZE_SQL).
+  db.exec(ANALYZE_SQL);
 
   printIngestReport(db, dbPath, { stats, pruned, classified, detected, fileChanges, wfStats, metaStats, trStats });
 }

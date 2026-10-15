@@ -21,6 +21,15 @@
 
 export const SCHEMA_VERSION = 15;
 
+/**
+ * Refresh the query planner's statistics. Run by ingest after every write pass. Without
+ * `sqlite_stat1` the planner resolves an `events` or `tool_calls` join through the unique primary-key
+ * index and then reads the table row. Those rows are kilobytes wide, so it ignores the narrow
+ * covering indexes that the dashboard aggregates are built to use. `analysis_limit` samples each
+ * index instead of walking it whole, which keeps this to ~0.1 s on the 2.3 GB real store.
+ */
+export const ANALYZE_SQL = "PRAGMA analysis_limit = 1000; ANALYZE;";
+
 export const SCHEMA_SQL = /* sql */ `
 PRAGMA journal_mode = WAL;
 PRAGMA foreign_keys = ON;
@@ -121,9 +130,22 @@ CREATE TABLE IF NOT EXISTS events (
   source_file  TEXT                      -- archive path the canonical copy came from
 );
 CREATE INDEX IF NOT EXISTS idx_events_session ON events(session_id);
-CREATE INDEX IF NOT EXISTS idx_events_turn ON events(turn_id);
 CREATE INDEX IF NOT EXISTS idx_events_type ON events(type);
 CREATE INDEX IF NOT EXISTS idx_events_ts ON events(timestamp);
+-- Covering indexes for the dashboard joins. An events row averages ~3.4 KB (raw_json + text), so
+-- about one row fits per page, and a join that reads the row instead of an index pays one random
+-- page read per event: on the real corpus /dashboard/time took 31s from a cold cache. These hold
+-- exactly the columns those joins read. The PK lookups (token_usage, tool_calls, findings,
+-- file_changes → events by uuid) want timestamp and model, and model latency wants the first
+-- assistant timestamp per turn. Both are index-only scans now, and the guard in
+-- packages/server/test/query-plans.test.ts keeps them that way.
+-- No SCHEMA_VERSION bump: indexes need no rebuild, and CREATE IF NOT EXISTS adds them on the next
+-- incremental ingest. A bump would make that ingest refuse and demand --full.
+-- An index's columns cannot be widened in place, so idx_events_turn is replaced under a new name.
+-- idx_events_turn_reply serves every lookup the old one did, because turn_id is still its prefix.
+DROP INDEX IF EXISTS idx_events_turn;
+CREATE INDEX IF NOT EXISTS idx_events_turn_reply ON events(turn_id, role, timestamp);
+CREATE INDEX IF NOT EXISTS idx_events_uuid_cover ON events(uuid, timestamp, model);
 
 -- Tool invocations (incl. subagents / Task calls). -------------------------
 CREATE TABLE IF NOT EXISTS tool_calls (
@@ -148,13 +170,28 @@ CREATE TABLE IF NOT EXISTS tool_calls (
   input_json          TEXT,              -- tool input, verbatim
   result_summary      TEXT               -- short result projection (no secrets dumped wholesale)
 );
-CREATE INDEX IF NOT EXISTS idx_tool_calls_session ON tool_calls(session_id);
-CREATE INDEX IF NOT EXISTS idx_tool_calls_tool ON tool_calls(tool_name);
-CREATE INDEX IF NOT EXISTS idx_tool_calls_skill ON tool_calls(skill_name);
-CREATE INDEX IF NOT EXISTS idx_tool_calls_skill_id ON tool_calls(skill_id);
+-- Covering indexes for the dashboard aggregates. A tool_calls row averages ~2.3 KB (input_json), and
+-- the aggregates read only a handful of narrow columns. Each index below carries all of them, so
+-- whether the planner drives from sessions (a selective source/date filter) or scans tool_calls
+-- (no filter), it never reads the row. Before this, the errored-calls series scanned the whole
+-- table, 7.5s cold on the real corpus. packages/server/test/query-plans.test.ts holds the line.
+-- They replace the single-column session/tool/skill/skill_id/error_type indexes under new names, because
+-- CREATE IF NOT EXISTS cannot widen an index that already exists. Each new index begins with the old
+-- index's column, so every existing lookup still uses it. Same no-bump reasoning as the events
+-- indexes above.
+DROP INDEX IF EXISTS idx_tool_calls_session;
+DROP INDEX IF EXISTS idx_tool_calls_tool;
+DROP INDEX IF EXISTS idx_tool_calls_skill;
+DROP INDEX IF EXISTS idx_tool_calls_skill_id;
+DROP INDEX IF EXISTS idx_tool_calls_error_type;
+CREATE INDEX IF NOT EXISTS idx_tool_calls_by_session
+  ON tool_calls(session_id, tool_name, status, error_type, skill_name, skill_id, agent_type, event_uuid);
+CREATE INDEX IF NOT EXISTS idx_tool_calls_by_tool     ON tool_calls(tool_name, session_id, status, error_type, event_uuid);
+CREATE INDEX IF NOT EXISTS idx_tool_calls_by_skill    ON tool_calls(skill_name, skill_id, session_id, event_uuid);
+CREATE INDEX IF NOT EXISTS idx_tool_calls_by_skill_id ON tool_calls(skill_id, skill_name, session_id, event_uuid);
+CREATE INDEX IF NOT EXISTS idx_tool_calls_by_error   ON tool_calls(error_type, status, session_id, event_uuid);
 CREATE INDEX IF NOT EXISTS idx_tool_calls_spawned ON tool_calls(spawned_session_id);
 CREATE INDEX IF NOT EXISTS idx_tool_calls_workflow_run ON tool_calls(workflow_run_id);
-CREATE INDEX IF NOT EXISTS idx_tool_calls_error_type ON tool_calls(error_type);
 
 -- Skill *versions* (content-addressed). A skill firing injects the full SKILL.md body into the
 -- transcript as an isMeta user event (begins "Base directory for this skill: …", then the body,
