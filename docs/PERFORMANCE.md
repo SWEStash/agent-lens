@@ -62,23 +62,35 @@ Times are the serial dashboard (all five endpoints), unfiltered unless noted.
 The index migration takes ~4 s once on the first ingest after upgrade and adds ~85 MB (~3.5%).
 `ANALYZE` adds ~0.1 s per ingest.
 
-## Ingest write volume and the WAL — 2026-10-15
+## Ingest cost — 2026-10-15
 
 Measured on a `.backup` copy of the real store, with a read-only connection held open the way the
-server holds one:
+server holds one. "Written" is physical (`write_bytes`), "read" includes page-cache hits (`rchar`).
 
-| run | wall | WAL peak | written (`write_bytes`) | read (`rchar`) |
-|---|---:|---:|---:|---:|
-| incremental, nothing new | 2.3 s | 0 | 0 | 0.4 GB |
-| incremental, 5 changed files | 10–14 s | 16 MB | 0.1–0.4 GB | 13.5 GB |
-| `--full` | 458 s | 1.7 GB | 144 GB | 53 GB |
+| run | wall | WAL peak | written | read | peak RSS |
+|---|---:|---:|---:|---:|---:|
+| incremental, 5 changed files, before | 8–14 s | 16 MB | 0.1–0.4 GB | 13.5 GB | 345 MB |
+| incremental, 5 changed files, after | ~3 s | 18 MB | — | 0.63 GB | 345 MB |
+| `--full`, before | 444–458 s | 1.7 GB | 144–146 GB | 53 GB | — |
+| `--full`, after | 301–330 s | 2.4 GB | 20 GB | 45 GB | 1.0 GB |
 
-SQLite reuses the WAL from its start after each checkpoint but never shrinks the file. The server's
-open connection also keeps the file from being deleted when ingest closes. So the WAL stayed at the
-size of the largest write ever made, which was the 1.5 GB a `--full` rebuild left behind.
-`WAL_SIZE_LIMIT` (`packages/ingest/src/db.ts`) sets `journal_size_limit`, so the first ingest that
-writes after a checkpoint cuts the WAL back to 64 MB. On the copy above, one incremental took it
-from 1.3 GB to 64 MB. An ingest that writes nothing leaves the file as it is.
+What changed:
 
-The read column is the open item. An incremental that re-reads five files still reads ~13.5 GB
-through the page cache.
+- **Foreign-key columns are indexed.** Deleting a row makes SQLite find the rows that reference it.
+  `tool_calls.turn_id` and `token_usage.turn_id` had no index, so the incremental rebuild's
+  `DELETE FROM turns` scanned both tables once per deleted turn: 12.9 GB of the 13.5 GB.
+  `packages/core/test/schema-fk-indexes.test.ts` now fails on any unindexed foreign key.
+- **A run is one transaction.** `--full` used to commit once per file, about 18k commits, each
+  followed by a WAL checkpoint that copied the same index pages back into the main file. That was
+  most of the 146 GB. One transaction also means the server keeps reading the previous state until
+  the run commits, where before it saw empty and half-filled tables for minutes, and a failed run
+  rolls back whole (`packages/ingest/test/full-atomic.test.ts`).
+- **A 256 MB page cache was tried and dropped.** On top of the single transaction it saved 4 s and
+  3 GB of writes on `--full`, but cost 260 MB of memory there and 240 MB on incremental runs.
+
+The WAL: SQLite reuses it from its start after each checkpoint but never shrinks it, and the
+server's open connection keeps the file from being deleted when ingest closes. So it used to stay at
+the largest size ever written, 1.5 GB after a `--full`. Each run now ends with a
+`wal_checkpoint(TRUNCATE)`. That does not wait: if the server is mid-read it reports busy, and
+`WAL_SIZE_LIMIT` (`journal_size_limit`, 64 MB) trims the file on the next run that writes. A
+`--full` needs free disk of about the store's size again for the WAL while it runs.

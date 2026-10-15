@@ -34,6 +34,8 @@ events / tool_calls / classified`, then one line per sidecar stage — `workflow
 | Files read | only changed (stat short-circuit) | every file |
 | Derived rebuild | touched sessions + linkage neighborhood | all sessions |
 | Schema | applied if missing (no column changes) | **drop + recreate** |
+| Server during the run | sees the previous state until commit | same; one transaction, so a failed run leaves the old DB |
+| Disk headroom | small | about the store's size again, for the WAL, until the run ends |
 | Use for | the normal scheduled loop | migrations, parser/classifier changes, recovery |
 
 Incremental is correct for new/changed transcripts. It deliberately does **not** rewrite existing rows
@@ -91,9 +93,8 @@ uncompressed until `--full` runs. Expect a sizeable DB shrink (~40% on a typical
 - **Subagent shows no parent (stale linkage)** — can happen transiently if a parent and its child
   transcript arrive in different runs; the dirty-set linkage expansion (ADR-010) fixes it on the run that
   ingests the second half. To force resolution now, run `agent-lens ingest --full`.
-- **`database is locked` / `SQLITE_BUSY`** — a checkpoint contended with the long-lived server reader.
-  Rare with WAL and short incremental transactions; retry, or stop the server (`agent-lens serve`) during a
-  `--full` rebuild.
+- **`database is locked` / `SQLITE_BUSY`** — another writer holds the lock, such as a second ingest
+  run. The server only reads, so it never causes this; wait for the other run and retry.
 - **Re-ingest didn't pick up a parser/classifier change** — expected; use `agent-lens ingest --full`.
 - **Recover from anything** — delete `data/agent-lens.db*` and run `agent-lens ingest --full`; the archive
   rebuilds the DB completely.

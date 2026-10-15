@@ -18,6 +18,7 @@ import {
   resolveDbPath,
   SCHEMA_VERSION,
   SYNTHETIC_MODEL,
+  transaction,
   type SourceAdapter,
 } from "@agent-lens/core";
 import { openDb, openRaw, readSchemaVersion, resetSchema, type DB } from "./db.js";
@@ -82,6 +83,14 @@ interface IngestReport {
   wfStats: { upserted: number; skipped: number; malformed: number };
   metaStats: { upserted: number; skipped: number; malformed: number };
   trStats: { upserted: number; skipped: number; malformed: number };
+}
+
+/** Fail the run (rolling it back) if any row references a parent that does not exist. */
+function assertForeignKeys(db: DB): void {
+  const bad = db.prepare("PRAGMA foreign_key_check").all() as Array<{ table: string; parent: string }>;
+  if (!bad.length) return;
+  const edges = [...new Set(bad.map((b) => `${b.table} -> ${b.parent}`))].join(", ");
+  throw new Error(`agent-lens-ingest: --full produced ${bad.length} foreign-key violations (${edges}); rolled back`);
 }
 
 /** Tally the final table counts, close the DB, and print the one-block run summary. */
@@ -164,9 +173,7 @@ export function runIngest(argv: string[] = process.argv.slice(2)): void {
   // drop+recreate from the archive (source of truth). This is also the migration path — a
   // SCHEMA_VERSION bump's new columns take effect here without a separate migration step.
   const db = args.full ? openRaw(dbPath) : openDb(dbPath);
-  if (args.full) {
-    resetSchema(db);
-  } else {
+  if (!args.full) {
     // Schema guard: an incremental ingest only runs CREATE IF NOT EXISTS — it adds new tables but
     // cannot migrate altered columns on existing ones, and never advances the stamp (applySchema is
     // stamp-if-absent). So a DB stamped by an older build is stale: refuse rather than silently ingest
@@ -188,109 +195,133 @@ export function runIngest(argv: string[] = process.argv.slice(2)): void {
   const sources = loadSources();
   const now = new Date().toISOString();
 
-  // Excluded projects (config `exclude` + AGENT_LENS_EXCLUDE): drop any already-ingested ones now
-  // (incremental; --full already reset the DB), then filter them out of discovery below.
+  // Excluded projects (config `exclude` + AGENT_LENS_EXCLUDE): drop any already-ingested ones now,
+  // then filter them out of discovery below.
   const excludePaths = loadExcludes();
   const excludedDirs = parseExcludes(excludePaths.join(","));
-  const pruned = pruneExcluded(db, excludePaths);
+  // --full skips it: the rebuild below starts from empty tables, and the old schema may be stale.
+  const pruned = args.full ? 0 : pruneExcluded(db, excludePaths);
 
-  const stmts = prepareStatements(db);
-  const stats = newStats();
-  const wfStats = newWorkflowStats();
-  const metaStats = newMetaStats();
-  const trStats = newToolResultStats();
-  // Sessions touched this run; drives the incremental derived rebuild (ADR-010, impacts 2/3).
-  const dirty = new Set<string>();
+  // The rest of the run is one transaction. The server keeps reading the previous state until it
+  // commits, instead of the empty or half-filled tables a --full rebuild used to show it for minutes,
+  // and a failed run rolls back whole. It also replaces a commit and WAL checkpoint per file with one.
+  // --full runs with foreign keys off, because resetSchema's drops need that and the PRAGMA is a
+  // no-op inside a transaction. foreign_key_check before the commit puts the guarantee back.
+  if (args.full) db.exec("PRAGMA foreign_keys = OFF");
+  let report: Omit<IngestReport, "pruned">;
+  try {
+    report = transaction(db, () => {
+      if (args.full) resetSchema(db);
 
-  for (const source of sources) {
-    const adapter = adapterById.get(source.agent);
-    if (!adapter) {
-      console.warn(`agent-lens-ingest: no adapter for agent '${source.agent}' (source '${source.label}') — skipping`);
-      continue;
-    }
-    stmts.insAgent.run(adapter.agentId, adapter.agentName);
-    stmts.insSource.run({ id: source.label, label: source.label, agent_id: adapter.agentId, config_dir: source.configDir });
+      const stmts = prepareStatements(db);
+      const stats = newStats();
+      const wfStats = newWorkflowStats();
+      const metaStats = newMetaStats();
+      const trStats = newToolResultStats();
+      // Sessions touched this run; drives the incremental derived rebuild (ADR-010, impacts 2/3).
+      const dirty = new Set<string>();
 
-    let files = adapter.discover(join(archiveRoot, source.label), source.label);
-    // Drop excluded projects (matches /projects/<encodedDir>/ so nested subagent files go too).
-    if (excludedDirs.length) files = files.filter((f) => !isExcludedArchivePath(f.path, excludedDirs));
-    // Mirror before versions so the mirror copy wins canonical fields (ON CONFLICT DO NOTHING).
-    files.sort((a, b) => Number(a.isVersion) - Number(b.isVersion));
+      for (const source of sources) {
+        const adapter = adapterById.get(source.agent);
+        if (!adapter) {
+          console.warn(`agent-lens-ingest: no adapter for agent '${source.agent}' (source '${source.label}') — skipping`);
+          continue;
+        }
+        stmts.insAgent.run(adapter.agentId, adapter.agentName);
+        stmts.insSource.run({ id: source.label, label: source.label, agent_id: adapter.agentId, config_dir: source.configDir });
 
-    for (const file of files) {
-      stats.files++;
-      const st = statSync(file.path);
-      const mtimeMs = Math.trunc(st.mtimeMs);
-      const prev = args.full ? undefined : (stmts.getState.get(file.path) as FileState);
+        let files = adapter.discover(join(archiveRoot, source.label), source.label);
+        // Drop excluded projects (matches /projects/<encodedDir>/ so nested subagent files go too).
+        if (excludedDirs.length) files = files.filter((f) => !isExcludedArchivePath(f.path, excludedDirs));
+        // Mirror before versions so the mirror copy wins canonical fields (ON CONFLICT DO NOTHING).
+        files.sort((a, b) => Number(a.isVersion) - Number(b.isVersion));
 
-      const decision = shouldReingest(file.path, st.size, mtimeMs, prev);
-      if (decision.action === "skip-stat") {
-        stats.skipped++;
-        continue;
+        for (const file of files) {
+          stats.files++;
+          const st = statSync(file.path);
+          const mtimeMs = Math.trunc(st.mtimeMs);
+          const prev = args.full ? undefined : (stmts.getState.get(file.path) as FileState);
+
+          const decision = shouldReingest(file.path, st.size, mtimeMs, prev);
+          if (decision.action === "skip-stat") {
+            stats.skipped++;
+            continue;
+          }
+          if (decision.action === "skip-hash") {
+            stmts.setState.run({
+              file_path: file.path,
+              size: st.size,
+              mtime_ms: mtimeMs,
+              sha256: decision.hash,
+              events_ingested: prev!.events_ingested,
+              ingested_at: now,
+            });
+            stats.skipped++;
+            continue;
+          }
+
+          const lines = decision.buf ? decision.buf.toString("utf8").split("\n") : streamLines(file.path);
+          ingestFile(db, stmts, adapter, file, lines, { size: st.size, mtimeMs, hash: decision.hash }, now, stats);
+          dirty.add(file.sessionId);
+        }
+
+        // Workflow-tool result sidecars (wf_<id>.json) — the authoritative record of how each run
+        // finished; not *.jsonl, so the transcript walk above never sees them. Own table, own skip-state.
+        ingestWorkflowResults(db, join(archiveRoot, source.label), source.label, excludedDirs, now, wfStats, args.full);
+
+        // Per-subagent metadata (subagents/agent-<id>.meta.json) — the authoritative agentType/description/
+        // spawnDepth; joined onto sessions at read time. Own table (session_meta), own skip-state.
+        ingestSubagentMeta(db, join(archiveRoot, source.label), source.label, excludedDirs, now, metaStats, args.full);
+
+        // Spilled full tool outputs (tool-results/<name>.txt) — the un-truncated result the transcript only
+        // summarized; joined onto tool_calls at read time via the summary's marker. Own table, own skip-state.
+        ingestToolResults(db, join(archiveRoot, source.label), excludedDirs, now, trStats, args.full);
       }
-      if (decision.action === "skip-hash") {
-        stmts.setState.run({
-          file_path: file.path,
-          size: st.size,
-          mtime_ms: mtimeMs,
-          sha256: decision.hash,
-          events_ingested: prev!.events_ingested,
-          ingested_at: now,
-        });
-        stats.skipped++;
-        continue;
-      }
 
-      const lines = decision.buf ? decision.buf.toString("utf8").split("\n") : streamLines(file.path);
-      ingestFile(db, stmts, adapter, file, lines, { size: st.size, mtimeMs, hash: decision.hash }, now, stats);
-      dirty.add(file.sessionId);
-    }
+      // Incremental derived rebuild over only the touched sessions (+ their linkage neighborhood); --full
+      // rebuilds everything. classify reuses the expanded set rebuildDerived returns.
+      const expanded = rebuildDerived(db, args.full ? null : dirty);
 
-    // Workflow-tool result sidecars (wf_<id>.json) — the authoritative record of how each run
-    // finished; not *.jsonl, so the transcript walk above never sees them. Own table, own skip-state.
-    ingestWorkflowResults(db, join(archiveRoot, source.label), source.label, excludedDirs, now, wfStats, args.full);
+      // Canonical project roots (ADR-023): fold cwd-grained project rows into their git root (or
+      // observed ancestor) BEFORE the passes below — classify/detect/file-changes all consume the
+      // session's project path. Global + re-runnable (the table is a few dozen rows), so an existing
+      // DB heals on its next ingest without --full.
+      canonicalizeProjects(db);
 
-    // Per-subagent metadata (subagents/agent-<id>.meta.json) — the authoritative agentType/description/
-    // spawnDepth; joined onto sessions at read time. Own table (session_meta), own skip-state.
-    ingestSubagentMeta(db, join(archiveRoot, source.label), source.label, excludedDirs, now, metaStats, args.full);
+      // Heuristic classification (ADR-004) over the now-stable derived tables. Deterministic +
+      // re-runnable; also exposed standalone as `agent-lens metrics` (see runMetrics).
+      const classified = classify(db, args.full ? null : expanded);
 
-    // Spilled full tool outputs (tool-results/<name>.txt) — the un-truncated result the transcript only
-    // summarized; joined onto tool_calls at read time via the summary's marker. Own table, own skip-state.
-    ingestToolResults(db, join(archiveRoot, source.label), excludedDirs, now, trStats, args.full);
+      // Security findings (ADR-017) over the same derived tool_calls. Deterministic + re-runnable; the
+      // detector reuses the expanded dirty set and delete-then-inserts the touched sessions' findings.
+      const detected = detect(db, args.full ? null : expanded);
+
+      // Tool-error classification (error_type on errored tool_calls). Deterministic + re-runnable; reuses
+      // the same expanded dirty set. Powers the sessions error-type filter + dashboard/detail breakdowns.
+      classifyErrors(db, args.full ? null : expanded);
+
+      // File-modification provenance (ADR-022) from Edit/Write/NotebookEdit inputs and Bash shell
+      // writes. Deterministic +
+      // re-runnable; reuses the same expanded dirty set and delete-then-inserts per touched session.
+      const fileChanges = deriveFileChanges(db, args.full ? null : expanded);
+
+      // Planner statistics, last, so they describe the tables as the server will read them. The
+      // dashboard's covering indexes only win with stats present (see ANALYZE_SQL).
+      db.exec(ANALYZE_SQL);
+
+      if (args.full) assertForeignKeys(db);
+      return { stats, classified, detected, fileChanges, wfStats, metaStats, trStats };
+    })();
+  } finally {
+    if (args.full) db.exec("PRAGMA foreign_keys = ON");
   }
 
-  // Incremental derived rebuild over only the touched sessions (+ their linkage neighborhood); --full
-  // rebuilds everything. classify reuses the expanded set rebuildDerived returns.
-  const expanded = rebuildDerived(db, args.full ? null : dirty);
+  // A --full run leaves a WAL as large as the whole store. Truncate it now rather than on the next
+  // ingest that writes. With no busy handler this does not wait: if the server is mid-read it
+  // reports busy and returns, and WAL_SIZE_LIMIT trims the file on a later run instead.
+  db.exec("PRAGMA wal_checkpoint(TRUNCATE)");
 
-  // Canonical project roots (ADR-023): fold cwd-grained project rows into their git root (or
-  // observed ancestor) BEFORE the passes below — classify/detect/file-changes all consume the
-  // session's project path. Global + re-runnable (the table is a few dozen rows), so an existing
-  // DB heals on its next ingest without --full.
-  canonicalizeProjects(db);
-
-  // Heuristic classification (ADR-004) over the now-stable derived tables. Deterministic +
-  // re-runnable; also exposed standalone as `agent-lens metrics` (see runMetrics).
-  const classified = classify(db, args.full ? null : expanded);
-
-  // Security findings (ADR-017) over the same derived tool_calls. Deterministic + re-runnable; the
-  // detector reuses the expanded dirty set and delete-then-inserts the touched sessions' findings.
-  const detected = detect(db, args.full ? null : expanded);
-
-  // Tool-error classification (error_type on errored tool_calls). Deterministic + re-runnable; reuses
-  // the same expanded dirty set. Powers the sessions error-type filter + dashboard/detail breakdowns.
-  classifyErrors(db, args.full ? null : expanded);
-
-  // File-modification provenance (ADR-022) from Edit/Write/NotebookEdit inputs and Bash shell
-  // writes. Deterministic +
-  // re-runnable; reuses the same expanded dirty set and delete-then-inserts per touched session.
-  const fileChanges = deriveFileChanges(db, args.full ? null : expanded);
-
-  // Planner statistics, last, so they describe the tables as the server will read them. The
-  // dashboard's covering indexes only win with stats present (see ANALYZE_SQL).
-  db.exec(ANALYZE_SQL);
-
-  printIngestReport(db, dbPath, { stats, pruned, classified, detected, fileChanges, wfStats, metaStats, trStats });
+  printIngestReport(db, dbPath, { ...report, pruned });
 }
 
 /** Standalone reclassification over an already-ingested DB (no archive re-read). */
