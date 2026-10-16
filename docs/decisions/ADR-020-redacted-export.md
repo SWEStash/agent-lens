@@ -1,4 +1,4 @@
-# ADR-020 — Redacted, export-only session sharing
+# ADR-020: Redacted, export-only session sharing
 
 - Status: Accepted
 - Date: 2026-07-18
@@ -8,15 +8,15 @@
 
 Users want to share a session transcript (a bug repro, a "look what my agent did" security example)
 without hand-scrubbing secrets first. Agent Lens already renders a session to Markdown
-(`sessionToMarkdown`, served at `GET /api/sessions/:id/export.md`) but **verbatim** — it emits message
+(`sessionToMarkdown`, served at `GET /api/sessions/:id/export.md`) but **verbatim**: it emits message
 text, thinking, and tool `input_json` (bash commands, Write/Edit content) as-is, including secrets,
 tokens, emails, and `/home/<user>/…` paths.
 
-We also already have a redactor — `packages/ingest/src/redact.ts` — but it is the wrong tool here:
+We also already have a redactor, `packages/ingest/src/redact.ts`, but it is the wrong tool here:
 
 - It is **deny-by-default**: it scrubs *all* narrative text to `[redacted]` because its job is a
   metric-preserving validation *corpus*, not a readable share. Applied to a share it produces a wall
-  of `[redacted]` — useless for "show what happened".
+  of `[redacted]`: useless for "show what happened".
 - It lives in `packages/ingest` and operates on **raw JSONL objects**, so `core`/`server` (which
   render from DB rows) can't reuse it.
 
@@ -28,19 +28,19 @@ calls.** The output must be a local file the human decides what to do with. Reda
 Add a **selective, export-only sanitizer in `packages/core`** (colocated with `markdown.ts`,
 importable by `server` and `cli`), with three levels chosen by the caller:
 
-- **`secrets` (default)** — keep the narrative readable; mask only secret *values* (PEM, AWS, GitHub,
+- **`secrets` (default)**: keep the narrative readable; mask only secret *values* (PEM, AWS, GitHub,
   Slack, `sk-` keys) and PII (email → `[EMAIL]`, IPv4 → `[IP]`), and strip the home **username** only
   (`/home/alice/x` → `/home/user/x`, rest of the path kept). This covers **both** the slash form and
   the Claude Code **encoded** form (`-home-alice-proj` → `-home-user-proj`), which appears verbatim in
   scratchpad/task paths in transcript text and would otherwise leak the username past the slash strip.
   Ordinary URLs stay readable.
-- **`structure`** — aggressive scrub: narrative → `[redacted]`, tool inputs → `{}`, paths fully
+- **`structure`**: aggressive scrub: narrative → `[redacted]`, tool inputs → `{}`, paths fully
   pseudonymized. For maximum-paranoia shares.
-- **`off`** — explicit verbatim opt-out (the old behavior).
+- **`off`**: explicit verbatim opt-out (the old behavior).
 
 Mechanics:
 
-- **Canonical patterns live in `packages/core/src/secrets.ts`** — the single source of truth. The
+- **Canonical patterns live in `packages/core/src/secrets.ts`**: the single source of truth. The
   corpus redactor's fail-closed scan (`LEAK_PATTERNS` / `findLeak`) **moved here** and is re-exported
   from `redact.ts` so that module's API is unchanged. (`detect.ts` keeps its own FP-tuned v8
   patterns for now; a later cleanup can dedupe against `secrets.ts`.)
@@ -80,9 +80,9 @@ Deliberately NOT added (false-positive-prone on real data): aggressive IPv6 mask
 ## Consequences
 
 - The default download is safe-by-default; leaking raw content requires an explicit `redact=off`.
-- Redaction is pattern-based and **not exhaustive** — docs and launch copy must not claim guaranteed
+- Redaction is pattern-based and **not exhaustive**: docs and launch copy must not claim guaranteed
   redaction (same honesty stance as detector coverage). The disclaimer says so in-band.
 - `secrets.ts` is now the home for shareable secret/PII patterns; `detect.ts` duplication is a known,
   deliberate follow-up, not an oversight.
-- The corpus redactor (ADR path, validation Layer 4) is untouched behaviorally — its `findLeak` is the
+- The corpus redactor (ADR path, validation Layer 4) is untouched behaviorally: its `findLeak` is the
   same function, now imported from core.

@@ -1,203 +1,136 @@
-# Data Validation — collect → ingest → compute
+# Validation
 
-This documents how we verify that Agent Lens computes its metrics and indicators
-correctly, end to end. The goal is confidence that token accounting, cost,
-session/turn/subagent aggregates, and the heuristic classifier are right — at the
-formula level (absolute correctness) **and** at full real-data scale
-(self-consistency).
+How we check that Agent Lens computes its numbers correctly: token accounting, cost, session, turn,
+and subagent aggregates, and the classifier. The checks cover exact formulas on small fixtures and
+self-consistency on full real data.
 
-## Approach — a type gate and five layers
+## Layers
 
-Each layer answers a different question. Together they cover absolute
-correctness, real-scale consistency, and the whole CLI→API path. Layer 0 sits
-underneath them: it proves nothing about behaviour, only that the fixtures the
-other layers assert on still match the types they claim.
+| Layer | Question | Where | Expected values written by hand? | Data |
+|------|----------|-------|---|-------|
+| 0. Type gate | Do the tests still typecheck against the code? | `pnpm typecheck` | No | every `src` and `test` file |
+| 1. Golden fixtures | Are the formulas exactly right? | vitest | Yes | tiny fixtures |
+| 2. Invariants | Does real data stay self-consistent? | `scripts/validate.mjs` | No | your real store |
+| 3. Determinism | Does incremental ingest equal a full rebuild? | vitest | No | committed corpus |
+| 4. Redaction oracle | Does the corpus give the same metrics as the real data it came from? | `scripts/oracle.mjs` | No | committed corpus |
+| 5. Sandbox | Does the whole CLI to API path work? | `scripts/sandbox.sh` | spot checks | committed corpus |
 
-| Layer | Question | Where | Needs hand-authored expecteds? | Scale |
-|------|----------|-------|-------------------------------|-------|
-| 0. Type gate | Do the tests still typecheck against the code? | `pnpm typecheck` | No | every `src` + `test` file |
-| 1. Golden fixtures | Are the *formulas* exactly right? | vitest | Yes | tiny |
-| 2. Invariants | Does the *real* data stay self-consistent? | `scripts/validate.mjs` | No | full (your real DB) |
-| 3. Determinism | Is incremental == full rebuild? | vitest | No | committed corpus |
-| 4. Redaction oracle | Is the corpus metric-faithful to real data? | `scripts/oracle.mjs` | No (raw is its own oracle) | committed corpus |
-| 5. Sandbox e2e | Does the whole CLI→API path work? | `scripts/sandbox.sh` | spot-check | committed corpus |
+**Why the oracle works.** Tokens, cost, durations, counts, subagent linkage, and the complexity
+score come only from structural fields: usage objects, timestamps, ids, models, tool names, edit line
+counts, file extensions. So a redactor that scrubs text but keeps those fields preserves every metric
+by construction, and `metrics(redacted) == metrics(raw)` becomes something we can check. The
+classifier's category comes from message text, so Layer 1 fixtures cover it instead.
 
-**Why the redaction oracle works.** Token accounting, cost, durations, counts,
-subagent linkage, and the complexity *score* derive only from numeric/structural
-fields (usage objects, timestamps, ids, models, tool names, `spawned_session_id`,
-edit line-counts, file extensions). The classifier *category* derives from
-message *text*. So a redactor that scrubs text/PII but preserves those structural
-fields is **metric-preserving by construction** — and `metrics(redacted) ==
-metrics(raw)` becomes a checkable property. Category is text-derived and is
-covered by Layer 1 fixtures instead, never by the oracle.
-
-## How to run
+## Run it
 
 ```bash
-pnpm build && pnpm typecheck                # Layer 0 — src + test/ (build first: tests import ../dist)
-pnpm test                                   # Layers 1, 3, 4-unit + corpus scenarios + web unit tests
-cp data/agent-lens.db /tmp/al-validate.db   # snapshot (never read the live WAL DB)
-pnpm validate --db /tmp/al-validate.db      # Layer 2 invariants on the real corpus
-pnpm build-corpus                           # regenerate the redacted corpus + run the oracle
-pnpm sandbox                                # Layer 5 end-to-end over the corpus
+pnpm build && pnpm typecheck                # Layer 0 (tests import ../dist, so build first)
+pnpm test                                   # Layers 1, 3, 4 unit tests, corpus scenarios, web tests
+cp data/agent-lens.db /tmp/al-validate.db   # copy the store; never read the live WAL database
+pnpm validate --db /tmp/al-validate.db      # Layer 2 on your real data
+pnpm build-corpus                           # regenerate the redacted corpus and run the oracle
+pnpm sandbox                                # Layer 5 over the corpus
 ```
 
 ## What each layer covers
 
-- **Layer 0 — type gate** (`pnpm typecheck`, run in CI right after `pnpm build`):
-  each package typechecks `src` via its `tsconfig.json` and `test/` via a
-  sibling `tsconfig.test.json` (`noEmit`, `rootDir: "."`, `include: test/**/*`) —
-  the main configs set `rootDir` to `./src` and so cannot include `test/`
-  themselves. **Scope: it proves a test fixture still matches the type it is
-  annotated with, and nothing more** — a fixture can be perfectly typed and still
-  assert the wrong number, which is what Layers 1–5 are for. It exists because
-  the opposite failure is silent: a `ChartProps` fixture in
-  `web/test/chartGuides.test.tsx` once went stale when a required field was added,
-  and the suite kept passing because no config compiled it. The step must follow
-  `pnpm build` — every package except `web` imports its own `../dist/*.js` from
-  tests, so the `.d.ts` files have to exist first.
-- **Layer 1 — golden fixtures** (`packages/*/test/*.test.ts`):
-  - `core/test/pricing.test.ts` — cost formula, longest-prefix model match
-    (`claude-opus-4-8[1m]` → opus-4-8, dated haiku → `claude-haiku-4`), cache
-    rates, unknown → 0.
-  - `server/test/dashboard.test.ts` — every dashboard aggregate (token split,
-    `total_tokens`, `cache_read_ratio`, cost, `unpriced_models`, p50/p95 turn
-    duration, per-model/source/category breakdowns, subagent fan-out, source
-    filter, the model filter at each aggregate's own grain, and the four audit
-    aggregates) with hand-computed numbers, plus the canonical-key collision
-    fixture — one model ingested under a dated id *and* its alias, which the real
-    corpus has never carried (ADR-037).
-  - `ingest/test/classify.test.ts` — complexity sub-scores + weighted total
-    (zero, all-ceilings → 100.0, exact half-ceilings), LoC parsing, category
-    keywords + structural signals + subagent-role override.
-  - `ingest/test/ingest.test.ts` — existing dedup/linkage/pruning/streaming plus
-    new: malformed lines, meta/compaction lines (no turn), cross-file uuid dedup,
-    and the **orphan subagent** case.
-  - `ingest/test/detect.test.ts` + `sanitize.test.ts` — the security rules and
-    severity model, and the command sanitizer stage by stage (including the
-    regex-as-tokenizer holes we knowingly accept).
-  - `web/test/*.test.ts(x)` — the SPA's pure transcript logic (shell/diff/parse/
-    tree/timeline scale) and its hooks and components (`useFetch`, `useQueryState`,
-    `useOutsideClick`, `FilterSelect`, `AgentRow`, and the session view's
-    deep-link, search, time-range and keyboard behaviour), plus the chart
-    registries' visibility gates and every card's how-to-read panel.
-    `packages/web/vitest.config.ts`
-    defines the web project (jsdom, source resolved by vite); the root config
-    references it, so a package-local run and the repo-wide run execute the same
-    tests.
-- **Layer 2 — invariants** (`scripts/validate.mjs`): dedup, conservation
-  (`dashboardOverview` == direct SUM), cost additivity (row-sum == grouped),
-  linkage integrity, aggregate recompute, plus report-only orphan/unpriced/
-  unattributed counts. Cross-checks the *shipped* server query path.
-- **Layer 3 — determinism** (`ingest/test/determinism.test.ts`): full rebuild ==
-  chunked incremental (mains, then subagents — exercising linkage expansion), and
-  idempotent re-ingest (0 new events, unchanged derived state).
-- **Layer 4 — redactor + corpus** (`packages/ingest/src/redact.ts`,
-  `test/fixtures/corpus/`): the committed corpus is real, non-agent-lens sessions
-  run through the metric-preserving redactor; `redact.test.ts` proves
-  preservation + leak-freedom on synthetic data, and the oracle proves it on the
-  real subset the corpus was built from.
-- **Layer 5 — sandbox** (`scripts/sandbox.sh`): `ingest --full` → server → HTTP
-  API over the corpus, in a throwaway temp dir, asserting the API's aggregates
-  match the corpus's known-correct numbers.
+- **Layer 0: type gate.** Each package typechecks `src` with its `tsconfig.json` and `test/` with a
+  sibling `tsconfig.test.json`, because the main configs' `rootDir` is `./src`. It proves only that
+  fixtures match their declared types. It exists because a stale fixture once kept passing when no
+  config compiled the tests. CI runs it after `pnpm build`, since tests import each package's
+  `../dist`.
+- **Layer 1: golden fixtures** (`packages/*/test/`), with hand-computed numbers:
+  - `core/test/pricing.test.ts`: the cost formula, longest-prefix model matching, cache rates, and
+    unknown models costing 0.
+  - `server/test/dashboard.test.ts`: every dashboard aggregate, the model filter at each aggregate's
+    own grain, the audit aggregates, and a model ingested under both a dated id and its alias
+    (ADR-037).
+  - `ingest/test/classify.test.ts`: complexity sub-scores and totals, line counts, and category
+    signals.
+  - `ingest/test/ingest.test.ts`: deduplication, linkage, pruning, streaming, malformed and meta
+    lines, cross-file duplicates, and orphan subagents.
+  - `ingest/test/detect.test.ts` and `sanitize.test.ts`: the security rules, severities, and the
+    command sanitizer, including the gaps we accept.
+  - `web/test/`: transcript logic, hooks, components, the session view's deep links, search, time
+    range, and keyboard, plus chart visibility and every chart's explanation panel.
+    `packages/web/vitest.config.ts` defines the web project and the root config includes it.
+- **Layer 2: invariants** (`scripts/validate.mjs`). Deduplication, conservation (the dashboard total
+  equals a direct `SUM`), cost additivity, linkage integrity, and recomputed aggregates, through the
+  same query code the server runs. Orphans, unpriced models, and unattributed rows are reported
+  without failing.
+- **Layer 3: determinism** (`ingest/test/determinism.test.ts`). A full rebuild equals a chunked
+  incremental ingest (mains first, then subagents), and re-ingesting adds nothing.
+- **Layer 4: redaction** (`packages/ingest/src/redact.ts`, `test/fixtures/corpus/`). The committed
+  corpus is real sessions (not from this project) passed through the redactor. `redact.test.ts`
+  proves preservation and leak-freedom on synthetic data; the oracle proves it on the real sessions.
+- **Layer 5: sandbox** (`scripts/sandbox.sh`). Runs `ingest --full`, the server, and the HTTP API
+  over the corpus in a temp directory, and checks the API against known numbers.
 
 ## Results
 
-> The **Layer 2** and **Findings** figures below are a point-in-time snapshot from a real
-> ~630-session DB — Layer 2 runs against your own `data/agent-lens.db`, so the numbers scale with
-> your data. Layers 1/3/4/5 run on the committed corpus and are deterministic.
-
-**Layer 0 — type gate (`pnpm typecheck`):** clean across all 7 packages, `src` and `test`.
-
-**Layer 1/3/4-unit + corpus scenarios + web — `pnpm test`:** 982 tests pass (75 files).
-
-**Layer 2 — invariants on the live corpus (~632-session snapshot):** all hard invariants PASS.
+Layers 0, 1, 3, 4, and 5 run on the committed corpus and are deterministic; all pass in CI. The
+Layer 2 numbers below are a snapshot from a real store of about 630 sessions, so yours will differ.
 
 ```
-[1] dedup                — each (session_id, message_id) appears once
-[2] conservation         — overview tokens == direct SUM (input 2,669,921; cache_read 2,327,763,568)
-[3] cost additivity      — Σ costForUsage(row) == overview.cost  ($1912.90, drift $0.000015)
-[4] linkage integrity    — 0 dangling spawns, 0 broken parent_turn links
-[6] aggregate recompute  — event_count/turn_count == COUNT(*) for every session
+[1] dedup                each (session_id, message_id) appears once
+[2] conservation         overview tokens == direct SUM (input 2,669,921; cache_read 2,327,763,568)
+[3] cost additivity      Σ costForUsage(row) == overview.cost ($1912.90, drift $0.000015)
+[4] linkage integrity    0 dangling spawns, 0 broken parent_turn links
+[6] aggregate recompute  event_count/turn_count == COUNT(*) for every session
 report: cache_read_ratio = 95.7% · 239 linked + 249 orphan subagents · 0 unattributed token rows · all models priced
 ```
 
-> The `249 orphan subagents` line above is the pre-fix snapshot. After finding #1
-> was fixed (structural `subagents/`-path linkage) those workflow agents attribute
-> to their orchestrator; re-run `ingest --full` then `pnpm validate` to see the
-> orphan count drop to the genuinely path-less remainder.
+The orphan count predates workflow linkage (see [Findings](#findings)). After `ingest --full`, only
+subagents whose parent transcript was never collected stay orphaned.
 
-**Layer 4 — oracle (raw subset vs redacted corpus):** every metric identical —
-sessions/turns/events/tool_calls, token split, cost ($0.632179), subagent
-linkage, complexity scores. The redacted real sources (team-a/team-b) are
-leak-scan clean.
+The oracle found every metric identical between the raw sessions and the redacted corpus, and the
+redacted sources pass the leak scan.
 
-**Layer 5 — sandbox e2e:** `ingest --full` over the 3-source corpus → every
-scenario asserted through the DB and HTTP API (see table below); all pass.
+### Scenarios
 
-### Scenario coverage
+The corpus has three sources: `team-a` and `team-b` (redacted real sessions) and `scenarios`
+(hand-written synthetic sessions), so every case below is covered end to end.
 
-The committed corpus has three sources: `team-a`/`team-b` (redacted real, for the
-oracle + realism) and `scenarios` (hand-authored synthetic, readable content) so
-every scenario is represented end-to-end. Each is verified both as a unit
-(deterministic golden fixture) and over the committed corpus (CI +
-sandbox/API):
+| Scenario | Unit test | In the corpus |
+|----------|----------|-----------------|
+| Plain session: turns and token accounting | `ingest.test.ts` | `sc-plain-0001` |
+| Subagents: child tokens not double-counted | `ingest.test.ts`, `redact.test.ts` | `sc-sub-parent-0002` and `agent-c0ffee01` |
+| Workflow fan-out: agents grouped by run and linked to the launching turn | `ingest.test.ts`, `api.test.ts` | `sc-workflow-0003` and 2 agents under `subagents/workflows/wf_*/` |
+| Slash command with local output and no assistant turn | `corpus-scenarios.test.ts` | `sc-command-0006` |
+| Several sources, no cross-source bleed | `dashboard.test.ts` | the 3 sources |
+| Compaction and meta lines create no turn | `ingest.test.ts` | `sc-plain-0001` (2 turns) |
+| Resumed session: duplicate uuids deduplicated | `ingest.test.ts` | `sc-resumed-0005` (mirror and `.versions`, 3 events) |
+| Cache tokens, read and write | `pricing.test.ts`, `classify.test.ts` | corpus totals |
+| Malformed or partial JSONL | `ingest.test.ts` | `sc-malformed-0004` (1 malformed line) |
 
-| Scenario | Golden fixture (unit) | Over the corpus |
-|----------|----------------------|-----------------|
-| Plain session — turns + token accounting | `ingest.test.ts` | `sc-plain-0001` |
-| Subagents — child tokens not double-counted | `ingest.test.ts`, `redact.test.ts` | `sc-sub-parent-0002` + `agent-c0ffee01` (child=1500, parent=1300) |
-| Workflow fan-out — agents grouped by run + linked to the launching turn (run id) | `ingest.test.ts` (workflow run-link + path-less orphan), `api.test.ts` (run grouping) | `sc-workflow-0003` (Workflow result carries `runId`/`workflowName`) + 2 agents under `subagents/workflows/wf_*/` |
-| Slash command — `/cmd` invocation + local output, no assistant turn | `corpus-scenarios.test.ts` | `sc-command-0006` (`/plugin` + `<local-command-stdout>`) |
-| Multi-source — no cross-source bleed | `dashboard.test.ts` | 3 sources (team-a/team-b/scenarios) |
-| Compaction / meta — no spurious turn | `ingest.test.ts` | `sc-plain-0001` (turn_count=2) |
-| Sidechain / resumed — dup-uuid dedup | `ingest.test.ts` (cross-file) | `sc-resumed-0005` (mirror + .versions → 3 events) |
-| Cache tokens — read vs creation | `pricing.test.ts`, `classify.test.ts` | corpus cache_read + cache_creation > 0 |
-| Malformed / partial JSONL | `ingest.test.ts` | `sc-malformed-0004` (malformed=1) |
+`corpus-scenarios.test.ts` checks all of these in CI, and `scripts/sandbox.sh` checks them again
+through the API.
 
-CI coverage: `corpus-scenarios.test.ts` ingests the committed corpus and asserts
-all of the above; `scripts/sandbox.sh` re-asserts them through the live API.
-Regenerate the corpus with `pnpm build-corpus` (redacted real + oracle) and
-`node scripts/build-scenarios.mjs` (synthetic). `build-corpus` reads which real
-sessions to redact from `scripts/corpus-sessions.local` (gitignored, one
-`<srcLabel>|<encodedDir>|<sessionUUID>|<outLabel>` per line) — that list names a
-real source, project directory and session ids, so it stays beside the archive it
-refers to rather than in git.
+To regenerate the corpus, run `pnpm build-corpus` (redacted sessions and the oracle) and
+`node scripts/build-scenarios.mjs` (synthetic sessions). `build-corpus` reads which sessions to
+redact from `scripts/corpus-sessions.local`, one `<srcLabel>|<encodedDir>|<sessionUUID>|<outLabel>`
+per line. That file names real projects and sessions, so it's gitignored.
 
 ## Findings
 
-No computation bug was found — every hard invariant holds and the formulas match
-hand-computed expecteds. Three things to be aware of:
+No computation bug was found. Worth knowing:
 
-| # | Finding | Evidence | Impact | Recommendation |
-|---|---------|----------|--------|----------------|
-| 1 | **Workflow subagents now link to their orchestrator (resolved).** Was: 249 of 488 subagent sessions had `parent_session_id = NULL` because the Workflow tool emits no `toolUseResult.agentId`, so the `tool_calls.spawned_session_id` link only covered `Agent`/`Task` spawns. | `validate.mjs` [5]; `ingest.test.ts` "workflow-linkage" + "path-less orphan"; `corpus-scenarios.test.ts` | Fan-out now rolls up workflow agents to their spawning session. | **Fixed:** the launching Workflow tool_call's result carries a run id (`wf_<id>`) + name, and the run's subagents nest under `…/subagents/workflows/<runId>/` — so `sessions.workflow_run_id` matches `tool_calls.workflow_run_id`, giving each workflow agent **both** its parent session **and** the exact launching turn (`parent_turn_id`). A path-based parent (`spawn_parent_id`) is the final fallback. The session view groups the fan-out by run (named, counted, linked to its turn). Tokens stay siloed → no double-count. Re-ingest with `ingest --full` to apply on an existing DB (SCHEMA_VERSION 11). |
-| 2 | **Cost is cache-dominated.** cache_read = 2.33T tokens = **95.7%** of all tokens; total derived cost $1,912.90. | `validate.mjs` [2]/[3] | Cost correctness rides almost entirely on the cache-read rate, not input/output. | Already handled correctly (separate `cacheRead` rate per model; cache_read excluded from "work" tokens). Keep the pricing table current — a wrong cache-read rate would dominate the error. |
-| 3 | **`<synthetic>` model carries 0 tokens.** It appears on 149 rows but sums to 0 tokens, so it never affects cost (hence "all models priced"). | `validate.mjs` [8]; direct query | None today. | No action; documented so a future non-zero `<synthetic>` (which *would* be unpriced) is expected to surface in `validate.mjs` [8]. |
+- **Cost is mostly cache reads.** They were 95.7% of all tokens in the snapshot, so cost accuracy
+  depends almost entirely on each model's cache-read rate. Keep the price table current.
+- **The `<synthetic>` model has no tokens.** It marks replies Claude Code generated without calling
+  a model. If it ever carries tokens, `validate.mjs` check [8] reports it as unpriced.
+- **Workflow subagents link to their parent.** A workflow run's agents are stored under
+  `subagents/workflows/<runId>/`, and the launching tool call's result carries the same run id, so
+  each agent gets its parent session and launching turn.
+- **The turns KPI includes subagent turns**, while category and complexity cover main sessions only.
+  Under a model filter the KPI counts turn rows instead
+  ([ADR-035](decisions/ADR-035-dashboard-model-filter.md)).
 
-Observation (by design, not a bug): the "turns" KPI sums `turn_count` over all
-sessions including subagents (889 main + 506 subagent turns); category/complexity
-breakdowns intentionally cover main sessions only. **Under a model filter the KPI
-counts turn rows instead** — the denormalized column is session-grain and would
-report an admitted session's turns by every model, disagreeing with "Activity over
-time" ([ADR-035](decisions/ADR-035-dashboard-model-filter.md)). Invariant [6] is
-what makes the two interchangeable when nothing is filtered.
+## Corpus safeguards
 
-## Guarantees & guardrails on the corpus
-
-- The committed corpus contains **no agent-lens data** and **no real PII** — the
-  redactor scrubs text, paths (usernames stripped), project names, branches,
-  emails, URLs, secrets; the generator honors the global exclude list (which
-  `build-corpus` defaults to this repo, so agent-lens is never emitted) and fails
-  closed on any post-redaction leak (`findLeak`). A fixed `AGENT_LENS_REDACT_SALT`
-  makes the corpus byte-reproducible. Raw subsets stay under gitignored `data/`
-  and `/tmp`; only redacted output is committed.
-- The same exclude list is a first-class pipeline feature (config `exclude` +
-  `AGENT_LENS_EXCLUDE`): excluded projects are never collected, never ingested,
-  and pruned from the DB on next ingest. See `docs/USAGE.md` → *Exclude projects*.
-
-## Out of scope (follow-up)
-
-None outstanding from the original validation: finding #1 (workflow subagent
-attribution) has since been fixed via the structural (`subagents/`-path) linkage
-pass; re-run `ingest --full` to apply it on an existing DB.
+- The corpus holds no data from this project and no real personal data. The redactor scrubs text,
+  paths, usernames, project names, branches, emails, URLs, and secrets, and the generator fails on
+  any leak it finds after redaction (`findLeak`). A fixed `AGENT_LENS_REDACT_SALT` makes the corpus
+  byte-for-byte reproducible. Only redacted output is committed.
+- The generator honors the same [exclude list](USAGE.md#exclude-projects) as the rest of the
+  pipeline, and `build-corpus` excludes this repo by default.

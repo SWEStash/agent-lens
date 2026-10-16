@@ -1,88 +1,60 @@
 # Agent Lens
 
-> Passively collect, search, and audit your Claude Code CLI session traces — **100% local**.
+Collect, search, and audit your Claude Code session traces. 100% local.
 
 [![npm](https://img.shields.io/npm/v/@swestash/agent-lens)](https://www.npmjs.com/package/@swestash/agent-lens)
 ![Node](https://img.shields.io/badge/node-%E2%89%A524-brightgreen)
 ![Platform: Linux · macOS · Windows](https://img.shields.io/badge/platform-Linux%20%C2%B7%20macOS%20%C2%B7%20Windows-lightgrey)
 ![License: MIT](https://img.shields.io/badge/license-MIT-blue)
 
-Claude Code records rich per-session telemetry under `~/.claude/`, but prunes it on a rolling
-**30-day window**. Agent Lens continuously copies that data out before it's lost, normalizes it into
-a queryable SQLite store, and gives you three things over it — a searchable transcript browser,
-usage/cost dashboards, and a deterministic, no-AI **audit of what the agent actually did on your
-machine** — **without a single byte leaving your machine**.
+Claude Code prunes its session records after a rolling 30-day window. Agent Lens copies them into a
+local archive first, and gives you a transcript browser, usage and cost dashboards, and a
+deterministic, no-AI audit of what the agent did on your machine. Nothing leaves your machine.
 
 ## Install
 
+Requires Node.js 24 or later.
+
 ```bash
-npm install -g @swestash/agent-lens    # or run ad-hoc:  npx @swestash/agent-lens <command>
+npm install -g @swestash/agent-lens    # or run once: npx @swestash/agent-lens <command>
 ```
 
-The installed command is **`agent-lens`** (the package is published under the `@swestash` scope).
-Requires **Node.js ≥ 24**.
-
-There are **no compiled dependencies** — SQLite comes from Node's built-in `node:sqlite`. Nothing is
-built at install time, so there is no compiler toolchain to set up, no platform-specific prebuilt
-binary to match, and no install script for npm to prompt about.
+There are no compiled dependencies: SQLite comes from Node's built-in `node:sqlite`, so nothing is
+built or downloaded at install time.
 
 ## Quick start
 
-Agent Lens runs a three-stage local pipeline — `collect → ingest → serve`:
-
 ```bash
-# Configure which accounts to collect (defaults to one: ~/.claude).
-#   → agent-lens.config.json next to your data dir, or set AGENT_LENS_CONFIG
-
-agent-lens collect --then-ingest   # Stages 1–2: mirror transcripts to the archive, build the DB
-agent-lens serve                   # Stage 3: browse → http://127.0.0.1:4477
-
-# Make it permanent — install as OS services (survives reboot):
-agent-lens service install         # periodic collect+ingest AND the always-on UI
-# ...or keep it fresh in the foreground instead:
-agent-lens watch                   # a resident process that collects+ingests on file change
+agent-lens collect --then-ingest   # copy your transcripts and build the database
+agent-lens serve                   # open http://127.0.0.1:4477
+agent-lens service install         # optional: keep collecting and serving across reboots
 ```
 
-No configuration is required to start: with no config file, Agent Lens collects the single default
-source `~/.claude`.
+With no config file, Agent Lens collects `~/.claude`.
 
-### Where your data lives
-
-Installed from npm, the archive and SQLite store go to a per-user data directory:
-
-| Platform | Data directory |
-| --- | --- |
-| Linux | `$XDG_DATA_HOME/agent-lens`, else `~/.local/share/agent-lens` |
-| macOS | `~/Library/Application Support/agent-lens` |
-| Windows | `%LOCALAPPDATA%\agent-lens` |
-
-Set `AGENT_LENS_DATA` to put it elsewhere — that is the only way to relocate the archive, which the
-SQLite store and triage sidecar follow. `agent-lens config` prints the resolved paths and where each
-value came from.
-
-### Commands
+## Commands
 
 | Command | What it does |
 | --- | --- |
-| `agent-lens collect [--then-ingest]` | Mirror each configured account's transcripts into the local archive (never deletes, never copies secrets). |
-| `agent-lens ingest` | Normalize the archive into the SQLite store. |
-| `agent-lens serve` | Serve the web UI + read-only API at `http://127.0.0.1:4477`. |
-| `agent-lens watch` | Foreground resident: collect + ingest on file change. |
-| `agent-lens metrics` | Re-run classification, security detection, error typing, and file-change indexing over an already-ingested store. |
-| `agent-lens export <sessionId>` | Write a session to a shareable Markdown file — redacted by default (`--level secrets\|structure`, `--no-redact` to opt out). |
-| `agent-lens service <install\|uninstall\|status> [collector\|server\|all]` | Install/manage OS services (systemd / launchd / Windows Task Scheduler). |
-| `agent-lens config` | Print the effective configuration — sources, paths, server binding — and where each value came from. |
+| `agent-lens collect [--then-ingest]` | Copy each account's transcripts into the archive. Never deletes, never copies credentials. |
+| `agent-lens ingest [--full]` | Build or update the SQLite store from the archive. |
+| `agent-lens serve` | Serve the web UI and API on `127.0.0.1:4477`. |
+| `agent-lens watch` | Collect and ingest whenever a transcript changes. |
+| `agent-lens metrics` | Rerun classification, security detection, error typing, and file indexing on the store. |
+| `agent-lens export <sessionId>` | Write a session to Markdown, redacted by default. |
+| `agent-lens service <install\|uninstall\|status> [collector\|server\|all]` | Manage the OS services (systemd, launchd, Task Scheduler). |
+| `agent-lens config` | Print the effective configuration and where each value came from. |
 
-## Privacy
+## Where your data lives
 
-Everything stays on your machine — no telemetry, no network calls, no accounts. The collector copies
-transcript files only and skips anything that looks like a credential. See the
-[privacy posture](https://github.com/SWEStash/agent-lens#privacy) for details.
+In a per-user data directory (on Linux, `~/.local/share/agent-lens`). `agent-lens config` prints the
+resolved paths, and `AGENT_LENS_DATA` moves them. All platforms are listed in the
+[usage guide](https://github.com/SWEStash/agent-lens/blob/main/docs/USAGE.md#paths).
 
 ## Documentation
 
-Full docs, configuration reference, screenshots, architecture decisions, and the read-only demo live
-in the repository: **https://github.com/SWEStash/agent-lens**
+Configuration, screenshots, the [privacy posture](https://github.com/SWEStash/agent-lens#privacy),
+and a live demo are in the repository: https://github.com/SWEStash/agent-lens
 
 ## License
 

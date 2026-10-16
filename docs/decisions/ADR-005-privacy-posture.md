@@ -1,4 +1,4 @@
-# ADR-005 — Local-only privacy posture
+# ADR-005: Local-only privacy posture
 
 - Status: Accepted
 - Date: 2026-06-25
@@ -6,7 +6,7 @@
 
 ## Context
 
-Traces contain full prompts, responses, code, and tool output — potentially secrets. The overriding
+Traces contain full prompts, responses, code, and tool output: potentially secrets. The overriding
 NFR is that **data never leaves the local environment**.
 
 ## Decision
@@ -31,6 +31,6 @@ NFR is that **data never leaves the local environment**.
 
 ## Verification
 
-- Grep running processes / sockets for outbound connections carrying trace payloads — expect none.
+- Grep running processes / sockets for outbound connections carrying trace payloads: expect none.
 - Confirm no secret files land in `data/archive/`.
 - Confirm binding to a LAN IP is refused.

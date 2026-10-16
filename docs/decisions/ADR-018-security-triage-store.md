@@ -1,4 +1,4 @@
-# ADR-018 — Security-finding triage in a separate writable store
+# ADR-018: Security-finding triage in a separate writable store
 
 - Status: Accepted (location amended by [ADR-021](ADR-021-fixed-data-layout.md))
 - Date: 2026-07-14
@@ -7,7 +7,7 @@
 ## Context
 
 The security findings from ADR-017 are useful but noisy on real data (thousands of findings, mostly
-benign). Users need to **triage** them — mark a finding safe, or mute a chronically-noisy rule — so a
+benign). Users need to **triage** them (mark a finding safe, or mute a chronically-noisy rule) so a
 new, real finding stands out. That triage state is **user-authored**: it is not derivable from the
 archive, unlike everything else in the store.
 
@@ -22,10 +22,10 @@ This collides with two invariants:
 
 Keep triage state in a **separate, writable `triage.db`** that ingest never touches:
 
-- Two tables — `dismissed_findings` (keyed by the **stable finding id** `sha1(tool_call_id, rule_id)`,
+- Two tables: `dismissed_findings` (keyed by the **stable finding id** `sha1(tool_call_id, rule_id)`,
   which survives re-detection) and `muted_rules` (rule + optional project/source scope).
 - It sits beside the analytics DB (`triage.db`, in the db's directory) and is **never
-  opened by ingest**, so triage survives `ingest --full` automatically — no invariant to enforce.
+  opened by ingest**, so triage survives `ingest --full` automatically: no invariant to enforce.
 - The server opens it **read-write** for writes and `ATTACH`es it to the read handle, so the findings
   list JOINs triage state in SQL (correct filtering, pagination, and counts). The analytics handle
   stays read-only; only the triage handle writes. This mirrors `POST /api/refresh` (ADR-015), where a
@@ -60,4 +60,4 @@ so the numbers reflect what still needs review.
 ## Related
 
 Complements ADR-017 (which also gained a v2 path allowlist so the agent writing to its own config/work
-dir — e.g. a plan file under `~/.claude/plans` — is no longer flagged as an out-of-project write).
+dir (e.g. a plan file under `~/.claude/plans`) is no longer flagged as an out-of-project write).

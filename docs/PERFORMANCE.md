@@ -44,7 +44,7 @@ columns. The covering indexes in `schema.ts` carry exactly those columns. Ingest
 (`ANALYZE_SQL`) after each pass because without statistics the planner resolves the join through
 the primary-key index and reads the row anyway.
 
-## Baseline — 2026-10-14
+## Baseline (2026-10-14)
 
 Real store: 17.9k sessions, 512k events, 110k tool calls, 2.3 GB. Intel laptop, 8 cores, 45 GB RAM,
 Node 24.15. Both columns were measured on fresh `.backup` copies, so file fragmentation is equal.
@@ -62,7 +62,7 @@ Times are the serial dashboard (all five endpoints), unfiltered unless noted.
 The index migration takes ~4 s once on the first ingest after upgrade and adds ~85 MB (~3.5%).
 `ANALYZE` adds ~0.1 s per ingest.
 
-## Ingest cost — 2026-10-15
+## Ingest cost (2026-10-15)
 
 Measured on a `.backup` copy of the real store, with a read-only connection held open the way the
 server holds one. "Written" is physical (`write_bytes`), "read" includes page-cache hits (`rchar`).
@@ -70,8 +70,8 @@ server holds one. "Written" is physical (`write_bytes`), "read" includes page-ca
 | run | wall | WAL peak | written | read | peak RSS |
 |---|---:|---:|---:|---:|---:|
 | incremental, 5 changed files, before | 8–14 s | 16 MB | 0.1–0.4 GB | 13.5 GB | 345 MB |
-| incremental, 5 changed files, after | ~3 s | 18 MB | — | 0.63 GB | 345 MB |
-| `--full`, before | 444–458 s | 1.7 GB | 144–146 GB | 53 GB | — |
+| incremental, 5 changed files, after | ~3 s | 18 MB | n/a | 0.63 GB | 345 MB |
+| `--full`, before | 444–458 s | 1.7 GB | 144–146 GB | 53 GB | n/a |
 | `--full`, after | 301–330 s | 2.4 GB | 20 GB | 45 GB | 1.0 GB |
 | `--full`, indexes built after the load | 294–395 s | 2.4 GB | 12.5–13 GB | 43 GB | 1.0 GB |
 | `--full`, each turn_id written once | 347 s (vs 437 s same session) | 2.4 GB | 9.6 GB (vs 13.1) | 36 GB | 1.0 GB |
@@ -115,7 +115,7 @@ the largest size ever written, 1.5 GB after a `--full`. Each run now ends with a
 `WAL_SIZE_LIMIT` (`journal_size_limit`, 64 MB) trims the file on the next run that writes. A
 `--full` needs free disk of about the store's size again for the WAL while it runs.
 
-## Serving — 2026-10-15
+## Serving (2026-10-15)
 
 Real store, warm page cache, over HTTP to the running server unless noted.
 

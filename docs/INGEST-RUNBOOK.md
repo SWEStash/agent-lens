@@ -1,100 +1,81 @@
-# Agent Lens — Ingest Runbook
+# Ingest runbook
 
-Operational procedures for Stage 2 (ingest). For the conceptual design see
-[ARCHITECTURE.md](ARCHITECTURE.md); for first-time setup, source config, and the env-var reference see
-the [Operations Guide](USAGE.md). This runbook covers running, migrating, and troubleshooting ingest.
+How to run, rebuild, and troubleshoot ingest. The design is in [ARCHITECTURE.md](ARCHITECTURE.md);
+setup and the environment variables are in the [usage guide](USAGE.md).
 
 ## How ingest runs
 
-- **Scheduled.** `agent-lens service install collector` registers a periodic
-  **`collect --then-ingest`** job with the OS service manager (systemd/launchd/schtasks); collect must
-  succeed before ingest runs. Default cadence: `09,13,17,21`. See
-  [USAGE.md → Stage 1](USAGE.md#stage-1--collect).
-- **Manual.** `agent-lens ingest` (incremental) or `agent-lens ingest --full` (rebuild). Direct:
+- **Scheduled.** `agent-lens service install collector` runs `collect --then-ingest` at 9, 13, 17,
+  and 21 by default. Ingest runs only if collect succeeds. See [Collect](USAGE.md#collect).
+- **By hand.** `agent-lens ingest`, or `agent-lens ingest --full` to rebuild. From a checkout:
   `node packages/ingest/dist/index.js [--full] [--db <path>] [--archive <path>]`.
-- **Inputs.** Reads `data/archive/` (the mirror + `.versions/` snapshots), writes `data/agent-lens.db`.
-  Relocate via `AGENT_LENS_DATA` (moves both) or `AGENT_LENS_DB` / config `db` (the db alone).
-  The archive itself has no override — it is always `<dataDir>/archive` (ADR-021); `ingest --archive`
-  is a per-run read-only override for ingesting a copied archive.
-  ([env table](USAGE.md#environment-variables)). The archive is read-only to ingest — it is never
-  mutated, so any run is safe to repeat.
+- **Inputs and outputs.** Ingest reads `<dataDir>/archive/` (transcripts and `.versions/` snapshots)
+  and writes `<dataDir>/agent-lens.db`. `AGENT_LENS_DATA` moves both; `AGENT_LENS_DB` or the config's
+  `db` moves only the store. The archive has no setting of its own (ADR-021); `--archive` reads a
+  copied archive for one run. Ingest never modifies the archive, so every run is safe to repeat.
 
-A run prints: `files / skipped / new_events / malformed` (plus `excluded_pruned=N` when an excluded
-project's sessions were removed — see *Excluding projects* in USAGE.md), then `sessions / turns /
-events / tool_calls / classified`, then one line per sidecar stage — `workflow_results`,
-`session_meta`, and `tool_results` (each with its own `upserted/skipped/malformed`) — and finally
-`tokens / est_cost / db`. One more line follows only when some model has token usage but no price
-(`unpriced=N model(s): …`) — `est_cost` excludes those, so treat it as a floor until you add a rate
-(see *Adjust model pricing* in USAGE.md).
+Each run prints, in order:
 
-## Incremental vs. `--full`
+1. `files`, `skipped`, `new_events`, `malformed`, and `excluded_pruned=N` when
+   [excluded](USAGE.md#exclude-projects) sessions were removed.
+2. `sessions`, `turns`, `events`, `tool_calls`, `classified`.
+3. One line each for `workflow_results`, `session_meta`, and `tool_results`, with their own
+   `upserted`, `skipped`, and `malformed` counts.
+4. `tokens`, `est_cost`, `db`.
+5. `unpriced=N model(s): …`, only when some model has usage but no price. `est_cost` leaves those
+   out, so treat it as a lower bound until you [add a rate](USAGE.md#model-pricing).
+
+## Incremental or `--full`
 
 | | Incremental (default) | `--full` |
 |---|---|---|
-| Files read | only changed (stat short-circuit) | every file |
-| Derived rebuild | touched sessions + linkage neighborhood | all sessions |
-| Schema | applied if missing (no column changes) | **drop + recreate** |
-| Server during the run | sees the previous state until commit | same; one transaction, so a failed run leaves the old DB |
-| Disk headroom | small | about the store's size again, for the WAL, until the run ends |
-| Use for | the normal scheduled loop | migrations, parser/classifier changes, recovery |
+| Files read | only changed ones | all |
+| Derived tables rebuilt | touched sessions and their linked sessions | all |
+| Schema | created if missing; columns never change | dropped and recreated |
+| What the server sees during the run | the previous state until commit | the same: one transaction, so a failed run leaves the old store |
+| Free disk needed | little | about the size of the store, for the WAL |
+| Use it for | the normal schedule | migrations, parser or classifier changes, recovery |
 
-Incremental is correct for new/changed transcripts. It deliberately does **not** rewrite existing rows
-to reflect changed parser/classifier *logic* — use `--full` for that.
+Incremental runs are correct for new and changed transcripts, but they don't rewrite existing rows
+when parser or classifier logic changes. Run `--full` for that.
 
 ### When to run `--full`
 
-- After a **`SCHEMA_VERSION` bump** (e.g. the ADR-011 BLOB migration — see below; **v13**, which adds
-  `tool_calls.error_type` per [ADR-019](decisions/ADR-019-tool-error-observability.md); or **v15**, which
-  splits `events.thinking` out of `events.text` per
-  [ADR-031](decisions/ADR-031-transcript-text-is-stored.md) — until you re-read, the transcript shows no
-  reasoning, because it is now a column rather than something the server re-parses).
-- After changing **parser or classifier** logic and you want it applied to all history. This includes the
-  ADR-019 adapter fix that maps a tool result's `is_error` to `status='error'` — existing DBs only pick up
-  the failure `status` (and the derived `error_type`) after a `--full` re-read.
-- To **recover** from any suspected derived-table inconsistency — the archive is the source of truth, so
-  `--full` re-derives a clean DB.
+- After a `SCHEMA_VERSION` change that alters existing tables. Examples: v5 compresses `raw_json`
+  (below), v13 adds `tool_calls.error_type`
+  ([ADR-019](decisions/ADR-019-tool-error-observability.md)), and v15 moves reasoning into
+  `events.thinking` ([ADR-031](decisions/ADR-031-transcript-text-is-stored.md)); until you rebuild,
+  transcripts show no reasoning.
+- After a parser or classifier change that should apply to all history. This includes the ADR-019
+  fix that maps a tool result's `is_error` to `status='error'`.
+- To recover from any doubt about derived tables. The archive rebuilds a clean store.
 
-### ADR-011 compression migration (one-time)
+### Compressing `raw_json` (one time)
 
-`raw_json` is stored gzip-compressed as a BLOB ([ADR-011](decisions/ADR-011-compressed-raw-json.md)). On
-upgrading to `SCHEMA_VERSION ≥ 5`, run once:
+`raw_json` is stored as a gzip BLOB ([ADR-011](decisions/ADR-011-compressed-raw-json.md)). When
+upgrading to `SCHEMA_VERSION` 5 or later, run `agent-lens ingest --full` once. Until then the store
+still works, uncompressed. Expect it to shrink by about 40%.
 
-```bash
-pnpm -r build
-agent-lens ingest --full     # drops, recreates with BLOB column, re-reads archive, compresses raw_json
-```
+## Checking a run
 
-A not-yet-migrated DB keeps working (the reader decodes legacy plain rows via `unpackRaw`), but stays
-uncompressed until `--full` runs. Expect a sizeable DB shrink (~40% on a typical corpus).
-
-## Verifying a run
-
-- **No-op is fast.** A second consecutive run should report `skipped ≈ files`, `new_events=0`, and
-  finish in well under a second (stat short-circuit + empty dirty set, per ADR-010).
-- **Compression in effect.** `raw_json` should be a BLOB of gzip bytes:
+- **A run with nothing new is fast.** A second run in a row reports `skipped` close to `files`,
+  `new_events=0`, and finishes in well under a second.
+- **Compression is on.** This should print `blob` and a length smaller than the original line:
   ```bash
   sqlite3 data/agent-lens.db "SELECT typeof(raw_json), length(raw_json) FROM events LIMIT 1;"
   ```
-  (`blob`, and smaller than the original line). The transcript view no longer proves this — it reads the
-  `text`/`thinking` columns and never touches `raw_json` (ADR-031). What exercises the codec now is
-  re-derivation: a `--full` run reads every archived line back, so a clean run is the decode check.
-- **Tests.** `pnpm test` exercises incremental rebuild, cross-run subagent linkage, streaming parity, and
-  the compression round-trip.
+  A clean `--full` run also proves decoding works, since it reads every archived line back.
+- **Tests.** `pnpm test` covers incremental rebuilds, subagent linkage across runs, streaming, and
+  the compression round trip.
 
 ## Troubleshooting
 
-- **`archive not found`** — Stage 1 hasn't run. Run `agent-lens collect` (or the scheduled unit) first.
-- **`malformed=N` in the report** — N JSONL lines failed to parse and were skipped; the rest ingested.
-  A handful is normal (partial last lines). A spike suggests a corrupt archive file — inspect it; the
-  archive can be re-synced from source since collection is append-only.
-- **A "phantom" empty session appears** — non-transcript `.jsonl` files under `projects/` (e.g. a
-  Workflow `journal.jsonl`, whose lines carry no `uuid`) create a zero-event stub; `rebuildDerived`
-  prunes any session with `event_count = 0`. If one persists, run `agent-lens ingest --full`.
-- **Subagent shows no parent (stale linkage)** — can happen transiently if a parent and its child
-  transcript arrive in different runs; the dirty-set linkage expansion (ADR-010) fixes it on the run that
-  ingests the second half. To force resolution now, run `agent-lens ingest --full`.
-- **`database is locked` / `SQLITE_BUSY`** — another writer holds the lock, such as a second ingest
-  run. The server only reads, so it never causes this; wait for the other run and retry.
-- **Re-ingest didn't pick up a parser/classifier change** — expected; use `agent-lens ingest --full`.
-- **Recover from anything** — delete `data/agent-lens.db*` and run `agent-lens ingest --full`; the archive
-  rebuilds the DB completely.
+| Symptom | Cause and fix |
+|---|---|
+| `archive not found` | Collect hasn't run. Run `agent-lens collect` first |
+| `malformed=N` | N lines didn't parse and were skipped. A few is normal (a partial last line). A spike suggests a corrupt archive file; inspect it |
+| An empty "phantom" session | A non-transcript `.jsonl` under `projects/` (such as a workflow `journal.jsonl`) made an empty stub. Ingest removes sessions with no events; if one stays, run `--full` |
+| A subagent has no parent | The parent and child arrived in different runs. The run that ingests the second one links them, or run `--full` now |
+| `database is locked` or `SQLITE_BUSY` | Another writer, such as a second ingest, holds the lock. The server only reads. Wait and retry |
+| A parser or classifier change didn't apply | Expected for incremental runs. Run `--full` |
+| Anything else | Delete `<dataDir>/agent-lens.db*` and run `agent-lens ingest --full`. The archive rebuilds everything |

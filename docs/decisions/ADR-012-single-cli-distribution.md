@@ -1,4 +1,4 @@
-# ADR-012 — Single bundled `agent-lens` CLI for npm distribution
+# ADR-012: Single bundled `agent-lens` CLI for npm distribution
 
 - Status: Accepted
 - Date: 2026-07-01
@@ -23,9 +23,9 @@ subcommands (`collect`, `ingest`, `serve`, `watch`, `metrics`, `schedule`). Keep
 (`core`, `ingest`, `server`, `web`) as private workspace packages.
 
 - **Bundle with tsup/esbuild.** The pure-JS workspace code (`@agent-lens/*`) and the tiny `cac` parser
-  are **inlined** into one `dist/agent-lens.js` — so their `workspace:*` versions never need publishing.
+  are **inlined** into one `dist/agent-lens.js`, so their `workspace:*` versions never need publishing.
   Only the framework deps stay **external** runtime dependencies: `fastify`, `@fastify/static`,
-  `chokidar`. (Originally also `better-sqlite3`, the one native module —
+  `chokidar`. (Originally also `better-sqlite3`, the one native module;
   [ADR-029](ADR-029-node-sqlite-driver.md) replaced it with the `node:sqlite` builtin, so the bundle
   now has no native dependency at all. That ADR also records why the bundle must keep the `node:`
   prefix on builtin imports.)

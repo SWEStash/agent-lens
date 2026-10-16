@@ -1,4 +1,4 @@
-# ADR-003 — Agent-agnostic normalized data model in SQLite + FTS5, adapter pattern
+# ADR-003: Agent-agnostic normalized data model in SQLite + FTS5, adapter pattern
 
 - Status: Accepted
 - Date: 2026-06-25
@@ -16,7 +16,7 @@ queries over time; the browser needs full-text search over transcripts. Single l
 
   > **Amended by [ADR-029](ADR-029-node-sqlite-driver.md) (2026-08).** The driver is now Node's
   > built-in `node:sqlite`, removing the project's only compiled dependency. Everything else in this
-  > ADR is unchanged: same file, same schema, same FTS5, same synchronous single-writer model — the
+  > ADR is unchanged: same file, same schema, same FTS5, same synchronous single-writer model: the
   > on-disk format is identical, so existing databases are read in place with no migration.
 - **Model:** normalized, **agent-agnostic** hierarchy `agents → projects → sessions → turns → events`,
   with `tool_calls`, `token_usage`, `classifications`, and `ingest_state`. Every transcript line is an

@@ -1,4 +1,4 @@
-# ADR-023 — Canonical project roots
+# ADR-023: Canonical project roots
 
 - Status: Accepted
 - Date: 2026-07-23
@@ -6,8 +6,8 @@
 
 ## Context
 
-A project row is minted per distinct session cwd (`UNIQUE (agent_id, path)`). Any session — or any
-*spawned subagent* whose cwd points at a subdirectory — therefore mints a phantom "project"
+A project row is minted per distinct session cwd (`UNIQUE (agent_id, path)`). Any session (or any
+*spawned subagent* whose cwd points at a subdirectory) therefore mints a phantom "project"
 (`repo/packages/x`, `repo/diagrams`, `ws/.local`, `repo/evals`). In the real archive, 8 of 38
 project rows were such phantoms, polluting every project filter dropdown; two of them
 (`…/evals`, `…/skills`) held *only* sidechain subagent sessions, so they also looked permanently
@@ -26,23 +26,23 @@ Naive fixes fail on real data:
 **A re-runnable, global `canonicalizeProjects` step in ingest resolves every project path to its
 canonical root and merges the rows** (`packages/ingest/src/canonicalize.ts`), ordered:
 
-1. **Nearest git root wins** — walk up from the cwd (inclusive) looking for `.git` (dir *or* file,
+1. **Nearest git root wins**: walk up from the cwd (inclusive) looking for `.git` (dir *or* file,
    so worktrees count), never testing `$HOME` or above (a dotfiles repo in `~` must not swallow
    every non-repo path). Nearest match keeps nested repos distinct from their workspace.
-2. **Fallback: nearest observed ancestor project**, resolved to *its* canonical root — gated:
+2. **Fallback: nearest observed ancestor project**, resolved to *its* canonical root: gated:
    applies when the path still exists on disk, **or** when the project holds no main session.
-   A vanished directory could be a deleted independent repo or a workspace subdir — we cannot
-   tell — so a project a human actually opened (≥1 main session) keeps its identity, while
+   A vanished directory could be a deleted independent repo or a workspace subdir, we cannot
+   tell, so a project a human actually opened (≥1 main session) keeps its identity, while
    subagent-only landing spots (spawn cwds, dead eval/worktree dirs) always fold.
 3. **Neither → keep the raw cwd** (`$HOME` itself, deleted human-opened projects).
 
 Merging repoints `sessions.project_id` and `file_changes.project_id`, mints the canonical row if
 that cwd was never itself observed, refreshes `first_seen`/`last_seen` from the merged session set,
-and deletes session-less project rows — sweeping true orphans out of every dropdown as a class.
+and deletes session-less project rows: sweeping true orphans out of every dropdown as a class.
 
-The step runs on **every** ingest (and `agent-lens metrics`), before classify/detect/file-changes —
+The step runs on **every** ingest (and `agent-lens metrics`), before classify/detect/file-changes:
 those passes consume the session's project path. The table is a few dozen rows, so a global pass is
-effectively free, and an already-ingested DB heals on its next incremental run — no `--full`
+effectively free, and an already-ingested DB heals on its next incremental run: no `--full`
 required.
 
 ## Consequences
@@ -50,7 +50,7 @@ required.
 **Good**
 
 - Real archive: 38 → 30 projects; all 8 phantoms fold into the projects the user expects; the two
-  sidechain-only entries disappear from dropdowns entirely. Zero server/web changes — every filter
+  sidechain-only entries disappear from dropdowns entirely. Zero server/web changes: every filter
   is fixed at the source.
 - `write_outside_project` (SA08) becomes *more* correct: with the repo root as the project, a
   session cwd'd in `repo/sub` writing `repo/other` no longer false-flags.
@@ -60,7 +60,7 @@ required.
 
 - **Filesystem-dependent**: rule 1/2 consult the disk at ingest time, so results depend on the host
   (fine for a local-first tool; the committed corpus's fake paths exist nowhere, keeping CI
-  deterministic). Moving/deleting a repo changes future resolution — historical rows persist until
+  deterministic). Moving/deleting a repo changes future resolution: historical rows persist until
   re-derived.
 - A deleted *sidechain-only* independent repo (if one ever existed) would fold into an observed
   ancestor. Judged acceptable: it is indistinguishable from a spawn cwd, and nothing human-authored
@@ -76,20 +76,20 @@ required.
   every filter join for fidelity nobody consumes; the raw cwd survives in `events.raw_json` anyway.
 - **Pure ancestor folding / pure git detection**: each fails on real data as described in Context.
 
-## Amendment — 2026-10-15: which cwd a session is keyed on
+## Amendment: 2026-10-15: which cwd a session is keyed on
 
 A session's project is keyed on the **last** cwd it used. A session opened at a repo root that ended
 in a subdirectory was folded back into the repo by rule 1 while the repo existed. Once the repo was
 deleted, a `--full` rebuild kept the subdirectory as its own project (rule 2's gate), so the store
-and its rebuild disagreed. On the real archive that was one byteview session, opened in `byteview`
-and ended in `byteview/.local/plans`, which gained 14 `write_outside_project` findings on rebuild.
+and its rebuild disagreed. On the real archive that was one session, opened in `<repo>` and ended
+in `<repo>/.local/plans`, which gained 14 `write_outside_project` findings on rebuild.
 
 **`sessionCwd(first, last)`**: when the last cwd no longer exists and the session was opened in one
 of its ancestors, the launch directory is used instead. The archive keeps that evidence (the first
-line's cwd; for the byteview session it is also the directory the transcript is filed under), so
+line's cwd; for that session it is also the directory the transcript is filed under), so
 nothing new is stored. A rebuild now gives the same answer whether or not the repo is still on disk.
 
 Rejected: keying every session on its first cwd. Of 17,982 archived sessions, 44 change cwd and 6
 of those resolve to a different git root. The other 5 include sessions that are right today and
-that rule would move, such as one opened in `relevamiento-comunidades-fe` and spent in its sibling
-`-data-be`.
+that rule would move, such as one opened in a frontend repo and spent in its sibling
+backend repo.

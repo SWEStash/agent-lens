@@ -1,4 +1,4 @@
-# ADR-016 — npm publishing + automated versioning (semantic-release)
+# ADR-016: npm publishing + automated versioning (semantic-release)
 
 - Status: Accepted
 - Date: 2026-07-01
@@ -9,7 +9,7 @@
 ## Context
 
 The `@swestash/agent-lens` CLI (`packages/cli`; published under the `@swestash` scope after the
-unscoped `agent-lens` name collided with an existing package — the installed command stays
+unscoped `agent-lens` name collided with an existing package: the installed command stays
 `agent-lens`) is the single publishable artifact (ADR-012): a tsup bundle of
 the workspace code with only the native/framework runtime deps (`better-sqlite3`, `fastify`,
 `@fastify/static`, `chokidar`) kept external so `npm install` resolves platform-correct binaries.
@@ -25,11 +25,11 @@ Two facts shaped the decision:
    (`feat(cli)!: replace schedule with unified service command`). Letting semantic-release cut the
    first release would therefore produce `1.0.0`.
 2. **better-sqlite3 12.11.1 ships Node-24 prebuilds** (`node-v137`) for linux glibc+musl, darwin, and
-   win32 across x64/arm64 — full coverage for our `engines.node >=24`. It must stay **external** in
+   win32 across x64/arm64: full coverage for our `engines.node >=24`. It must stay **external** in
    the tsup bundle so npm resolves the right binary at install time.
 
    > **Superseded by [ADR-029](ADR-029-node-sqlite-driver.md) (2026-08).** There is no native module
-   > any more — SQLite is `node:sqlite`, a Node builtin — so this consideration no longer constrains
+   > any more (SQLite is `node:sqlite`, a Node builtin) so this consideration no longer constrains
    > the release. `better-sqlite3` is gone from the bundle's `external` list, npm installs run no
    > lifecycle scripts, and the prebuild/node-gyp fallback described below no longer exists. The
    > global-install tarball smoke remains a release gate; it just no longer exercises a prebuild.
@@ -39,7 +39,7 @@ Two facts shaped the decision:
 **Hand-cut the `0.1.0` baseline, let semantic-release govern every release after it.**
 
 - `packages/cli` is published at **`0.1.0`** as the initial release (the pre-release history,
-  including the breaking commit, *is* that baseline — nothing was published for it to break). A
+  including the breaking commit, *is* that baseline: nothing was published for it to break). A
   `v0.1.0` git tag marks the baseline commit so semantic-release never computes a from-scratch
   (→ `1.0.0`) release.
 - **semantic-release** (`.releaserc.json`, run from the repo root with `pkgRoot: packages/cli`) then
@@ -53,7 +53,7 @@ Two facts shaped the decision:
   > rejects, so the release job broke once the branch was protected. Both plugins were dropped.
   > Consequences, still in force: `packages/cli/package.json` holds the `0.0.0-development`
   > placeholder (the published tarball is stamped by `@semantic-release/npm` at pack time),
-  > `CHANGELOG.md` is a pointer to the GitHub Releases page — now the canonical changelog — and
+  > `CHANGELOG.md` is a pointer to the GitHub Releases page, now the canonical changelog, and
   > the git tag remains the only in-repo record of a version, pushed by semantic-release core
   > rather than the removed plugin. See [ADR-027](ADR-027-runtime-diagnostics-surface.md) for how
   > the app resolves its own version given this.
@@ -67,7 +67,7 @@ Two facts shaped the decision:
 ### Packaging
 
 `publishConfig.access: public`; `files` ships `dist`, `web`, `README.md`, `LICENSE`. A CLI-scoped
-`README.md` (self-contained, absolute GitHub links) and a copied `LICENSE` were added — both were
+`README.md` (self-contained, absolute GitHub links) and a copied `LICENSE` were added, both were
 listed in `files` but absent. `copy-web.mjs` now strips `web/snapshot/` (the static Pages demo
 fixtures) from the packaged `web/`, since the runtime server serves the live API, never those files.
 
@@ -75,7 +75,7 @@ fixtures) from the packaged `web/`, since the runtime server serves the live API
 
 - First publish is a **watched, manual** `npm publish` of `0.1.0` (standard for a first-ever release);
   automation takes over from the next releasable commit. The `v0.1.0` tag and the published `0.1.0`
-  must stay in sync — publishing `0.1.0` is required, not optional, or semantic-release will skip
+  must stay in sync: publishing `0.1.0` is required, not optional, or semantic-release will skip
   straight to `0.2.0`/`0.1.1` on npm.
 - Honest semver: no polluting custom `releaseRules` (which would make *all* future breaking changes
   minor) and no git-history rewrite.
@@ -83,7 +83,7 @@ fixtures) from the packaged `web/`, since the runtime server serves the live API
   **provenance** (`id-token: write` + `NPM_CONFIG_PROVENANCE`).
 - ~~**better-sqlite3 fallback:** if a platform/ABI has no prebuilt binary, `npm install` compiles it
   from source via node-gyp (needs a C++ toolchain + Python).~~ Removed by
-  [ADR-029](ADR-029-node-sqlite-driver.md) — there is no native module, so no fallback and no
+  [ADR-029](ADR-029-node-sqlite-driver.md): there is no native module, so no fallback and no
   toolchain requirement. The global tarball smoke is still a release gate, but for a different
   reason: it is the only check that exercises the tsup **bundle** rather than per-package `tsc`
   output.
@@ -91,7 +91,7 @@ fixtures) from the packaged `web/`, since the runtime server serves the live API
 ## Alternatives considered
 
 - **Let semantic-release cut the first release.** Simplest mechanically, but the breaking commit
-  forces `1.0.0` — contradicts the pre-1.0 intent.
+  forces `1.0.0`: contradicts the pre-1.0 intent.
 - **Reword the unpushed `feat(cli)!` to a plain `feat`, seed `v0.0.0`, let semantic-release publish
   `0.1.0`.** Clean semver and fully automated, but rewrites already-made (unpushed) commits; rejected
   to preserve the authored history.

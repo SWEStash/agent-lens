@@ -1,4 +1,4 @@
-# ADR-010 — Incremental, volume-scalable ingest: stat short-circuit, dirty-session rebuild, streaming
+# ADR-010: Incremental, volume-scalable ingest: stat short-circuit, dirty-session rebuild, streaming
 
 - Status: Accepted
 - Date: 2026-06-29
@@ -14,9 +14,9 @@ delta:
 
 1. **I/O.** The skip check read **and hashed** every file before comparing (`index.ts`), even though
    `ingest_state` already stored `size` and `mtime_ms`. A no-op run re-read the entire mirror **and**
-   every `.versions/<ts>/` snapshot — an unbounded, ever-growing set (ADR-002).
+   every `.versions/<ts>/` snapshot: an unbounded, ever-growing set (ADR-002).
 2. **Derived rebuild.** `rebuildDerived` deleted *all* turns, recomputed turns for *every* session, and
-   ran full-table `UPDATE`s for turn-id propagation, subagent linkage, and session aggregates —
+   ran full-table `UPDATE`s for turn-id propagation, subagent linkage, and session aggregates:
    regardless of what changed.
 3. **Classification.** `classify` (ADR-004) reloaded the whole dataset into in-memory JS maps and
    re-derived every session each run.
@@ -41,12 +41,12 @@ unchanged (drop + re-read archive), so it remains the correctness backstop and m
 2. **Dirty-session derived rebuild (impacts 2, 3).** The ingest loop collects the set of session ids
    whose files were actually (re)ingested this run. `rebuildDerived(db, dirty)` and `classify(db, …)`
    restrict every statement to that set (materialized as a `temp._dirty` table; no SQLite driver can
-   bind an array to a single parameter — verified still true of `node:sqlite` in
-   [ADR-029](ADR-029-node-sqlite-driver.md) — and a temp table keeps the joins index-friendly at any
+   bind an array to a single parameter, verified still true of `node:sqlite` in
+   [ADR-029](ADR-029-node-sqlite-driver.md), and a temp table keeps the joins index-friendly at any
    set size).
 
-   Because subagent linkage is **cross-session** — a parent session's `Task`/`Agent` `tool_call` links
-   to a child sidechain session that lives in a *separate* file — the dirty set is first **fixpoint-
+   Because subagent linkage is **cross-session** (a parent session's `Task`/`Agent` `tool_call` links
+   to a child sidechain session that lives in a *separate* file) the dirty set is first **fixpoint-
    expanded** to its linkage neighborhood: a dirty parent pulls in the children it spawned, and a dirty
    child pulls in its spawner parent. This keeps `sessions.parent_session_id` / `parent_turn_id` correct
    even when parent and child transcripts arrive in **different** ingest runs. `rebuildDerived` returns
@@ -83,5 +83,5 @@ unchanged (drop + re-read archive), so it remains the correctness backstop and m
   O(total) step. Rejected once fixpoint expansion proved small and self-contained.
 - **Always stream every file.** Uniform code, but adds per-file overhead to the common small-file case
   for no memory benefit. Rejected in favor of an 8 MB threshold.
-- **Track dirty sessions in a persisted column/table.** Unnecessary — the touched-session set is a
+- **Track dirty sessions in a persisted column/table.** Unnecessary: the touched-session set is a
   byproduct of the ingest loop; each `.jsonl` maps to exactly one session id.

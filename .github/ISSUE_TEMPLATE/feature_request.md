@@ -10,4 +10,4 @@ labels: enhancement
 **What would you like Agent Lens to do?**
 
 
-**Anything else** — how you work around it now, related issues, or a rough sketch of the UI/CLI.
+**Anything else**: how you work around it now, related issues, or a rough sketch of the UI/CLI.

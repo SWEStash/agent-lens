@@ -1,4 +1,4 @@
-# ADR-009 — Data retention window and at-rest encryption stance
+# ADR-009: Data retention window and at-rest encryption stance
 
 - Status: Accepted
 - Date: 2026-06-26
@@ -11,14 +11,14 @@ ADR-005 deferred a retention policy as an open item: the `data/` store grows unb
 sensitive as the original transcripts. It now holds ~448 MB (≈270 MB DB + ≈178 MB archive) for one
 source. Three things accumulate, with very different roles:
 
-- `data/archive/<label>/projects/` — the **mirror**. This is the durable raw archive and the source
+- `data/archive/<label>/projects/`: the **mirror**. This is the durable raw archive and the source
   of truth (ADR-001); never deleted (no rsync `--delete`, ADR-002). It is the dataset we *want* to
   retain.
-- `data/archive/<label>/.versions/<TS>/` — divergence/compaction **snapshots** (ADR-002). Created only
-  on real divergence/compaction (rare; **zero so far** on this machine). Unbounded over years, and —
-  unlike the mirror — safely discardable once old, because Stage 2 has already deduped their events
+- `data/archive/<label>/.versions/<TS>/`: divergence/compaction **snapshots** (ADR-002). Created only
+  on real divergence/compaction (rare; **zero so far** on this machine). Unbounded over years, and,
+  unlike the mirror, safely discardable once old, because Stage 2 has already deduped their events
   into the DB by `uuid`.
-- `data/agent-lens.db` — a **derived projection** (ADR-001/003), rebuildable any time with
+- `data/agent-lens.db`: a **derived projection** (ADR-001/003), rebuildable any time with
   `pnpm ingest --full`.
 
 We need a policy before the store grows large, without compromising the local-only privacy NFR.
@@ -33,9 +33,9 @@ We need a policy before the store grows large, without compromising the local-on
 3. **Do not prune the DB independently.** It is derived: if pruning ever changes what's available,
    `pnpm ingest --full` re-derives the DB from the archive. No separate DB-retention mechanism.
 4. **Pruning stays manual this phase.** `.versions/` is empty, so a scheduled job would be premature;
-   run `prune.sh` occasionally. (A systemd timer is a trivial follow-up — see Revisit triggers.)
+   run `prune.sh` occasionally. (A systemd timer is a trivial follow-up: see Revisit triggers.)
 5. **At-rest encryption: volume-level, by recommendation, no code.** Agent Lens does not encrypt the
-   store itself. Recommend placing `data/` on an encrypted volume — LUKS/dm-crypt on Linux, FileVault
+   store itself. Recommend placing `data/` on an encrypted volume: LUKS/dm-crypt on Linux, FileVault
    on macOS. The store stays gitignored and loopback-only (ADR-005).
 6. **Containerization: deferred.** A strictly-local single-user tool that reads `~/.claude` and serves
    on `127.0.0.1` gains little from a container and complicates host-filesystem access (KISS/YAGNI).
@@ -47,7 +47,7 @@ We need a policy before the store grows large, without compromising the local-on
 - `prune.sh`'s dry-run default and path guard make accidental data loss hard.
 - No new runtime dependency and no encryption code to maintain; at-rest protection is delegated to
   the OS/filesystem, which is the right layer for a local single-user tool.
-- Trade-off: volume-level encryption depends on the user actually configuring it — documented in
+- Trade-off: volume-level encryption depends on the user actually configuring it: documented in
   `docs/USAGE.md`, not enforced by the tool.
 
 ## Alternatives considered
@@ -55,7 +55,7 @@ We need a policy before the store grows large, without compromising the local-on
 - **App-level DB encryption (SQLCipher).** Encrypts the DB at rest transparently, but requires a
   SQLite driver built against SQLCipher, adds a key-management burden, and offers no protection for
   the raw archive files. (The cost went *up* with [ADR-029](ADR-029-node-sqlite-driver.md): the
-  built-in `node:sqlite` links Node's own SQLite, so this would mean reintroducing a native module.) Rejected — wrong cost/benefit for a local tool; full-volume
+  built-in `node:sqlite` links Node's own SQLite, so this would mean reintroducing a native module.) Rejected: wrong cost/benefit for a local tool; full-volume
   encryption covers archive + DB + WAL uniformly.
 - **Prune the mirror too (age-based).** Would cap total size hardest, but destroys the durable archive
   that ADR-001 exists to provide and that protects against parser bugs. Rejected.

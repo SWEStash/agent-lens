@@ -1,4 +1,4 @@
-# ADR-025 — One data-fetching and URL-state convention for the SPA
+# ADR-025: One data-fetching and URL-state convention for the SPA
 
 - Status: Accepted
 - Date: 2026-07-25
@@ -11,7 +11,7 @@ of the same machinery:
 
 - **Loading/error state.** Nine views declared `data`/`loading`/`error` as three `useState` slots and
   ran the same effect: set loading, clear error, fetch, set data or set error, clear loading. Each
-  also carried its own copy of the `Loading…` and error markup, including the ARIA roles — so an
+  also carried its own copy of the `Loading…` and error markup, including the ARIA roles, so an
   accessibility fix had to be applied nine times, and two views had already drifted.
 - **The same race, nine times.** None of the copies guarded against out-of-order responses: change a
   filter twice quickly and a slow earlier request could overwrite the newer rows, or replace them
@@ -31,7 +31,7 @@ they can be pinned.**
 
 - `useAsync(load, deps, opts)` owns the loading/error state machine. `load` may return `null` for
   "nothing to fetch" (a route param that isn't there yet). `opts.reset` clears the previous payload
-  on a dep change — detail pages want that (don't show the outgoing record), list pages want the
+  on a dep change: detail pages want that (don't show the outgoing record), list pages want the
   opposite (keep the old rows under a loading line). The effect's cleanup marks the in-flight request
   stale, which is where the out-of-order fix lives, once.
 - `useFetch(path, opts)` is the one-GET case; `useLookup(path, fallback, deps)` is the

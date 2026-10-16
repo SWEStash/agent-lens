@@ -1,4 +1,4 @@
-# ADR-033 — Time analytics bucket by event time, and localize in the browser
+# ADR-033: Time analytics bucket by event time, and localize in the browser
 
 - Status: Accepted
 - Date: 2026-08-22
@@ -7,13 +7,13 @@
 
 ## Context
 
-The dashboard answers *how much* — tokens, cost, errors, counts — but nothing about *when*. Adding
+The dashboard answers *how much* (tokens, cost, errors, counts) but nothing about *when*. Adding
 that raised two questions the existing aggregates had never had to face.
 
 **Bucketing.** Every series today groups on `sessions.started_at`. That is correct for "how many
 sessions started this week" and quietly wrong for "when do tokens get spent": a main session runs at
 a median 92% idle and routinely spans several hours, so its entire spend lands in the hour it began.
-`token_usage` carries no timestamp of its own — its primary key is `event_uuid` — so the alternative
+`token_usage` carries no timestamp of its own, its primary key is `event_uuid`, so the alternative
 is a join to `events`.
 
 **Timezone.** Every stored timestamp is ISO-8601 UTC and `strftime` with no modifier is UTC, so a
@@ -22,8 +22,8 @@ next UTC day corrupts every per-day and per-hour number.
 
 ## Decision
 
-**1. `burn_hours` buckets by event time.** It joins `events e ON e.uuid = t.event_uuid` — a primary
-key lookup — and groups on `strftime('%Y-%m-%dT%H', e.timestamp)`. The other two series in the
+**1. `burn_hours` buckets by event time.** It joins `events e ON e.uuid = t.event_uuid`, a primary
+key lookup, and groups on `strftime('%Y-%m-%dT%H', e.timestamp)`. The other two series in the
 payload (`latency`, `review`) stay on the session-start bucket, because they are per-turn measures
 that follow the dashboard's global bucket control.
 
@@ -44,7 +44,7 @@ that follow the dashboard's global bucket control.
   be baked at whichever offset the author exported from.
 - **Payload size is bounded by hours-with-usage × sources, not by rows.** The full 1 GB corpus (90
   days) produces 994 rows / 71 KB. If a much longer range ever pushes this past ~1 MB, the fix is an
-  explicit, documented coarsening — never a silent cap.
+  explicit, documented coarsening: never a silent cap.
 - **A single failing query blanks all four tiles**, the price of one endpoint. Acceptable because
   they already share one visibility gate: the dashboard skips the request entirely when every Part II
   tile is hidden.

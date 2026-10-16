@@ -1,4 +1,4 @@
-# ADR-024 — Shared contract types package
+# ADR-024: Shared contract types package
 
 - Status: Accepted
 - Date: 2026-07-24
@@ -19,14 +19,14 @@ in `schema.ts` → `db.ts` type-checks clean and only breaks the UI at runtime; 
 mechanism behind the schema→db→api→web co-churn (those four are among the highest-churn files), and
 the codebase's top type-safety issue.
 
-A related bug lives in the source-of-truth types themselves: `SessionRow` had drifted stale — it was
+A related bug lives in the source-of-truth types themselves: `SessionRow` had drifted stale: it was
 missing `spawn_parent_id` and `workflow_run_id`, two columns added to the `sessions` DDL (schema v6+).
 A contributor typing an insert against it would silently drop two linkage columns.
 
 ## Decision
 
 **Introduce a `@agent-lens/contracts` leaf package that owns the cross-boundary DB row shapes as pure
-types** — zero runtime, zero `node:` imports — and have every package share it instead of re-declaring.
+types** (zero runtime, zero `node:` imports) and have every package share it instead of re-declaring.
 
 - `packages/contracts/src/index.ts` holds the nine DDL-mirror row interfaces (`SourceRow`,
   `ProjectRow`, `SessionRow`, `TurnRow`, `EventRow`, `TokenUsageRow`, `ToolCallRow`, `SkillRow`,
@@ -34,7 +34,7 @@ types** — zero runtime, zero `node:` imports — and have every package share 
   `workflow_run_id`) as part of the move.
 - `core/src/types.ts` **re-exports** the row shapes from contracts (`export type { … } from
   "@agent-lens/contracts"`) and keeps the ingest **adapter-seam** types (`SourceAdapter`, `SourceFile`,
-  `ParsedLine`, `SessionMeta`, `ToolResultPatch`) — those are an ingest boundary, not consumed by web.
+  `ParsedLine`, `SessionMeta`, `ToolResultPatch`): those are an ingest boundary, not consumed by web.
   So `ingest`/`server` imports stay on `@agent-lens/core` unchanged (lowest blast radius).
 - `web` depends on `@agent-lens/contracts` and consumes the shapes via `import type`, so nothing but
   type declarations enters the bundle.
@@ -48,7 +48,7 @@ component (SDP).
 **Good**
 
 - One source of truth for the row shapes; a schema change now type-errors at every consumer that
-  hasn't been updated, including `web` — closing the silent-drift gap.
+  hasn't been updated, including `web`: closing the silent-drift gap.
 - `web` gets a browser-safe import target without the Node-barrel problem, and without a bundler hack.
 - Fixing `SessionRow` drift at the move means the typed server query layer (built next) rests on
   correct shapes.
@@ -61,15 +61,15 @@ component (SDP).
 - The API **response** shapes (`SessionSummary`, `DashOverview`, …) are still hand-declared in
   `web/api.ts` for now; only the primitive row shapes and shared unions (`Severity`) are unified in
   this ADR. Migrating the response contract is incremental follow-on work as the server adopts explicit
-  return types — deferred to avoid a large, risky change to dynamically-built server responses.
+  return types: deferred to avoid a large, risky change to dynamically-built server responses.
 
 ## Alternatives considered
 
 - **Types-only subpath export from `core`** (add a `./types` export, consume via `import type`): no new
   package, but `web` then depends on `@agent-lens/core` and relies on type-only erasure to keep Node
-  code out of the bundle — one accidental value import re-introduces the problem. A dedicated leaf makes
+  code out of the bundle: one accidental value import re-introduces the problem. A dedicated leaf makes
   the node-free guarantee structural, not a convention.
 - **Keep web's hand-typed contract, dedupe only within web**: lowest effort, but leaves the
-  server↔web drift risk — the actual defect — unaddressed.
+  server↔web drift risk, the actual defect, unaddressed.
 - **Generate the types from the DDL**: heavier tooling than a few dozen hand-kept rows warrant today;
   the shared package plus a schema-vs-contract test (future) covers the same risk more simply.
