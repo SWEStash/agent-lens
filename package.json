@@ -17,6 +17,7 @@
     "serve": "pnpm --filter @agent-lens/server start",
     "web:dev": "pnpm --filter @agent-lens/web dev",
     "validate": "node scripts/validate.mjs",
+    "bench": "node scripts/bench.mjs",
     "build-corpus": "scripts/build-corpus.sh",
     "sandbox": "scripts/sandbox.sh"
   },

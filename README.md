@@ -313,6 +313,8 @@ This is the whole point of the tool, so it's a hard constraint, not a feature fl
   ingest (incremental vs `--full`, the compression migration, recovery).
 - **[docs/VALIDATION.md](docs/VALIDATION.md)** — how metric correctness is verified end to end: the
   five validation layers, the invariant suite, the redaction oracle, and the latest results.
+- **[docs/PERFORMANCE.md](docs/PERFORMANCE.md)** — how the read path is benchmarked (`pnpm bench`),
+  the query-plan guard that runs in CI, and the latest baseline.
 - **[docs/RELEASING.md](docs/RELEASING.md)** — how versioning and npm releases work: conventional
   commits, the semantic-release pipeline, and the one-time publish-token setup.
 - **[docs/decisions/](docs/decisions/)** — Architecture Decision Records (tracked in git).
@@ -340,8 +342,8 @@ scripts/          dev + maintenance helpers: sources.mjs (core shim) · prune.sh
                   check-snapshot-links.mjs · screenshots.mjs
 scripts/lib/      shared code for the above (not runnable): sandbox.mjs — the corpus-server launch
                   recipe used by export-snapshot.mjs and screenshots.mjs
-docs/             ARCHITECTURE.md · USAGE.md · INGEST-RUNBOOK.md · VALIDATION.md · RELEASING.md ·
-                  DETECTOR-CHANGELOG.md · decisions/ (ADRs)
+docs/             ARCHITECTURE.md · USAGE.md · INGEST-RUNBOOK.md · VALIDATION.md · PERFORMANCE.md ·
+                  RELEASING.md · DETECTOR-CHANGELOG.md · decisions/ (ADRs)
 test/fixtures/    committed redacted + synthetic validation corpus (no real data)
 data/             archive/<label>/ + agent-lens.db  (contents gitignored)
 ```

@@ -7,6 +7,7 @@ import { createHash } from "node:crypto";
 import type { StatementSync } from "node:sqlite";
 import { packRaw, runNamed, transaction, type SourceAdapter, type SourceFile, type TurnRow } from "@agent-lens/core";
 import { isCommandResultCarrier } from "@agent-lens/transcript-format";
+import { sessionCwd } from "./canonicalize.js";
 import { type DB } from "./db.js";
 import { createDirtySet } from "./dirtyset.js";
 import { ARG_TRAILERS, maskDynamic, maskKnownValues, mergeSlots, type Slot } from "./skillslots.js";
@@ -146,6 +147,16 @@ function durationMs(start: string | null, end: string | null): number | null {
   return Math.max(0, b - a);
 }
 
+/** Whether an event opens a turn. A turn starts at a user prompt with real text. Sidechain (subagent)
+ * sessions are entirely sidechain — verified no file mixes main+sidechain events — so their task
+ * prompt starts a turn too; we don't filter on is_sidechain here. Tool-result carrier messages have
+ * empty text, and a slash command's output rides on a user line without being a prompt (`/login`
+ * logs its stdout with the same timestamp as the command). */
+export function isTurnStart(e: { type: string; is_meta: number; text: string | null }): boolean {
+  const body = e.text?.trim() ?? "";
+  return e.type === "user" && e.is_meta === 0 && body.length > 0 && !isCommandResultCarrier(body);
+}
+
 /** Group a session's events into turns and return the turns + a uuid→turn_id map. */
 export function buildTurns(
   sessionId: string,
@@ -167,14 +178,7 @@ export function buildTurns(
   let seq = 0;
 
   for (const e of rows) {
-    // A turn starts at a user prompt with real text. Sidechain (subagent) sessions are entirely
-    // sidechain — verified no file mixes main+sidechain events — so their task prompt starts a turn
-    // too; we don't filter on is_sidechain here. Tool-result carrier messages have empty text, and a
-    // slash command's output rides on a user line without being a prompt (`/login` logs its stdout
-    // with the same timestamp as the command).
-    const body = e.text?.trim() ?? "";
-    const isPrompt = e.type === "user" && e.is_meta === 0 && body.length > 0 && !isCommandResultCarrier(body);
-    if (isPrompt) {
+    if (isTurnStart(e)) {
       cur = {
         id: `${sessionId}:${seq}`,
         session_id: sessionId,
@@ -258,7 +262,7 @@ function expandDirtyScope(db: DB, dirty: Set<string>): void {
  * scope so a changed/removed body can't leave a stale link. */
 function rebuildTurns(db: DB, scope: Scope, sessionIds: Array<{ id: string }>): void {
   const selEvents = db.prepare(
-    "SELECT uuid, seq, type, is_sidechain, is_meta, timestamp, model, text FROM events WHERE session_id = ?",
+    "SELECT uuid, seq, type, is_sidechain, is_meta, timestamp, model, text, turn_id FROM events WHERE session_id = ?",
   );
   const insTurn = db.prepare(
     `INSERT INTO turns (id, session_id, seq, user_event_uuid, prompt_preview, model, started_at, ended_at, duration_ms)
@@ -271,7 +275,12 @@ function rebuildTurns(db: DB, scope: Scope, sessionIds: Array<{ id: string }>): 
       const rows = selEvents.all(id) as any[];
       const { turns, eventTurn } = buildTurns(id, rows);
       for (const t of turns) runNamed(insTurn, t);
-      for (const [uuid, turnId] of eventTurn) updEventTurn.run(turnId, uuid);
+      // An events row is a few KB and setting turn_id resizes it, so each write rewrites the row.
+      // Most already hold the right id (--full inserts one, an earlier run set it): skip those.
+      for (const r of rows) {
+        const turnId = eventTurn.get(r.uuid) ?? null;
+        if (turnId !== r.turn_id) updEventTurn.run(turnId, r.uuid);
+      }
     }
   });
   tx();
@@ -500,33 +509,39 @@ export function rebuildDerived(db: DB, dirty?: Set<string> | null): Set<string> 
     andSelfId: incremental ? " AND sessions.id IN (SELECT id FROM _dirty)" : "",
   };
 
-  if (dirty != null) expandDirtyScope(db, dirty);
+  return transaction(db, () => {
+    if (dirty != null) expandDirtyScope(db, dirty);
 
-  // Null referencing turn_ids BEFORE deleting turns (FK: events/token_usage/tool_calls/sessions -> turns).
-  db.exec(`UPDATE events SET turn_id = NULL${scope.bySession}`);
-  db.exec(`UPDATE token_usage SET turn_id = NULL${scope.bySession}`);
-  db.exec(`UPDATE tool_calls SET turn_id = NULL${scope.bySession}`);
-  // Clear skill-version links for the scope so changed/removed bodies don't leave a stale link.
-  db.exec(`UPDATE tool_calls SET skill_id = NULL${scope.bySession}`);
-  db.exec(`UPDATE sessions SET parent_turn_id = NULL${scope.byId}`);
-  db.exec(`DELETE FROM turns${scope.bySession}`);
+    // events keep their turn_id across the turn delete below: the turns come back with the same ids,
+    // and rebuildTurns rewrites only the events whose turn changed. Deferring FKs to the outermost
+    // COMMIT allows the gap; a violation still fails that commit. The other tables are small, so
+    // their references are nulled BEFORE the delete as before (linkParents relies on parent_turn_id
+    // starting NULL).
+    db.exec("PRAGMA defer_foreign_keys = ON");
+    db.exec(`UPDATE token_usage SET turn_id = NULL${scope.bySession}`);
+    db.exec(`UPDATE tool_calls SET turn_id = NULL${scope.bySession}`);
+    // Clear skill-version links for the scope so changed/removed bodies don't leave a stale link.
+    db.exec(`UPDATE tool_calls SET skill_id = NULL${scope.bySession}`);
+    db.exec(`UPDATE sessions SET parent_turn_id = NULL${scope.byId}`);
+    db.exec(`DELETE FROM turns${scope.bySession}`);
 
-  const sessionIds = db.prepare(`SELECT id FROM sessions${scope.byId}`).all() as Array<{ id: string }>;
+    const sessionIds = db.prepare(`SELECT id FROM sessions${scope.byId}`).all() as Array<{ id: string }>;
 
-  rebuildTurns(db, scope, sessionIds);
-  linkSkillVersions(db, sessionIds);
-  linkParents(db, scope);
-  recomputeSessionAggregates(db, scope);
-  pruneOrphans(db, scope, incremental);
+    rebuildTurns(db, scope, sessionIds);
+    linkSkillVersions(db, sessionIds);
+    linkParents(db, scope);
+    recomputeSessionAggregates(db, scope);
+    pruneOrphans(db, scope, incremental);
 
-  if (incremental) {
-    const expanded = new Set(
-      (db.prepare("SELECT id FROM _dirty").all() as Array<{ id: string }>).map((r) => r.id),
-    );
-    db.exec("DROP TABLE IF EXISTS _dirty");
-    return expanded;
-  }
-  return null;
+    if (incremental) {
+      const expanded = new Set(
+        (db.prepare("SELECT id FROM _dirty").all() as Array<{ id: string }>).map((r) => r.id),
+      );
+      db.exec("DROP TABLE IF EXISTS _dirty");
+      return expanded;
+    }
+    return null;
+  })();
 }
 
 export interface IngestStatements {
@@ -630,9 +645,14 @@ export function ingestFile(
   meta: { size: number; mtimeMs: number; hash: string },
   now: string,
   stats: IngestStats,
+  opts: { provisionalTurns?: boolean } = {},
 ): void {
   const sessionMeta: Record<string, any> = {};
   let eventsInFile = 0;
+  // `provisionalTurns` (--full, foreign keys off): insert each event with the turn its line order
+  // implies, so rebuildTurns has to rewrite only where timestamps disagree (0.6% of real events).
+  let turnSeq = -1;
+  let firstCwd: string | null = null;
 
   const tx = transaction(db, () => {
     // Ensure the session row exists before any event references it (FK).
@@ -648,11 +668,19 @@ export function ingestFile(
         continue;
       }
       const parsed = adapter.parseLine(raw, file, seq++);
-      if (parsed.meta) Object.assign(sessionMeta, parsed.meta);
+      if (parsed.meta) {
+        if (parsed.meta.cwd && firstCwd === null) firstCwd = parsed.meta.cwd;
+        Object.assign(sessionMeta, parsed.meta);
+      }
       if (parsed.event) {
         // raw_json is stored gzip-compressed (ADR-011); compress at this single write chokepoint so
         // adapters stay agent-agnostic and emit a plain string.
-        const info = stmts.insEvent.run({ ...parsed.event, raw_json: packRaw(parsed.event.raw_json) });
+        let turnId = parsed.event.turn_id;
+        if (opts.provisionalTurns) {
+          if (isTurnStart(parsed.event)) turnSeq++;
+          turnId = turnSeq < 0 ? null : `${file.sessionId}:${turnSeq}`;
+        }
+        const info = stmts.insEvent.run({ ...parsed.event, turn_id: turnId, raw_json: packRaw(parsed.event.raw_json) });
         if (info.changes > 0) {
           stats.newEvents++;
           eventsInFile++;
@@ -680,11 +708,12 @@ export function ingestFile(
     // Persist session + project metadata (survives later skip runs).
     let projectId: string | null = null;
     if (sessionMeta.cwd) {
-      projectId = createHash("sha1").update(`${adapter.agentId}\0${sessionMeta.cwd}`).digest("hex").slice(0, 16);
+      const cwd = sessionCwd(firstCwd ?? sessionMeta.cwd, sessionMeta.cwd);
+      projectId = createHash("sha1").update(`${adapter.agentId}\0${cwd}`).digest("hex").slice(0, 16);
       stmts.upsertProject.run({
         id: projectId,
         agent_id: adapter.agentId,
-        path: sessionMeta.cwd,
+        path: cwd,
         encoded_dir: file.encodedDir || null,
         now,
       });

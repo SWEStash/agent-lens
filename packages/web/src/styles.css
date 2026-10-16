@@ -572,6 +572,11 @@ table.sessions { width: 100%; border-collapse: collapse; }
 .turn-body { display: flex; flex-direction: column; gap: 10px; }
 .turn-body:empty { display: none; }
 .event { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 12px; scroll-margin-top: 16px; }
+/* The largest sessions render ~16k nodes. Off-screen messages skip style and layout until scrolled
+   near: load drops from ~1.1 s to ~0.8 s. The nodes stay in the DOM, so #ev- links, find-in-session
+   and the browser's own find all still work. 90px is about the median message; `auto` keeps each
+   message's real height once it has rendered. */
+.transcript .event { content-visibility: auto; contain-intrinsic-size: auto 90px; }
 .event.ev-user { border-left: 3px solid var(--user); }
 .event.ev-assistant { border-left: 3px solid var(--assistant); }
 /* Flash a message that was deep-linked to (e.g. from a security finding row) so it's easy to spot.

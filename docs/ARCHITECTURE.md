@@ -70,8 +70,9 @@ install); adding a new agent is a new `SourceAdapter` in `ingest` with no schema
 
 **Concurrency.** SQLite runs in WAL mode (`PRAGMA journal_mode = WAL`). Ingest is the single writer (a
 oneshot that opens, writes, closes); the server is a long-lived reader opened read-only
-(`readOnly`, `query_only = ON`). WAL lets the reader and writer coexist; the dirty-session rebuild
-(ADR-010) shortens the writer's transaction and therefore the lock window the reader can observe.
+(`readOnly`, `query_only = ON`). WAL lets the reader and writer coexist. Each ingest run, `--full`
+included, is one write transaction, so the server keeps reading the previous state until the run
+commits and never sees a half-rebuilt store; a run that fails rolls back whole.
 
 ## 3. Ingest runtime (Stage 2)
 
@@ -81,7 +82,7 @@ rebuilds only the derived rows that could have changed. The archive is re-read, 
 ```mermaid
 flowchart TD
   START(["agent-lens-ingest"]) --> FULL{"--full?"}
-  FULL -->|yes| RESET["openRaw + resetSchema<br/>(drop & recreate — migration path)"]
+  FULL -->|yes| RESET["openRaw + resetSchema(bulk)<br/>(drop & recreate — migration path;<br/>4 events indexes + FTS left out)"]
   FULL -->|no| OPEN["openDb (apply schema if absent)"]
   RESET --> DISC
   OPEN --> DISC["adapter.discover()<br/>mirror + .versions/*"]
@@ -97,7 +98,9 @@ flowchart TD
   HASHCHK -->|no| INGEST["ingestFile: events / token_usage / tool_calls<br/>(ON CONFLICT dedupe) · raw_json gzipped<br/>upsert session + project · setState"]
   INGEST --> MARK["dirty.add(sessionId)"] --> LOOP
   LOOP --> REBUILD["rebuildDerived(dirty)<br/>expand linkage neighborhood → rebuild turns,<br/>turn_id, parent linkage, aggregates"]
-  REBUILD --> CLASSIFY["classify(expanded)<br/>category + complexity bands"]
+  REBUILD --> BULK{"--full?"}
+  BULK -->|yes| FINISH["finishBulkLoad<br/>build those indexes + FTS once"] --> CLASSIFY
+  BULK -->|no| CLASSIFY["classify(expanded)<br/>category + complexity bands"]
   CLASSIFY --> DETECT["detect(expanded)<br/>security findings (rules over tool_calls)"]
   DETECT --> ERRCLS["classifyErrors(expanded)<br/>error_type on failed tool_calls"]
   ERRCLS --> REPORT(["report: files/skipped/new_events, totals, cost, findings"]) 

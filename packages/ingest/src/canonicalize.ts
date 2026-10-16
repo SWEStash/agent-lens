@@ -51,6 +51,21 @@ function nearestGitRoot(path: string, home: string): string | null {
   return null;
 }
 
+/**
+ * The cwd a session's project is keyed on: the last one it used, unless that directory no longer
+ * exists and the session was opened in one of its ancestors. Then the launch dir decides. A vanished
+ * subdirectory can't be folded into its repo once the repo is gone too (rule 2 keeps a deleted dir
+ * with a main session as its own project), so a rebuild would otherwise split a session off a project
+ * the live store had folded it into while the repo existed. Only the ancestor case changes: a session
+ * that moved between sibling repos keeps the one it ended in.
+ */
+export function sessionCwd(first: string, last: string): string {
+  const f = strip(first);
+  const l = strip(last);
+  if (f === l || existsSync(l)) return last;
+  return l.startsWith(f === "/" ? "/" : f + "/") ? first : last;
+}
+
 export interface CanonicalizeResult {
   merged: number; // project rows folded into another
   removed: number; // session-less project rows deleted

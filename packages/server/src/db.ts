@@ -63,11 +63,17 @@ import { sessionUsage, splitOf, tokensOf, costOf, unpricedOf, USAGE_SUMS, type U
 
 export type DB = DatabaseSync;
 
+/** Page cache for the read connection, in KiB. */
+const READ_CACHE_KIB = 64 * 1024;
+
 export function openReadonly(file: string): DB {
   // `readOnly` also supplies the old `fileMustExist`: node:sqlite refuses to create a DB it may not
   // write. `query_only` is belt-and-braces on top — it also blocks writes through an ATTACHed handle.
   const db = new DatabaseSync(file, { readOnly: true });
   db.exec("PRAGMA query_only = ON");
+  // 64 MB of page cache instead of SQLite's 2 MB: the five dashboard aggregates run ~20% faster on
+  // the real store (1.6 s → 1.3 s) for ~75 MB of RSS. 256 MB gained only ~8% more.
+  db.exec(`PRAGMA cache_size = -${READ_CACHE_KIB}`);
   return db;
 }
 
