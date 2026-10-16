@@ -42,11 +42,21 @@ describe("rateForModel — longest matching prefix wins", () => {
     // Regression: opus-5/sonnet-5 were absent, so every session recorded after the CLI moved to
     // them derived a $0 cost. Nothing throws on a missing rate — only these assertions catch it.
     expect(rateForModel("claude-opus-5")).toEqual({ input: 5, output: 25, cacheWrite: 6.25, cacheRead: 0.5 });
-    expect(rateForModel("claude-sonnet-5")).toEqual({ input: 3, output: 15, cacheWrite: 3.75, cacheRead: 0.3 });
+    expect(rateForModel("claude-sonnet-5")).toEqual({ input: 2, output: 10, cacheWrite: 2.5, cacheRead: 0.2 });
     expect(rateForModel("claude-fable-5")?.input).toBe(10);
     // The '5' families must not be captured by the legacy 'claude-opus-4'/'claude-sonnet-4' prefixes.
     expect(rateForModel("claude-opus-5")?.input).not.toBe(15);
-    expect(rateForModel("claude-sonnet-5[1m]")?.input).toBe(3);
+    expect(rateForModel("claude-sonnet-5[1m]")?.input).toBe(2);
+  });
+
+  it("the x.5 / x.1 generation has its own rates, not its family prefix's", () => {
+    // Each of these used to resolve to the shorter family key ('claude-opus-5', 'claude-sonnet-5',
+    // 'claude-fable-5') at that model's older rate — or, for Haiku 5.5, to nothing at all.
+    expect(rateForModel("claude-opus-5-5")).toEqual({ input: 4, output: 20, cacheWrite: 5, cacheRead: 0.2 });
+    expect(rateForModel("claude-sonnet-5-5")).toEqual({ input: 2, output: 10, cacheWrite: 2.5, cacheRead: 0.1 });
+    expect(rateForModel("claude-fable-5-1")).toEqual({ input: 10, output: 50, cacheWrite: 12.5, cacheRead: 0.25 });
+    expect(rateForModel("claude-haiku-5-5")).toEqual({ input: 0.1, output: 0.5, cacheWrite: 0.125, cacheRead: 0.01 });
+    expect(unpricedModels(["claude-haiku-5-5", "claude-opus-5-5", "claude-sonnet-5-5", "claude-fable-5-1"])).toEqual([]);
   });
 
   it("unknown / null / the literal <synthetic> model → no rate", () => {

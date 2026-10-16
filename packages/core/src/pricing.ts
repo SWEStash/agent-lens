@@ -44,7 +44,8 @@ export interface UsageTokens {
 /**
  * Prefix → rate. Longest matching prefix wins, so dated/variant ids resolve to the most specific
  * entry (e.g. 'claude-opus-4-8' beats the legacy 'claude-opus-4' fallback).
- * USD per 1M tokens. Convention: cacheWrite (5-minute) = 1.25× input, cacheRead = 0.1× input.
+ * USD per 1M tokens, from the published pricing page. Convention: cacheWrite (5-minute) = 1.25× input,
+ * cacheRead = 0.1× input — except Opus 5.5 / Sonnet 5.5 (cache reads at 0.05×) and Fable 5.1 (0.025×).
  */
 export const PRICE_TABLE: Record<string, Rate> = {
   // Opus 4.0 / 4.1 launched at $15/$75; Opus 4.5 cut the Opus tier to $5/$25 and 4.6/4.7/4.8 kept it.
@@ -55,12 +56,19 @@ export const PRICE_TABLE: Record<string, Rate> = {
   "claude-opus-4-7": { input: 5, output: 25, cacheWrite: 6.25, cacheRead: 0.5 },
   "claude-opus-4-8": { input: 5, output: 25, cacheWrite: 6.25, cacheRead: 0.5 },
   "claude-opus-5": { input: 5, output: 25, cacheWrite: 6.25, cacheRead: 0.5 },
+  "claude-opus-5-5": { input: 4, output: 20, cacheWrite: 5, cacheRead: 0.2 },
   "claude-fable-5": { input: 10, output: 50, cacheWrite: 12.5, cacheRead: 1.0 },
+  "claude-fable-5-1": { input: 10, output: 50, cacheWrite: 12.5, cacheRead: 0.25 },
   "claude-sonnet-4": { input: 3, output: 15, cacheWrite: 3.75, cacheRead: 0.3 },
-  // Sonnet 5 list price. An introductory $2/$10 rate runs through 2026-08-31; we bill the list
-  // price so the estimate doesn't silently change under a date, matching the "list price" label.
-  "claude-sonnet-5": { input: 3, output: 15, cacheWrite: 3.75, cacheRead: 0.3 },
+  // Sonnet 5 launched at an "introductory" $2/$10 that was later made its standard price; the
+  // announced rise to $3/$15 was cancelled.
+  "claude-sonnet-5": { input: 2, output: 10, cacheWrite: 2.5, cacheRead: 0.2 },
+  "claude-sonnet-5-5": { input: 2, output: 10, cacheWrite: 2.5, cacheRead: 0.1 },
   "claude-haiku-4": { input: 1, output: 5, cacheWrite: 1.25, cacheRead: 0.1 },
+  // Haiku 5.5 is tiered by prompt size: these are the rates up to 100K prompt tokens. Prompts over
+  // 100K bill at 5× ($0.50/$2.50), which this cannot apply: cost is derived from per-model token
+  // sums, after the per-request size is gone. Long-prompt Haiku 5.5 spend is therefore understated.
+  "claude-haiku-5-5": { input: 0.1, output: 0.5, cacheWrite: 0.125, cacheRead: 0.01 },
   "claude-3-5-haiku": { input: 0.8, output: 4, cacheWrite: 1, cacheRead: 0.08 },
   "claude-3-5-sonnet": { input: 3, output: 15, cacheWrite: 3.75, cacheRead: 0.3 },
 };
