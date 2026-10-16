@@ -1,80 +1,54 @@
-# Agent Lens — Operations Guide
+# Usage guide
 
-How to run the tool day to day. Agent Lens is a three-stage local pipeline:
-**collect → ingest → browse**. Nothing leaves your machine.
+Agent Lens is a three-stage local pipeline: **collect** copies transcripts into an archive,
+**ingest** builds a SQLite store from it, and **serve** runs the web UI. Nothing leaves your machine.
 
-```mermaid
-flowchart LR
-  subgraph SRC["Sources (agent accounts)"]
-    direction TB
-    A1["personal · ~/.claude"]
-    A2["work · ~/.config/claude-work"]
-  end
-  SRC -->|"Stage 1 · agent-lens collect"| ARCH["data dir · archive/"]
-  ARCH -->|"Stage 2 · agent-lens ingest<br/>+ classify"| DB[("SQLite + FTS5")]
-  DB -->|"Stage 3 · agent-lens serve · 127.0.0.1"| WEB["Browse · search · export<br/>analytics dashboard"]
-```
+- [Upgrade](#upgrade)
+- [Configuration](#configuration)
+- [Collect](#collect) · [Ingest](#ingest) · [Serve](#serve)
+- [The web UI](#the-web-ui)
+- [Export a session](#export-a-session)
+- [Retention](#retention)
+- [Reference](#reference): environment variables, paths, HTTP API
+- [Troubleshooting](#troubleshooting)
 
-## Requirements
-
-- `node` >= 24 — the only hard requirement (Linux, macOS, or Windows). You already have it from the Claude Code CLI.
-- Optional, from-source/developer only: `pnpm`. No `rsync`, `systemd`, or bash is required — the CLI is portable Node.
-
-## Install
-
-Agent Lens is one `agent-lens` CLI. Two ways to get it:
-
-```bash
-# End users (published under the @swestash scope; the command stays `agent-lens`):
-npm install -g @swestash/agent-lens    # then run `agent-lens <command>`
-#   or, ad-hoc, without installing:  npx @swestash/agent-lens <command>
-
-# From source (development):
-cd /path/to/agent-lens
-pnpm install && pnpm -r build
-node packages/cli/dist/agent-lens.js <command>   # the built CLI
-```
-
-Below, `agent-lens <command>` means either the installed binary or `node packages/cli/dist/agent-lens.js <command>` from a source build. The subcommands are `collect`, `ingest`, `serve`, `watch`, `metrics`, `export`, `service`, and `config`.
+Installation is in the [README](../README.md#install). From a source checkout, use
+`node packages/cli/dist/agent-lens.js <command>` instead of `agent-lens <command>` (see
+[DEVELOPMENT.md](DEVELOPMENT.md)).
 
 ## Upgrade
 
-Nothing is destroyed on upgrade: the archive under `<dataDir>/archive` is the source of truth and the
-SQLite DB is a derived projection, so you can always rebuild it (`agent-lens ingest --full`).
-
 ```bash
-# End users (npm):
 npm install -g @swestash/agent-lens@latest
-agent-lens collect --then-ingest            # pick up any new data + new file types
-
-# From source:
-cd /path/to/agent-lens
-git pull && pnpm install && pnpm -r build
 agent-lens collect --then-ingest
 ```
 
-Running as a service (`agent-lens service install`)? After upgrading the binary, restart it so the new
-code is live — `systemctl --user restart agent-lens-server.service` (Linux), or restart the launchd /
-Task Scheduler entry on macOS / Windows — and the background collect+ingest timer refreshes the DB on
-its next tick (or click **Refresh** in the UI to do it now).
+Upgrades never destroy data. The archive is the source of truth and the database is derived from
+it. A normal `ingest` applies additive schema changes on its own. Run `agent-lens ingest --full`
+only when release notes ask for it.
 
-**Schema changes.** Each release stamps a `SCHEMA_VERSION`. A normal incremental `ingest` applies
-additive schema changes automatically (`CREATE … IF NOT EXISTS`) and picks up newly-collected file
-types on its next run, so most upgrades need nothing special. Run a one-time `agent-lens ingest --full`
-only when a release note calls for it (a change to *existing* tables); because the archive is the
-source of truth, a full rebuild is safe and just re-derives every table from scratch.
+If you run the services, restart the server after upgrading so the new code is live
+(`systemctl --user restart agent-lens-server.service` on Linux, or restart the launchd or Task
+Scheduler entry). The collector picks up the new binary on its next run.
 
-## Configure sources (which agent accounts to collect)
+## Configuration
 
-A **source** is a labeled agent instance: a `label` + the agent's `configDir`. Multiple local
-accounts coexist; each is collected and tagged separately so you can filter/compare in the UI.
+Agent Lens works without a config file and collects `~/.claude`. Run `agent-lens config` to print
+the effective settings, the paths it uses, and where each value came from.
 
-```bash
-cp agent-lens.config.example.json agent-lens.config.json   # if not already present
-```
+The config file is looked up in this order:
+
+1. `AGENT_LENS_CONFIG`
+2. `<dataDir>/agent-lens.config.json` (see [Paths](#paths))
+3. the repo's `agent-lens.config.json`, in a source checkout
+4. the built-in default (`~/.claude`)
+
+### Sources
+
+A source is one agent account: a unique `label` plus its `configDir`.
 
 ```jsonc
-// agent-lens.config.json  (gitignored — machine-specific)
+// agent-lens.config.json
 {
   "sources": [
     { "label": "personal", "agent": "claude-code", "configDir": "~/.claude" },
@@ -83,12 +57,15 @@ cp agent-lens.config.example.json agent-lens.config.json   # if not already pres
 }
 ```
 
-- `label` must be unique (it names the archive subdir and the UI source filter).
+- `label` names the archive folder and the source filter in the UI.
 - `configDir` accepts `~` and `$HOME`.
-- `agent` is `claude-code` (the only shipped adapter today; see *Adding another agent* below).
+- `agent` is `claude-code`, the only adapter shipped today. Adding another agent is covered in
+  [DEVELOPMENT.md](DEVELOPMENT.md#add-another-agent).
 
-The same file can also persist the store path and server settings, so they survive without exporting
-env vars in your shell rc:
+To add an account later, add its entry and run `agent-lens collect --then-ingest`. It shows up as a
+new source.
+
+### Store path and server
 
 ```jsonc
 {
@@ -98,672 +75,366 @@ env vars in your shell rc:
 }
 ```
 
-These are overridable per run — precedence is **flag > env > config file > default** (e.g.
-`agent-lens serve --port 5599` beats `AGENT_LENS_PORT` beats `server.port` beats the built-in 4477;
-likewise `--db` beats `AGENT_LENS_DB` beats `db` beats `<dataDir>/agent-lens.db`). `db` accepts `~`
-and `$HOME` and is honored by every command that touches the store — `ingest`, `metrics`, `serve`,
-`export`. The triage sidecar (ADR-018) lives beside it, so moving `db` moves the pair.
-Run `agent-lens config` to print the effective settings and where each came from.
+Precedence is **flag > env > config file > default**. For example, `agent-lens serve --port 5599`
+beats `AGENT_LENS_PORT`, which beats `server.port`, which beats 4477. `db` is used by `ingest`,
+`metrics`, `serve`, and `export`, and the triage store (`triage.db`) sits beside it.
 
-There is deliberately **no** `archive` or `triageDb` key. The db is a derived projection — point it
-anywhere and `ingest --full` rebuilds it — but the archive and the triage store hold the only copy of
-their data, so an independent override risks stranding it. They stay pinned to the layout; relocate
-`AGENT_LENS_DATA` instead. See [ADR-021](decisions/ADR-021-fixed-data-layout.md).
+There is no `archive` or `triageDb` key. Those two hold data nothing can rebuild, so they stay inside
+the data directory. To move them, move the data directory with `AGENT_LENS_DATA`
+([ADR-021](decisions/ADR-021-fixed-data-layout.md)). The data directory can't be set in the config
+file, because it's where the config file is looked up.
 
-The file also takes an optional `pricing` block for model rates — see
-[*Adjust model pricing*](#adjust-model-pricing-optional) below.
+> [!NOTE]
+> Don't add `db`, `server`, or `pricing` to `agent-lens.config.example.json`. That file is the
+> fallback when no real config exists, so anything in it becomes live config for everyone who
+> hasn't written their own. Copy it first, then add keys to your copy.
 
-> **Note:** none of `db`, `server` or `pricing` appears in `agent-lens.config.example.json`. That
-> example is the last-resort fallback when no real config file exists, so anything set in it is *live*
-> config for everyone who hasn't written their own — a `db` there would silently redirect the store, a
-> `server` block would count as an explicitly-set port/host (freezing today's defaults into installed
-> service units), and a `pricing` entry would report as a user override on a machine whose owner never
-> wrote one. Copy the file, then add these keys to your own copy.
->
-> The **data dir** stays env-only (`AGENT_LENS_DATA`) by construction: it is where the config file is
-> looked up, so it cannot be read back out of that file.
+### Exclude projects
 
-The config file is resolved in this order: `AGENT_LENS_CONFIG` → `<dataDir>/agent-lens.config.json`
-→ the repo's `agent-lens.config.json` → the built-in default (`~/.claude`). Verify what will be
-collected with the resolver shim (a thin wrapper over `@agent-lens/core`):
-
-```bash
-node scripts/sources.mjs        # prints: label <TAB> agent <TAB> configDir  (from-source debug tool)
-```
-
-## Exclude projects (playgrounds, throwaway, private)
-
-Keep specific projects out of Agent Lens entirely. Add their real cwd paths to an optional
-top-level `exclude` array (or set `AGENT_LENS_EXCLUDE` to a comma-separated list to extend at
-runtime). The list is honored at **every** stage:
-
-- **collect** never mirrors them into the archive (so private work never leaves the source);
-- **ingest** never stores them, and **prunes** any that were ingested before you added them — on the
-  next ingest, incremental or `--full`;
-- the redacted validation **corpus** never includes them.
+Keep playgrounds, throwaway tests, or private work out of Agent Lens entirely:
 
 ```jsonc
-// agent-lens.config.json
 {
   "sources": [ /* … */ ],
-  "exclude": [
-    "~/git-projects/playground",
-    "~/scratch"
-  ]
+  "exclude": ["~/git-projects/playground", "~/scratch"]
 }
 ```
 
-Matching is by real path (exact or prefix), so excluding `~/git-projects/playground` also drops
-anything under it, including its subagent transcripts. Paths accept `~` and `$HOME`.
+An excluded project is never collected, never ingested, and never put in the test corpus. If it was
+ingested before you excluded it, the next ingest removes it. Matching is by real path, so a folder's
+subfolders and subagent transcripts are excluded too. `AGENT_LENS_EXCLUDE` (comma-separated) adds
+paths for a single run:
 
 ```bash
-node scripts/sources.mjs --excludes     # prints the resolved exclude paths, one per line
-AGENT_LENS_EXCLUDE="$HOME/scratch" agent-lens ingest    # one-off, additive to the config list
+AGENT_LENS_EXCLUDE="$HOME/scratch" agent-lens ingest
 ```
 
-## Adjust model pricing (optional)
+### Model pricing
 
-Cost is **derived**, never stored: transcripts record token counts and a model id, so every figure
-Agent Lens shows is an estimate of what those tokens would have cost at API list prices. A model with
-no rate in the built-in table contributes **$0**, which is why an unrecognized model would otherwise
-make sessions look free.
+Cost is an estimate at API list prices, computed from token counts when you view it. A model missing
+from the built-in price table counts as $0, and Agent Lens says so: the ingest report, `agent-lens
+config`, and the About page list unpriced models, and an affected session cost shows as `$0.79 ⚠`.
 
-Nothing is silent about that any more: the ingest report lists unpriced models, `agent-lens config`
-and the About page report them, and a per-session cost that is missing a rate renders as `$0.79 ⚠`
-with a tooltip naming the model. If you see one, either upgrade for an updated table or add the rate
-yourself:
+Add or override rates in the config:
 
 ```jsonc
-// agent-lens.config.json
 {
   "sources": [ /* … */ ],
   "pricing": {
-    // USD per 1M tokens, keyed by model-id prefix (longest prefix wins).
+    // USD per 1M tokens, keyed by model-id prefix; the longest prefix wins.
     "claude-opus-5": { "input": 5, "output": 25 },
-    // cacheWrite / cacheRead are optional — they default to 1.25x and 0.1x of input.
+    // cacheWrite and cacheRead are optional (default: 1.25x and 0.1x of input).
     "claude-opus-5-internal": { "input": 0, "output": 0, "cacheWrite": 0, "cacheRead": 0 }
   }
 }
 ```
 
-Your entries overlay the built-in table, so you only list what you want to change or add. An entry
-missing a numeric `input`/`output` is reported and ignored (the built-in rate stays in force) rather
-than stopping the tool — check `agent-lens config`:
+Your entries overlay the built-in table. An entry without a numeric `input` and `output` is ignored
+and reported by `agent-lens config`. Prices are list prices only: no promotional rates, and no view of
+subscription quota ([ADR-028](decisions/ADR-028-model-pricing.md)).
+
+## Collect
+
+Copies each source's transcripts into `<dataDir>/archive/<label>/` before Claude Code prunes them
+(after a rolling 30-day window). It never deletes and never copies credentials. When a transcript
+shrinks or diverges, the previous version is kept under `.versions/`.
 
 ```bash
-agent-lens config      # Pricing block: models priced, overrides in force, and any ignored keys
+agent-lens collect                 # one pass
+agent-lens collect --then-ingest   # collect, then ingest
 ```
 
-Prices are list price only — no introductory or effective-dated rates, and no visibility into
-subscription quota. See [ADR-028](decisions/ADR-028-model-pricing.md).
-
-## Stage 1 — Collect
-
-Copies each source's transcripts into `data/archive/<label>/` before Claude Code prunes them
-(rolling 30-day window). Never deletes, never copies secrets, keeps divergence/compaction backups
-in `.versions/`. Portable Node (no `rsync`/bash), same append-verify semantics.
+To keep collecting, either install the collector as an OS service or run `watch`:
 
 ```bash
-agent-lens collect                 # run one pass now
-agent-lens collect --then-ingest   # collect, then immediately ingest (Stage 1 → Stage 2)
+agent-lens service install collector                  # runs at 9, 13, 17 and 21 by default
+agent-lens service install collector --times 8,12,18  # custom hours (0 to 23)
+agent-lens service status collector
+agent-lens service uninstall collector                # the archive is left alone
+
+agent-lens watch                   # collect and ingest whenever a source changes
+agent-lens watch --interval 900    # also at least every 15 minutes
+agent-lens watch --poll            # polling, for network filesystems
 ```
 
-Keep it current automatically — two options:
+The service is a systemd user timer on Linux, a launchd agent on macOS, and Task Scheduler tasks on
+Windows. A lock file (`<dataDir>/.agent-lens.lock`) keeps scheduled and `watch` runs from overlapping.
 
-**Installed as an OS service (survives reboot).** `agent-lens service` registers the periodic
-`collect --then-ingest` **collector** with the OS service manager — a **systemd** user timer on
-Linux, a **launchd** agent on macOS, **Task Scheduler** tasks on Windows. (The same command also
-installs the long-running server; see [Stage 3](#stage-3--browse).)
+## Ingest
+
+Parses the archive, including `.versions/` backups (deduplicated by event `uuid`), into
+`<dataDir>/agent-lens.db`.
 
 ```bash
-agent-lens service install collector                 # default cadence: 09,13,17,21
-agent-lens service install collector --times 8,12,18 # custom hours (0–23, comma-separated)
-agent-lens service status collector                  # show the registered job / next run
-agent-lens service uninstall collector               # remove it (archive untouched)
+agent-lens ingest            # incremental: only changed files and the sessions they touch
+agent-lens ingest --full     # drop the tables and rebuild everything from the archive
 ```
 
-**Resident (`watch`).** A foreground process that collects+ingests whenever a source changes
-(debounced), optionally also on a fixed interval:
+When to use `--full`, what a run prints, and how to troubleshoot it are in the
+[ingest runbook](INGEST-RUNBOOK.md). How it works is in
+[ARCHITECTURE.md](ARCHITECTURE.md#3-ingest-runtime-stage-2).
+
+### Metrics
+
+Ingest also classifies sessions, detects security findings, types tool errors, and indexes file
+changes. To redo only those steps on an existing store, without rereading the archive:
 
 ```bash
-agent-lens watch                  # collect+ingest on file change
-agent-lens watch --interval 900   # ...and at least every 15 min
-agent-lens watch --poll           # polling fallback for network filesystems
+agent-lens metrics
 ```
 
-A cross-platform single-instance lock (`<dataDir>/.agent-lens.lock`) ensures a scheduled run and a
-`watch` cycle never overlap, so a short cadence can't pile up lagged collectors.
-
-## Stage 2 — Ingest
-
-Parses the archive (mirror **and** `.versions/` backups, deduped by event `uuid`) into
-`data/agent-lens.db`.
+## Serve
 
 ```bash
-agent-lens ingest            # incremental — only changed files; rebuilds only touched sessions
-agent-lens ingest --full     # drop, recreate, and re-derive everything from the archive
-```
+agent-lens serve                      # http://127.0.0.1:4477, in the foreground
+agent-lens serve --port 5599          # or set AGENT_LENS_PORT, or server.port in the config
 
-Incremental runs skip unchanged files by `size`+`mtime` (no re-read) and rebuild derived tables only for
-the sessions touched that run, so a no-op run finishes in well under a second regardless of history size.
-Use `--full` after changing parser/classifier logic, after a `SCHEMA_VERSION` bump, or to recover — it
-**drops and recreates** the tables, so it doubles as the migration path. The archive is the source of
-truth, so rebuilding the DB is always safe.
-
-It prints a summary: `files / skipped / new_events / malformed`, then
-`sessions / turns / events / tool_calls / classified`, then `tokens / est_cost` — plus an
-`unpriced=N model(s)` line when some model has usage but no price (see *Adjust model pricing* above).
-
-> **How it works:** see [ARCHITECTURE.md → Ingest runtime](ARCHITECTURE.md#3-ingest-runtime-stage-2).
-> **Running / migrating / troubleshooting:** see the [Ingest Runbook](INGEST-RUNBOOK.md) — including the
-> one-time [`raw_json` compression migration](INGEST-RUNBOOK.md#adr-011-compression-migration-one-time).
-
-## Stage 3 — Browse
-
-```bash
-agent-lens serve       # → http://127.0.0.1:4477   (read-only, loopback only; foreground)
-```
-
-To keep it running in the background (restart on failure/logout, start at boot), install it as a
-service on any platform:
-
-```bash
-agent-lens service install server     # systemd (Linux) / launchd (macOS) / Task Scheduler (Windows)
+agent-lens service install server     # run it in the background, restarted on failure
 agent-lens service status server
 agent-lens service uninstall server
 ```
 
-It binds `127.0.0.1:4477` by default. Change it per run with `agent-lens serve --port 5599 --host …`,
-or persist it via `AGENT_LENS_PORT` / `AGENT_LENS_HOST` or the config file's `server` block.
+`agent-lens service install` with no target installs both the collector and the server.
 
-**What gets baked in.** A scheduler inherits none of your shell's environment, so `service install`
-writes the settings you explicitly set into the unit itself (Linux/macOS) — an explicitly-set
-port/host (from env or the config file), plus `AGENT_LENS_DATA` and `AGENT_LENS_CONFIG` if you set
-them. That last pair matters most: relocating the data dir is env-only by construction (ADR-021), so
-without baking, the collector would mirror transcripts into a different store than your interactive
-commands read. `service install` prints each value it baked. On **Windows**, Task Scheduler has no
-environment field, so nothing can be baked — if you have any of these set, `service install` prints
-the `setx` commands to set them for your account instead. The Windows task also starts at logon and,
-unlike systemd/launchd, is **not** auto-restarted on crash — it returns on the next logon.
+**What the service remembers.** A scheduler doesn't inherit your shell environment, so on Linux and
+macOS `service install` writes into the unit any port or host you set explicitly, plus
+`AGENT_LENS_DATA` and `AGENT_LENS_CONFIG` if set, and prints each value. Without that, the collector
+could write to a different store than the one your commands read. After changing any of them, run
+`service install` again.
 
-Changing any of them later means re-running `agent-lens service install` to rewrite the units.
+On Windows, Task Scheduler can't store environment variables, so `service install` prints the `setx`
+commands to run instead. The Windows task starts at logon and is not restarted after a crash.
 
-> **Tip:** `agent-lens service install` with no target installs the collector **and** the server at
-> once — the one-command "make it work after reboot" setup.
+## The web UI
 
-Open the URL. The app has five views (nav tabs): **Sessions** (browse), **Files** (provenance),
-**Skills**, **Security** (findings), and **Dashboard** (analytics). The top bar also shows **when data was last ingested** ("updated Xm ago"),
-a **Refresh** button that runs collect+ingest on the host on demand (`POST /api/refresh` — a scoped
-write-action on the otherwise read-only server; loopback-only + CSRF-guarded, see ADR-015), and a
-**light/dark theme toggle** (dark by default; your choice is remembered).
-A live, corpus-only demo of these views (no real data) is published at
-<https://swestash.github.io/agent-lens/>; the screenshots below are generated from the committed
-corpus by `node scripts/screenshots.mjs`.
+The top bar has five views: **Sessions**, **Files**, **Skills**, **Security**, and **Dashboard**. It
+also shows when data was last ingested, a **Refresh** button that runs collect and ingest
+([ADR-015](decisions/ADR-015-refresh-action-endpoint.md)), and a light/dark theme toggle.
 
-![Agent Lens dashboard — KPI cards, tokens/cost/activity charts, and per-model / category / complexity / tool / skill / subagent breakdowns](img/dashboard.png)
+Try every view in the [live demo](https://swestash.github.io/agent-lens/), which runs on synthetic
+data.
 
-![Agent Lens session transcript — Bash rendered as a shell console with a $ prompt per command, a description caption, flag badges, and multi-line output](img/session-transcript.png)
+### Sessions
 
-![Agent Lens edit rendering — Edit/MultiEdit/Write shown as colored +/- diffs with context and per-file add/remove counts](img/session-diff.png)
+- **Filter** by source, project, model, kind (main or subagent), security severity, and error type.
+- **Search** the full text of every transcript. All words must appear. Opening a result carries the
+  search into the session.
+- **Sort** by any column, and pick columns with the **Columns** control. Cost is hidden by default.
 
-![Agent Lens workflow detail — a fan-out run's phase graph, returned result, run log, and per-agent rows with type badges](img/workflow.png)
+### A session
 
-**Sessions** — you can:
+![A workflow run: its phase graph, returned result, run log, and one row per agent](img/workflow.png)
 
-- **Filter** by source, project, model, and kind (main vs subagent), plus multi-select **Security**
-  (sessions with a finding of a given severity) and **Errors** (sessions with a failed tool call of a
-  given error type — e.g. `command-failed`, `user-rejected`).
-- **Full-text search** across all transcripts (FTS5 — whitespace-separated tokens, all of which must
-  appear). Opening a result carries the term into the session, where *find in session* (below) picks
-  it up.
-- **Sort** by any column, and **customize columns** via the "Columns" control in the table header
-  (show/hide, persisted per browser). Sortable **Security** (worst-severity + finding count) and
-  **Errors** (failed-tool-call count) columns are shown by default; **Cost** is hidden by default
-  (it still shows on the session detail page).
-- Open a session for the **transcript viewer**: turn-segmented, expandable
-  tool calls, model/subagent tags, a **classification badge** (category + complexity) with a
-  collapsible signals panel, and an **error summary** in the header — *"X failed · Y declined/blocked
-  of N tool calls"* (the failed-vs-declined split is a heuristic; see [ADR-019](decisions/ADR-019-tool-error-observability.md)).
-- Read the session's shape from the **timeline** under the header — a minimap of the whole session,
-  not a second dashboard:
+- **Transcript.** Split into turns, with tool-specific rendering, a category and complexity badge
+  (with the signals behind it), and an error summary such as *3 failed · 1 declined/blocked
+  of 40 tool calls*. Failed and declined are told apart by a heuristic
+  ([ADR-019](decisions/ADR-019-tool-error-observability.md)).
+- **Tokens per message.** Each message shows the tokens of the response it belongs to, with the full
+  split on hover ([ADR-032](decisions/ADR-032-per-event-token-attribution.md)).
+- **Timeline.** A minimap of the session. Bar height is tokens, color is the message type, and a rail
+  marks failed tool calls, findings, file changes, and subagent spawns. A line shows how full the
+  context was.
+  - Idle gaps over a minute are collapsed; `time ⇄` switches to real time, and double-clicking a gap
+    opens just that one.
+  - Hover a mark for its details, click to jump to it, or drag to filter the transcript to a time
+    range. The range is kept in the URL (`?from=`, `?to=`).
+  - Keyboard: `←`/`→` move, `Home`/`End` jump to the ends, `Enter` opens, `Shift+←`/`→` selects a
+    range, `Esc` clears it.
+- **Find in session** (`/`). A case-insensitive substring search over message text, thinking, and
+  tool inputs and results, two characters minimum. `Enter` and `Shift+Enter` step through matches and
+  reveal hidden ones: collapsed turns, clamped messages, closed thinking blocks, and tool calls hidden
+  by **Hide tool messages**. The term is kept in the URL (`?q=`)
+  ([ADR-030](decisions/ADR-030-in-session-search.md)).
+- **Export** to Markdown (⬇), redacted by default. See [Export a session](#export-a-session).
+- **Copy archive path** copies the path of the session's archived `.jsonl`, so another local agent
+  can read it, even after Claude Code has pruned the original. It isn't in the static demo.
+- **Files changed** lists each file the session edited, with line counts and links to its history.
 
-  - **Idle gaps are collapsed by default.** A session a human sat through is mostly waiting, so a
-    literal wall-clock axis would spend nearly all of its width on almost none of the messages. Gaps
-    over a minute collapse to a marker; `time ⇄` switches to literal wall-clock, and is hidden
-    entirely when a session has no such gaps (usual for subagents). **Double-click a gap marker** to
-    open just that one at its real duration, and double-click it again to collapse it back.
-  - A gap's label says only what **bounds** it — *"4h 02m before your next message"*, *"12m
-    mid-turn"*. Which side was waiting is in the data; **why** is not, so the label does not guess.
-  - **Bar height** is the tokens behind that message — *work* (input + output + cache-write) by
-    default, switchable to output only or to the total including cache reads. Cache reads are an
-    order of magnitude larger than the rest and would flatten every message to the same size.
-  - **Colour** is the message type, and the rail beneath the baseline marks the audit-worthy events:
-    failed tool calls, security findings, file changes, and subagent spawns.
-  - **A line over the bars** is **context occupancy** — how full the prompt was at each message
-    (input + cache-write + cache-read), with the session's own peak named in the legend. Shape only:
-    a fuller context is not a worse one. Nothing here warns you to start fresh: what little the data
-    supports points away from prompt size as the thing that goes wrong, and Agent Lens does not
-    claim an efficiency measure it cannot defend.
-  - **Hover** a mark to see which message it is — turn, type, time, size and any flags on it. The
-    marks are only a few pixels wide, so the hover target is much larger than the mark itself.
-  - **Click** a mark to jump to that message (its turn expands and the message is highlighted, the
-    same as following a deep link). **Drag** across the band to filter the transcript to that time
-    range; the range shows in a bar underneath with the surviving message count, a **zoom** control,
-    and **clear**. Partly-filtered turns show *"3 of 11 msgs"* on their header.
-  - The range lives in the URL as `?from=` / `?to=`, so a narrowed view is shareable and survives a
-    reload. Messages with no timestamp are never filtered out — they cannot be placed on the axis, so
-    hiding them would make them unreachable — and a `#ev-…` deep link into a message outside the
-    range clears the range rather than failing to land.
-  - **Keyboard**: the band is a single tab stop. `←`/`→` move between messages and `Home`/`End` jump
-    to the ends, `Enter` opens the message under the cursor, `Shift`+`←`/`→` selects a range, and
-    `Esc` clears it. The cursor's position, type, size and time are announced as it moves.
+### Files
 
-  Each message also shows its **token count** next to the model tag, with the full
-  input/output/cache-write/cache-read split on hover. That number is the usage of the response the
-  message belongs to, which is not the same as the raw usage row stored against it — see
-  [ADR-032](decisions/ADR-032-per-event-token-attribution.md).
-- **Find in session** (`/` to focus, or the box above the transcript) — searches the open session
-  ([ADR-030](decisions/ADR-030-in-session-search.md)). Unlike the list's FTS above, this is a literal
-  case-insensitive **substring** match, so it hits mid-word (`AWS_SECRET` inside
-  `export AWS_SECRET=`); minimum two characters. It covers **message bodies, thinking blocks, and tool
-  inputs and results**. (Turn prompt previews are highlighted too, but not counted — a preview is
-  almost always a copy of the user message already counted below it.)
+Which sessions, and which turns, changed each file
+([ADR-022](decisions/ADR-022-file-modification-provenance.md)). Filter by path, source, and project,
+then open a file for its timeline, where each change links to the exact tool call.
 
-  Every hit is highlighted, and `Enter` / `Shift+Enter` (or ◂ / ▸) step through matching messages —
-  from the search box, from the floating navigator that appears once the box scrolls out of view, or
-  with nothing focused at all. Because the view hides text in several ways, stepping to a match
-  **reveals** it: its turn expands, a clamped body unclamps, a thinking block opens.
+The index comes from successful `Edit`, `Write`, and `NotebookEdit` calls, plus Bash writes whose
+target is clear from the command (heredoc, `tee`, `sed -i`, a redirect). Writes from inside scripts,
+your own editor, formatters, and other machines aren't captured, and deletions and renames aren't
+tracked yet. Treat it as agent provenance, not a full file history.
 
-  **Tool calls are searched and counted even while "Hide tool messages" is on** — that toggle is about
-  reading the conversation, not about narrowing an audit, and tool inputs/results are where paths and
-  commands live. The match count and the per-turn badges include them, and stepping to one shows the
-  suppressed tool card for as long as it is the active match. Since the term is in the URL (`?q=`), a
-  search is shareable.
-- **Export** any session to Markdown (⬇ button, or `GET /api/sessions/:id/export.md`).
-- **Copy archive path** puts the absolute path of the session's archived `.jsonl` transcript on the
-  clipboard, so another agent running on this machine can be pointed straight at the file — including
-  for sessions Claude Code has already rotated out of `~/.claude`. The button is absent in the static
-  snapshot (it is a host path, [ADR-027](decisions/ADR-027-runtime-diagnostics-surface.md)), and for
-  a session whose archive file has since been pruned by retention the tooltip says so.
+### Dashboard
 
-On every page, a **back-to-top** control appears once you scroll away from the top, and returns
-keyboard focus there as well as the scroll position.
+Filter everything by source, date range, and model. Each card has an **ⓘ** that explains its
+numbers and caveats, and a **⤢** that opens it full width.
 
-**Files** (`/files`) — file-modification provenance ([ADR-022](decisions/ADR-022-file-modification-provenance.md)):
-which sessions (and which turns) changed which files, derived deterministically from every
-successful `Edit`/`Write`/`NotebookEdit` tool call in the archive, plus the file writes a `Bash`
-call performs through an unambiguous shell construct (heredoc, `tee`, `sed -i`, a redirect). Answers the inverse of the transcript view:
-*"this file changed — under what circumstances?"* You can:
+- **KPIs**: sessions, tokens (input, output, cache write, cache read), estimated cost, and
+  cache-read ratio.
+- **Over time**: tokens, cost, and activity, bucketed by day, week, or month to fit the date range.
+- **Breakdowns**: by model, category, complexity, tool, skill, subagent type, and error type.
+  Category and complexity count main sessions only.
+- **Tool errors**: failures over time and by type, with rejections and guardrail blocks kept apart.
+- **When work happens**: a weekday by hour heatmap of turns or tokens
+  ([ADR-034](decisions/ADR-034-heatmap-metric.md)).
+- **Burn by source**, **model response latency** (p50 and p90), and **turnaround after a turn**.
+  The heatmap and burn by source count tokens when they were spent, not when the session started,
+  so they won't match **Tokens over time** ([ADR-033](decisions/ADR-033-time-analytics-bucketing.md)).
+- **Audit tiles**: edit failures by model, plans and questions you sent back, repeat edits per file,
+  and findings over time. These are observations, not an efficiency score
+  ([ADR-036](decisions/ADR-036-dashboard-audit-endpoint.md)).
 
-- **Browse & filter** every touched file by path substring, source, and project; sort by last
-  touched, change count, or session count.
-- Open a file for its **provenance timeline**: every changing session (title, category, date),
-  expanded to the specific turns, each **deep-linking to the exact tool call in the
-  transcript** (scrolled to and highlighted).
-- See a **"files changed" roll-up** on each session page (header, collapsible) — per-file change
-  counts and line deltas, each linking to the file's history. When a session kept returning to the
-  same file (seven touches or more) the roll-up names those files and how many times each was
-  touched. It is a count and a list, not a verdict: rework was measured against session cost in both
-  directions and the relationship is flat.
+Notes:
+- Unpriced models are listed, so cost reads as a lower bound rather than a wrong number.
+- The model filter narrows each chart at its own level: spend per usage row, latency per turn, and
+  session counts per session. One click can move different charts by different amounts
+  ([ADR-035](decisions/ADR-035-dashboard-model-filter.md)).
+- A dated model id and its alias, such as `claude-haiku-4-5-20251001` and `claude-haiku-4-5`, count
+  as one model ([ADR-037](decisions/ADR-037-canonical-model-key.md)).
+- Hours and weekdays are shown in your browser's time zone.
+- **Views** (All, Cost, Reliability, Activity) pick a preset layout. The ⚙ controls show, hide, and
+  reorder cards. Changing a preset saves a **Custom** view, and layouts are saved on the server.
 
-> **Honest limits:** the index is built from Edit/Write/NotebookEdit tool calls plus the shell
-> writes whose target is unambiguous in the command text (heredoc, `tee`, `sed -i`, redirects).
-> Writes a script performs from inside an interpreter, targets built from variables or globs, edits
-> you make in an editor, formatter runs, and changes on other machines are **not captured**;
-> deletions/renames aren't tracked yet (see the ADR's roadmap). Treat it as agent provenance, not a
-> complete file history.
+### Security
 
-**Dashboard** (`/dashboard`) — server-side aggregates over the whole store (filter by source, a date
-range, and models):
+Risky operations the agent performed, flagged after the fact by deterministic rules, graded by
+severity, and anchored to OWASP Agentic and MITRE ATLAS
+([ADR-017](decisions/ADR-017-security-findings.md)). It reports; it doesn't block.
 
-- **KPI cards** — sessions, tokens (split input/output/cache-creation/cache-read), estimated
-  cost (cache-aware), and a cache-read-ratio explainer.
-- **Timeseries** — tokens, cost, and activity, with **adaptive day/week/month bucketing** that keys
-  off the real data span so charts stay bounded as data grows to years.
-- **Breakdowns** — by model, task category, complexity band, tool, skill, and subagent type.
-  Category/complexity are scoped to *main* sessions (subagent sessions skew read-heavy — see ADR-004).
-- **Tool errors** — *"Tool errors over time"* (failed tool calls per bucket, with user-rejections /
-  guardrail-blocks kept separate) and an *"Error types"* breakdown. The type buckets and the
-  failure-vs-rejection split are a heuristic over the tool result text — see [ADR-019](decisions/ADR-019-tool-error-observability.md).
-- **Unpriced models** (e.g. `claude-fable-5`) are surfaced explicitly, not silently zeroed, so cost
-  reads as a lower bound rather than a wrong number.
-- **Model filter** — a multi-select beside the source and date controls, applying to every chart at
-  once. Every model starts ticked, which is the *unfiltered* state; the parameter is written only
-  once you narrow. Each chart filters where its own rows carry a model — spend on `token_usage`,
-  turns and latency on `turns`, tool counts through the event that issued the call — while anything
-  counted per session counts sessions that used one of the ticked models, whole. So a session count
-  and a token total move by different amounts from the same click; see
-  [ADR-035](decisions/ADR-035-dashboard-model-filter.md), which also covers why the workflow KPIs and
-  the review-latency tile do not respond to it.
-
-  Models are identified by their **minor version**, so a dated snapshot such as
-  `claude-haiku-4-5-20251001` and a plain `claude-haiku-4-5` are one option and one bar — ticking it
-  admits all of that model's work, whichever id a given transcript happened to carry. The full id is
-  still what gets stored, and cost is still looked up on it, so a rate you pin to a dated id in the
-  `pricing` block keeps applying. A saved dashboard link carrying a raw dated id still works. See
-  [ADR-037](decisions/ADR-037-canonical-model-key.md).
-- **Time analytics** — *when* the work happened, rather than how much of it there was. These four
-  tiles share one endpoint, and the dashboard skips fetching it entirely while all of them are
-  hidden:
-
-  - ***When work happens*** — weekday × hour, averaged over the **calendar** occurrences of that
-    weekday in range, so a weekday you often skip reads as the quiet one it is rather than as a busy
-    one you rarely reach. Two metrics, toggled in the card:
-    - ***turns*** (default) — turns started in that hour, **main sessions only**. A turn is one
-      prompt and its answer, so this is the rhythm of when you actually work.
-    - ***tokens*** — mean work tokens (input + output + cache-write), **both populations**, since a
-      subagent's tokens come off the same quota.
-
-    They do not draw the same picture, and that is the point: tokens per hour are unbounded, so one
-    twelve-minute fan-out of subagents can outweigh a month of evenings and a one-off lands in the
-    same colour as a habit — see [ADR-034](decisions/ADR-034-heatmap-metric.md).
-
-    Colour is a **continuous gradient**, not a set of bands, and it runs out of the empty cell's own
-    colour — so a barely-used hour is barely coloured rather than jumping to a first band that has to
-    be visible. That does mean a near-zero cell is close to invisible, deliberately; hover any cell
-    for its exact figure **and how many days it rests on** ("on 1 of 14 Sundays") — an average over
-    one observed day and one over twelve read identically without it — and the strip under the grid
-    maps colour to number. It buckets by **when the work happened** — the usage event's own
-    timestamp, or the turn's start — rather than by the session's start: a session a human sat
-    through runs mostly idle and often spans hours, so session-start bucketing would drop a whole
-    day's spend into the hour it began. It
-    therefore **will not tie out against "Tokens over time"** — that is deliberate, see
-    [ADR-033](decisions/ADR-033-time-analytics-bucketing.md).
-  - ***Burn by source*** — work tokens over time, one line per source. Sources are plotted
-    separately and **never summed**; they have genuinely different profiles. It follows the
-    dashboard's bucket control, so switching to *day* shows each source's shape where a month
-    flattens it. Like the heatmap it buckets by the event's own timestamp, so it does not tie out
-    against "Tokens over time" either.
-  - ***Model response latency*** — prompt → first assistant token, p50 and p90 per model, main
-    sessions only. It follows the bucket control, and any bucket holding fewer than five turns for a
-    model is **dropped rather than drawn** — so a finer bucket yields a sparser chart, not a noisier
-    one, and where a cell holds only a handful of turns its p90 is close to its slowest. The p90 tail
-    mixes slow models with agents parked on a **permission prompt**, which nothing in the data
-    separates — read it for drift between buckets, not as an absolute. Replies Claude Code generated
-    *without* calling a model (its `<synthetic>` marker) are excluded: that elapsed time is not a
-    model response time. **Every model is in the legend** and can be switched on or off, with only
-    the highest-volume few on by default — a model you do not see is off, not absent. The y-axis is
-    linear until the visible series span more than 100×, at which point it goes logarithmic and says
-    so, because below that a linear axis flattens the fastest lines onto the baseline.
-  - ***Turnaround after a turn*** — how fast the next prompt arrived, split by whether that turn
-    wrote files. An **audit** view, not a productivity one: it reports that a reply came in four
-    seconds and makes no claim about whether that was long enough to read the diff.
-
-  **Timezone:** hour-of-day and weekday are *local*, resolved from your browser and named on each
-  tile. The server computes and returns UTC; the browser localizes, so an exported snapshot reads
-  correctly in every viewer's zone and across daylight-saving changes.
-- **Audit tiles** — *how the work went*. Four more tiles behind one endpoint, fetched and skipped on
-  visibility exactly like the time analytics. None of them is an efficiency measure: there is no
-  defensible one here, and the two obvious framings — tokens per line of churn, and a composite
-  score over errors and rework — were tested against the corpus and rejected, the first as
-  sign-inverted and the second as flat. See [ADR-036](decisions/ADR-036-dashboard-audit-endpoint.md).
-
-  - ***Edit failures by model*** — the share of a model's `Edit`/`Write`/`NotebookEdit` calls that
-    came back as errors. A failed edit usually means the model got the file's existing contents
-    wrong, so this is a capability signal rather than a speed one. Ranked by call volume rather than
-    by failure rate, because rate-ranking promotes whichever model made nine calls; the sample size
-    is in every tooltip. **Confounded by era and task mix** — read it inside a date range, not as a
-    standing leaderboard.
-  - ***Plans & questions sent back*** — the share of `ExitPlanMode` and `AskUserQuestion` calls you
-    rejected, per bucket, **main sessions only**. Alignment measured before the work happens rather
-    than after. This is **not** the rejection-rate KPI, which counts every rejected or blocked tool
-    call over a far larger denominator; a bucket containing none of that kind plots as a gap rather
-    than as a flawless 0%.
-  - ***Repeat edits per file*** — (session, file) pairs banded by how many times that session touched
-    that file, with the edits each band accounts for beside it. The two series disagree on purpose:
-    most pairs sit in the left band while a large share of all edits lands in the right ones. A count
-    and a list, never a score.
-  - ***Findings over time*** — detector findings per bucket, stacked by severity. It earns a place
-    here because a trend is the one thing the **Security** page (`/security`) cannot show; individual
-    findings, their evidence and their mute state still live there. Dated by **the finding's own
-    moment** rather than by its session's start — a long session can raise one hours after it began,
-    so a bucket is when the risky thing was done.
-- **Reading a chart** — every card carries an **ⓘ** beside its title. It opens a short panel saying
-  what the axes are in, how the number is computed, and the caveats that decide whether a reading is
-  fair — which population it counts, what a heuristic label is worth, where a tail is contaminated.
-  Axis units are also printed above each axis, so "15.0M" is never left ambiguous.
-- **Enlarging a chart** — the **⤢** beside a card's title opens it full-width in a dialog, where a
-  chart with more to say uses the room for it (the burn heatmap labels every other hour instead of
-  every sixth). Escape or the ✕ closes it and returns focus to the card.
-- **Views** — a switcher above the strips picks a curated layout: **All** (everything), **Cost**,
-  **Reliability**, **Activity**. Presets are defined in code, so they never grow silently when a new
-  chart ships — `All` always has everything.
-- **Customizable layout** — the **Metrics** and **Charts** strips each have a ⚙ control to show/hide
-  their tiles and cards and to **reorder** them (↑/↓, keyboard-friendly — no drag required), plus a
-  **reset**; the metrics strip also collapses. Customizing while a preset is active **forks** into a
-  **Custom** view seeded from it, so a preset is never overwritten and your own layout is never lost.
-  The layout persists like the Sessions column choice: cached in localStorage and written through to
-  the server's writable sidecar, so it survives a cache clear.
-
-**Security** (`/security`) — risky operations the agent performed, flagged after the fact by
-deterministic rules over each tool call (ADR-017), classified by severity and anchored to OWASP
-Agentic / MITRE ATLAS. It's retrospective awareness, not runtime blocking. You can:
-
-- **Browse & filter** by severity, category, rule, source, project, date range, and status; findings
-  also appear **inline** on the offending tool call in the transcript, with a session banner.
-- **Triage** (ADR-018): mark a finding **safe** (single or batched), **dismiss all** matching a
-  filter, or **mute a whole rule** (globally or per project/source) to silence a noisy detector. Open
-  counts (dismissed + muted excluded) drive the KPIs so real, un-cleared findings stand out. Triage is
-  stored in a separate `triage.db` and survives `ingest --full`.
-
-UI development with hot reload (proxies `/api` to the running server):
-
-```bash
-pnpm web:dev           # http://127.0.0.1:5173
-```
-
-### Metrics & classification
-
-The heuristic classifier (ADR-004 — deterministic, no AI) populates each session's category and
-complexity. It runs **automatically at the end of every ingest**. To re-derive the heuristics on an
-already-ingested DB *without* re-reading the archive (e.g. after tuning classifier rules):
-
-```bash
-agent-lens metrics
-# prints: classified=<n> classifier_version=<v> findings=<n> detector_version=<v>
-#         errors_classified=<n> error_classifier_version=<v> file_changes=<n> filechanges_version=<v> db=<path>
-```
-
-It re-runs classification, security detection, tool-error typing, and file-change indexing — every
-derived layer that reads the store rather than the archive. From a source checkout the same work is
-available as `node packages/ingest/dist/metrics-cli.js` (the `agent-lens-metrics` bin, which the npm
-package does not install).
-
-After changing classifier logic, bump `CLASSIFIER_VERSION` (`packages/ingest/src/classify.ts`) and
-re-run the above — no re-ingest needed. After changing *parser* logic instead, re-ingest with
-`--full`.
+- Filter by severity, category, rule, source, project, date, and status. Findings also show inline
+  in the transcript.
+- Mark findings safe one by one or in bulk, or mute a rule globally or for one project or source.
+  KPIs count only open findings. Triage is stored in `triage.db` and survives `ingest --full`
+  ([ADR-018](decisions/ADR-018-security-triage-store.md)).
 
 ## Export a session
 
-Write one session to a self-contained Markdown file — the shareable form of a transcript
-([ADR-020](decisions/ADR-020-redacted-export.md)). **Redacted by default**; you opt out explicitly.
-
 ```bash
-agent-lens export <sessionId>                      # redacted (level: secrets) → stdout
-agent-lens export <sessionId> --out session.md     # …to a file
-agent-lens export <sessionId> --level structure    # structure only: no message bodies
-agent-lens export <sessionId> --no-redact          # verbatim, UNREDACTED
+agent-lens export <sessionId>                      # redacted, to stdout
+agent-lens export <sessionId> --out session.md     # to a file
+agent-lens export <sessionId> --level structure    # no message text at all
+agent-lens export <sessionId> --no-redact          # verbatim
 ```
 
-| Level | What survives |
+| Level | What's kept |
 |---|---|
-| `secrets` (default) | The full transcript, with secrets, tokens, emails, IPs, and usernames masked. |
-| `structure` | Only the skeleton: every message body becomes `[redacted]`, leaving roles, timestamps, tool/skill markers, and pseudonymized directory names. |
-| off (`--no-redact`) | Everything, verbatim. |
+| `secrets` (default) | The full transcript, with secrets, tokens, emails, IPs, and usernames masked |
+| `structure` | Roles, timestamps, tool and skill markers, and pseudonymized folder names; every message body becomes `[redacted]` |
+| off (`--no-redact`) | Everything |
 
-Redacted output carries a header saying so. The masking is **best-effort pattern matching, not a
-guarantee** — read the file before sharing it. The same export is available from the UI (the ⬇
-button) and as `GET /api/sessions/:id/export.md`.
-
-## Typical daily loop
-
-With `agent-lens service install` (or `agent-lens watch`) running, collection **and** ingest happen
-in the background, so the DB is already current — just open the UI:
-
-```bash
-agent-lens serve
-```
-
-Collecting manually instead? Run the full refresh: `agent-lens collect --then-ingest && agent-lens serve`.
-
-## Adding another account
-
-1. Add an entry to `agent-lens.config.json` (`label` + `configDir`).
-2. `agent-lens collect --then-ingest`.
-3. It appears as a new **source** filter in the UI.
-
-## Adding another agent (type)
-
-The store and parser are agent-agnostic (ADR-003/008). Adding a *new agent type* (not just another
-Claude account) takes three steps and **no schema change**:
-
-1. Implement `packages/ingest/src/adapters/<agent>.ts` (the `SourceAdapter` interface:
-   `discover()` finds the agent's transcript files; `parseLine()` maps each line to the normalized
-   rows). See `packages/ingest/src/adapters/example-stub.ts` for a worked, compile-checked template.
-2. Register it in `adapterList` (`packages/ingest/src/run.ts`) — the only wiring point.
-3. Add a source with the matching `agent` value to `agent-lens.config.json`.
-
-**Caveat (ADR-007/008):** this covers *ingest/parse* only. Collection (the Node collector in
-`packages/core/src/collect.ts`) assumes the Claude-Code layout (`projects/**.jsonl`,
-`history.jsonl`, `settings`). An agent whose traces live elsewhere also needs per-agent
-**collection** logic.
+Redaction is best-effort pattern matching, not a guarantee, so read the file before you share it.
+The same export is in the UI and at `GET /api/sessions/:id/export.md`
+([ADR-020](decisions/ADR-020-redacted-export.md)).
 
 ## Retention
 
-The archive's `projects/` mirror (the source of truth) and the DB grow with use and are kept; the
-only unbounded-yet-discardable growth is `.versions/` (divergence/compaction snapshots, deduped into
-the DB at ingest). `scripts/prune.sh` (a source-checkout script — it is not shipped in the npm
-package) removes `.versions/` snapshots older than a window (default 90 days). It is **dry-run by
-default** and only ever touches `*/.versions/<TS>/` dirs:
+The archive and the database are kept indefinitely. The only growth you can safely discard is
+`.versions/`, which holds older copies of transcripts and is usually empty. From a source checkout,
+`scripts/prune.sh` removes snapshots older than 90 days. It's a dry run unless you pass `--apply`:
 
 ```bash
-scripts/prune.sh                 # dry run: list what would be removed + reclaimable size
-scripts/prune.sh --apply         # actually delete aged snapshots
-scripts/prune.sh --days 30 --apply   # narrower window
+scripts/prune.sh                     # list what would be removed
+scripts/prune.sh --apply             # remove it
+scripts/prune.sh --days 30 --apply   # use a shorter window
 ```
 
-The DB is a derived projection — if a prune ever changes what's available, rebuild it with
-`agent-lens ingest --full`. Pruning is manual (run it occasionally); `.versions/` is typically empty.
-
-**At-rest encryption (ADR-009):** Agent Lens does not encrypt the store itself — the `data/` dir is
-as sensitive as the originals. Place it on an encrypted volume (LUKS/dm-crypt on Linux, FileVault on
-macOS) if you need at-rest protection. See `docs/decisions/ADR-009-retention-and-at-rest.md`.
+The store isn't encrypted; see [Privacy](../README.md#privacy).
 
 ## Reference
 
 ### Environment variables
 
-For the store path (`AGENT_LENS_DB`) and the `server` settings (`AGENT_LENS_PORT`,
-`AGENT_LENS_HOST`) the precedence is **flag > env > config file (`db` / `server` block) > default**;
-run `agent-lens config` to see the effective values and their origins. All others are env > default
-as noted.
+For `AGENT_LENS_DB`, `AGENT_LENS_PORT`, and `AGENT_LENS_HOST`, a flag beats the variable, which
+beats the config file. The others are read from the environment only.
 
-The **archive** (`<dataDir>/archive`) and the **triage sidecar** (`triage.db`, beside the db) have no
-variables of their own: they hold data nothing can rebuild, so they are pinned to the layout rather
-than independently relocatable (ADR-021). Move `AGENT_LENS_DATA` to move the archive.
-
-| Variable | Default | Used by | Purpose |
-|---|---|---|---|
-| `AGENT_LENS_DATA` | per-user data dir; `<repo>/data` from source (see below) | all | base dir for archive + DBs — **the only way to relocate the archive** (ADR-021) |
-| `AGENT_LENS_DB` | config `db` → `$AGENT_LENS_DATA/agent-lens.db` | ingest, metrics, server, export | SQLite path (overridden by `--db`) |
-| `AGENT_LENS_CONFIG` | `<dataDir>/agent-lens.config.json` → repo config → repo example | collect, ingest, serve, config | sources config path |
-| `AGENT_LENS_EXCLUDE` | _(unset)_ | collect, ingest | comma-separated project paths to exclude, additive to the config `exclude` array |
-| `AGENT_LENS_PORT` | config `server.port` → `4477` | server | HTTP port (overridden by `--port`) |
-| `AGENT_LENS_HOST` | config `server.host` → `127.0.0.1` | server | bind host, loopback (overridden by `--host`) |
-| `AGENT_LENS_ALLOW_NONLOCAL` | _(unset)_ | server | required to bind a non-loopback host |
-| `AGENT_LENS_VERSIONS_KEEP_DAYS` | `90` | prune | retention window for `.versions/` snapshots |
-| `CLAUDE_DIR` | _(unset)_ | collect, ingest | legacy single-source override |
-| `AGENT_LENS_LABEL` | `default` | collect, ingest | source label used with the legacy `CLAUDE_DIR` single-source mode |
+| Variable | Default | Purpose |
+|---|---|---|
+| `AGENT_LENS_DATA` | see [Paths](#paths) | The data directory. The only way to move the archive |
+| `AGENT_LENS_DB` | config `db`, else `<dataDir>/agent-lens.db` | The SQLite store (`--db` overrides) |
+| `AGENT_LENS_CONFIG` | see [Configuration](#configuration) | The config file |
+| `AGENT_LENS_EXCLUDE` | unset | Comma-separated project paths to exclude, added to the config list |
+| `AGENT_LENS_PORT` | config `server.port`, else `4477` | Server port (`--port` overrides) |
+| `AGENT_LENS_HOST` | config `server.host`, else `127.0.0.1` | Bind address (`--host` overrides) |
+| `AGENT_LENS_ALLOW_NONLOCAL` | unset | Set to `1` to allow a non-loopback bind address |
+| `AGENT_LENS_VERSIONS_KEEP_DAYS` | `90` | Retention window for `scripts/prune.sh` |
+| `CLAUDE_DIR` | unset | Legacy: collect a single source from this directory |
+| `AGENT_LENS_LABEL` | `default` | Legacy: the label for `CLAUDE_DIR` |
 
 ### Paths
 
-**The data dir.** Where `<dataDir>` lands depends on how you installed. From an npm install there is
-no repo to anchor to, so it is a per-user OS directory:
+With an npm install, `<dataDir>` is a per-user directory:
 
-| Platform | `<dataDir>` (npm install) |
+| Platform | `<dataDir>` |
 |---|---|
 | Linux | `$XDG_DATA_HOME/agent-lens`, else `~/.local/share/agent-lens` |
 | macOS | `~/Library/Application Support/agent-lens` |
 | Windows | `%LOCALAPPDATA%\agent-lens` |
 
-From a source checkout it is `<repo>/data` instead. `AGENT_LENS_DATA` overrides both. Everything
-below is relative to `<dataDir>`; run `agent-lens config` to print the resolved values.
+From a source checkout it's `<repo>/data`. `AGENT_LENS_DATA` overrides both.
 
-| Path | Contents | Tracked? |
-|---|---|---|
-| `<dataDir>/archive/<label>/` | raw transcript mirror + `.versions/` backups | no (gitignored) |
-| `<dataDir>/agent-lens.db` | normalized SQLite store | no |
-| `<dataDir>/triage.db` | triage + UI prefs sidecar, survives full rebuilds (ADR-018) | no |
-| `<dataDir>/agent-lens.config.json` | your sources | no (`.example` is tracked in the repo) |
-| `docs/decisions/` | Architecture Decision Records (ADRs) — source checkout only | **yes** |
-
-### HTTP API (read-only, `127.0.0.1`)
-
-| Method · Path | Returns |
+| Path | Contents |
 |---|---|
-| `GET /api/health` | liveness, last-ingest time, schema version + staleness, and the running build (`version`, `version_source`) |
-| `GET /api/sources` | configured sources + session counts |
-| `GET /api/projects` | projects (cwd) + session counts |
-| `GET /api/models` | distinct **canonical** model ids — a dated snapshot resolves to its minor version ([ADR-037](decisions/ADR-037-canonical-model-key.md)). Includes Claude Code's `<synthetic>` marker (replies generated without an API call), which the dashboard's model filter omits from its own options |
-| `GET /api/sessions` | filtered, paginated session list (see query params) |
-| `GET /api/sessions/:id` | session meta + turns + events (transcript) + classification |
-| `GET /api/sessions/:id/export.md` | Markdown export (attachment) |
-| `GET /api/sessions/:id/location` | absolute path of the session's archived `.jsonl` (never in the static snapshot) |
-| `GET /api/dashboard/overview` | KPI aggregates (sessions, split token totals, cost) |
-| `GET /api/dashboard/timeseries` | tokens/cost/activity over time (adaptive buckets) |
-| `GET /api/dashboard/breakdowns` | by model / category / complexity / tool / skill / subagent / error type |
-| `GET /api/dashboard/time` | when work happened: hourly token burn, model latency, review latency |
-| `GET /api/dashboard/audit` | how the work went: file-edit failures by model, plan/question rejections, repeat edits per file, findings over time |
-| `GET /api/workflows/:run_id` | workflow run detail (phase graph, returned result, run log, per-agent rows) |
-| `GET /api/skills` | skills list (optional `q`, `source`, `project` filters) |
-| `GET /api/skills/:name` | skill detail (content-addressed versions + firings) |
-| `GET /api/security/summary` | finding roll-up (open counts by severity/category/rule + reference content) |
-| `GET /api/security/findings` | filtered, paginated findings list (see query params) |
-| `GET /api/security/mutes` | currently muted rules |
-| `GET /api/files` | filtered, paginated (project, file) change aggregate (ADR-022) |
-| `GET /api/file` | one file's provenance timeline, grouped by session (`path`, optional `project`) |
-| `GET /api/prefs/:key` | a stored UI preference (`{ value }`; `null` when unset or no writable store) |
-| `GET /api/about` | diagnostics: versions (app, schema, detector, classifier), resolved paths + their origin, binding, retention, pricing (table origin, overrides, unpriced models — [ADR-028](decisions/ADR-028-model-pricing.md)), sources, storage ([ADR-027](decisions/ADR-027-runtime-diagnostics-surface.md)). Read-only, and **not** in the static snapshot — it carries filesystem paths |
+| `<dataDir>/archive/<label>/` | The transcript archive, with `.versions/` backups |
+| `<dataDir>/agent-lens.db` | The SQLite store, rebuildable from the archive |
+| `<dataDir>/triage.db` | Security triage and UI preferences; survives rebuilds |
+| `<dataDir>/agent-lens.config.json` | Your config |
 
-`/api/sessions` query params: `source`, `project`, `model`, `kind` (`main`\|`subagent`),
-`q` (full-text), `from`, `to` (date-inclusive), `severity` (comma-separated; sessions with a finding of
-that severity), `error_type` (comma-separated; sessions with a failed tool call of that error type),
-`sort`, `dir`, `limit` (≤200), `offset`.
-`/api/dashboard/*` query params: `source`, `from`, `to`, `models` (comma-separated; **absent means
-every model**, which is not the same query as listing them all — [ADR-035](decisions/ADR-035-dashboard-model-filter.md));
-`timeseries`, `time` and `audit` also accept `bucket` (`day`\|`week`\|`month`, otherwise chosen
-adaptively from the data span).
-`/api/security/findings` query params: `severity`, `category`, `rule`, `session`, `source`,
-`project`, `from`, `to` (date-inclusive), `status` (`open` default \| `dismissed` \| `muted` \|
-`all`), `sort`, `dir`, `limit`, `offset`.
+### HTTP API
 
-`/api/files` query params: `q` (path substring), `source`, `project`, `sort`, `dir`, `limit` (≤200),
-`offset`.
+The server is read-only and bound to `127.0.0.1`. Response types are defined in
+`@agent-lens/contracts` ([ADR-026](decisions/ADR-026-api-response-contracts.md)).
 
-**Write actions** (the exceptions to read-only; loopback-only + CSRF-guarded, see ADR-015/018):
-`POST /api/refresh` (collect+ingest — the one action that writes the analytics DB, by re-running the
-pipeline rather than mutating it), plus the security-triage writes `POST /api/security/{dismiss,
-reopen,dismiss-matching,mute,unmute}` and `PUT /api/prefs/:key` (UI preferences), which write the
-separate `triage.db` sidecar and never touch the analytics DB.
+| Endpoint | Returns |
+|---|---|
+| `GET /api/health` | Liveness, last ingest time, schema version, and the running version |
+| `GET /api/sources` | Sources with session counts |
+| `GET /api/projects` | Projects with session counts |
+| `GET /api/models` | Model ids, grouped by minor version ([ADR-037](decisions/ADR-037-canonical-model-key.md)), including Claude Code's `<synthetic>` marker |
+| `GET /api/sessions` | Filtered, paginated sessions |
+| `GET /api/sessions/:id` | A session's metadata, turns, events, and classification |
+| `GET /api/sessions/:id/export.md` | Markdown export |
+| `GET /api/sessions/:id/location` | The archived `.jsonl` path (not in the static demo) |
+| `GET /api/dashboard/overview` | KPI totals |
+| `GET /api/dashboard/timeseries` | Tokens, cost, and activity over time |
+| `GET /api/dashboard/breakdowns` | By model, category, complexity, tool, skill, subagent, and error type |
+| `GET /api/dashboard/time` | Hourly burn, model latency, and turnaround |
+| `GET /api/dashboard/audit` | Edit failures, plan and question rejections, repeat edits, findings over time |
+| `GET /api/workflows/:run_id` | A workflow run: phase graph, result, log, and agents |
+| `GET /api/skills` | Skills (`q`, `source`, `project`) |
+| `GET /api/skills/:name` | A skill's versions and uses |
+| `GET /api/security/summary` | Open findings by severity, category, and rule, plus reference text |
+| `GET /api/security/findings` | Filtered, paginated findings |
+| `GET /api/security/mutes` | Muted rules |
+| `GET /api/files` | Changed files, filtered and paginated |
+| `GET /api/file` | One file's history by session (`path`, optional `project`) |
+| `GET /api/prefs/:key` | A saved UI preference, or `null` |
+| `GET /api/about` | Versions, paths and where they came from, binding, retention, pricing, sources, storage ([ADR-027](decisions/ADR-027-runtime-diagnostics-surface.md)). Not in the static demo |
 
-Every response shape above is declared once in `@agent-lens/contracts` and shared by the server and
-the SPA, so a renamed field is a compile error on both sides (ADR-026).
+Query parameters:
+
+- `/api/sessions`: `source`, `project`, `model`, `kind` (`main` or `subagent`), `q` (full text),
+  `from`, `to` (inclusive dates), `severity` and `error_type` (comma-separated), `sort`, `dir`,
+  `limit` (up to 200), `offset`.
+- `/api/dashboard/*`: `source`, `from`, `to`, `models` (comma-separated; leaving it out means every
+  model, [ADR-035](decisions/ADR-035-dashboard-model-filter.md)). `timeseries`, `time`, and `audit`
+  also take `bucket` (`day`, `week`, or `month`; chosen from the date range otherwise).
+- `/api/security/findings`: `severity`, `category`, `rule`, `session`, `source`, `project`, `from`,
+  `to`, `status` (`open` by default, `dismissed`, `muted`, or `all`), `sort`, `dir`, `limit`,
+  `offset`.
+- `/api/files`: `q` (path substring), `source`, `project`, `sort`, `dir`, `limit` (up to 200),
+  `offset`.
+
+A few write actions exist. They are loopback-only and CSRF-guarded
+([ADR-015](decisions/ADR-015-refresh-action-endpoint.md),
+[ADR-018](decisions/ADR-018-security-triage-store.md)):
+
+- `POST /api/refresh` runs collect and ingest.
+- `POST /api/security/{dismiss,reopen,dismiss-matching,mute,unmute}` and `PUT /api/prefs/:key` write
+  only `triage.db`, never the main store.
 
 ## Troubleshooting
 
-- **`ingest` says "archive not found"** — run `agent-lens collect` first (or check
-  `AGENT_LENS_DATA`).
-- **`serve` says "db not found"** — run `agent-lens ingest` first.
-- **Timer not firing while logged out (Linux)** — confirm linger: `loginctl show-user $USER -p Linger`
-  should print `Linger=yes`; if not, `loginctl enable-linger $USER`.
-- **Re-ingest didn't pick up a parser change** — use `agent-lens ingest --full`.
-- **A source shows nothing** — run `agent-lens config` and check the **Sources** block resolves its
-  `configDir` to the path you expect, and that `<dataDir>/archive/<label>/projects/` has files.
+| Symptom | Fix |
+|---|---|
+| `serve` says "db not found" | Run `agent-lens ingest` first |
+| The timer doesn't run while you're logged out (Linux) | `loginctl show-user $USER -p Linger` should print `Linger=yes`. If not, run `loginctl enable-linger $USER` |
+| A source shows nothing | Check its `configDir` in `agent-lens config`, and that `<dataDir>/archive/<label>/projects/` has files |
 
-## Privacy
-
-- Collection only copies between local paths; the server binds `127.0.0.1` and refuses a routable
-  host unless `AGENT_LENS_ALLOW_NONLOCAL=1`. No outbound network calls anywhere.
-- Secrets (e.g. `~/.claude/.credentials.json`) are never copied.
-- `data/` and `agent-lens.config.json` are gitignored — the local store is as sensitive as the
-  original transcripts. See `docs/decisions/ADR-005-privacy-posture.md`.
+Ingest problems are covered in the [ingest runbook](INGEST-RUNBOOK.md#troubleshooting).

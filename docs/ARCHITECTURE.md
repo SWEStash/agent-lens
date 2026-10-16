@@ -1,18 +1,15 @@
-# Agent Lens — Architecture Specification
+# Architecture
 
-The canonical system design for Agent Lens: what the pieces are, how data flows, and how the ingest
-pipeline scales. For *operations* (commands, env vars, troubleshooting) see
-[INGEST-RUNBOOK.md](INGEST-RUNBOOK.md) and the [Operations Guide](USAGE.md); for the *why* behind each
-choice see the [Architecture Decision Records](decisions/). This document is the structural source of
-truth those guides link back to.
+What the pieces are, how data flows, and how ingest scales. Commands and settings are in the
+[usage guide](USAGE.md) and the [ingest runbook](INGEST-RUNBOOK.md); the reasons behind each choice
+are in the [ADRs](decisions/).
 
 ## 1. Context
 
-Agent Lens turns the rolling, soon-pruned session traces that coding agents (today: Claude Code) write
-to disk into a durable, queryable store you browse locally. It is a **local-only** (ADR-005), three-stage
-pipeline: a dumb durable **collector**, a re-runnable **ingest** parser, and a read-only **browse**
-server. The archive is the source of truth; the database is a derived projection that can always be
-rebuilt from it (ADR-001).
+Agent Lens turns the session traces that coding agents (today, Claude Code) write and later prune
+into a durable store you browse locally. It is a local-only (ADR-005) pipeline of three stages: a
+simple **collector**, a rerunnable **ingest** parser, and a read-only **browse** server. The archive
+is the source of truth, and the database can always be rebuilt from it (ADR-001).
 
 ```mermaid
 flowchart LR
@@ -59,14 +56,13 @@ flowchart TB
   SERVER --> WEB
 ```
 
-`contracts` is the shared, agent-agnostic **type** leaf — DB row shapes mirroring the DDL (ADR-024)
-and the HTTP response shapes the server returns and the SPA consumes (ADR-026). It is pure types with
-zero runtime and zero `node:` imports, which is what lets the browser bundle share the exact shapes
-the server emits: `core` re-exports the row types, so `ingest`/`server`/`cli` reach them unchanged,
-while `web` imports the leaf directly rather than a barrel full of Node code.
+`contracts` holds the types that cross package boundaries: DB rows that mirror the DDL (ADR-024) and
+the HTTP responses (ADR-026). It has no runtime code and no `node:` imports, so the browser bundle
+shares the exact shapes the server sends. `core` re-exports the row types for `ingest`, `server`,
+and `cli`; `web` imports `contracts` directly.
 
-`core` owns the schema itself plus the agent-agnostic runtime (collector, paths, pricing, service
-install); adding a new agent is a new `SourceAdapter` in `ingest` with no schema change (ADR-003/008).
+`core` owns the schema and the agent-agnostic runtime: the collector, paths, pricing, and service
+install. A new agent is a new `SourceAdapter` in `ingest`, with no schema change (ADR-003, ADR-008).
 
 **Concurrency.** SQLite runs in WAL mode (`PRAGMA journal_mode = WAL`). Ingest is the single writer (a
 oneshot that opens, writes, closes); the server is a long-lived reader opened read-only
@@ -82,7 +78,7 @@ rebuilds only the derived rows that could have changed. The archive is re-read, 
 ```mermaid
 flowchart TD
   START(["agent-lens-ingest"]) --> FULL{"--full?"}
-  FULL -->|yes| RESET["openRaw + resetSchema(bulk)<br/>(drop & recreate — migration path;<br/>4 events indexes + FTS left out)"]
+  FULL -->|yes| RESET["openRaw + resetSchema(bulk)<br/>(drop and recreate: the migration path;<br/>4 events indexes + FTS left out)"]
   FULL -->|no| OPEN["openDb (apply schema if absent)"]
   RESET --> DISC
   OPEN --> DISC["adapter.discover()<br/>mirror + .versions/*"]
@@ -108,23 +104,23 @@ flowchart TD
 
 Key properties (full rationale in [ADR-010](decisions/ADR-010-incremental-scalable-ingest.md)):
 
-- **Stat short-circuit.** Unchanged `size`+`mtime` ⇒ skip without reading or hashing — per-run I/O
-  tracks the delta, not the whole archive + every `.versions` snapshot.
+- **Stat short-circuit.** A file with unchanged `size` and `mtime` is skipped without reading or
+  hashing, so a run's I/O tracks what changed, not the size of the archive.
 - **Idempotent writes.** Events are keyed by `uuid` with `ON CONFLICT DO NOTHING`; ingesting the mirror
   and all divergence backups deduplicates to the maximal history (ADR-001/002).
-- **Dirty-session rebuild.** Only sessions touched this run — expanded to their subagent-linkage
-  neighborhood (spawned children + spawner parents, by fixpoint) — have their turns/aggregates/linkage,
-  classification, security findings, and tool-error classification recomputed. `--full` rebuilds everything.
+- **Dirty-session rebuild.** Only the sessions touched this run, plus their linked subagents and
+  parents (expanded to a fixpoint), get their turns, aggregates, linkage, classification, findings,
+  and error types recomputed. `--full` rebuilds everything.
 - **Streaming.** Files over 8 MB stream in 64 KB chunks with a boundary-safe `StringDecoder`, bounding
   memory; the streaming hash equals the whole-file hash so skip decisions are path-independent.
 
 ### Session → turn → event hierarchy
 
-The store is event-grained (ADR-003): `session › turn › event`. A *turn* is one user prompt →
-assistant completion, derived in `rebuildDerived`. Subagent (sidechain) sessions are linked back to the
-spawning parent turn via the `Task`/`Agent` tool call's `spawned_session_id`. `raw_json` is stored
-gzip-compressed (ADR-011) and decoded by `unpackRaw` when a line has to be re-derived — reading a
-transcript does not touch it, because an event's `text` and `thinking` are their own columns (ADR-031).
+The store is event-grained (ADR-003): `session › turn › event`. A *turn* is one user prompt and the
+assistant's answer, derived in `rebuildDerived`. A subagent session links back to the parent turn
+that spawned it through the `Task` or `Agent` tool call's `spawned_session_id`. `raw_json` is stored
+gzip-compressed (ADR-011) and decoded only when a line has to be re-derived. Reading a transcript
+never touches it, because an event's `text` and `thinking` are their own columns (ADR-031).
 
 ```mermaid
 erDiagram

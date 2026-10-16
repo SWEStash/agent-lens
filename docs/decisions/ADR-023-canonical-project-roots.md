@@ -81,15 +81,15 @@ required.
 A session's project is keyed on the **last** cwd it used. A session opened at a repo root that ended
 in a subdirectory was folded back into the repo by rule 1 while the repo existed. Once the repo was
 deleted, a `--full` rebuild kept the subdirectory as its own project (rule 2's gate), so the store
-and its rebuild disagreed. On the real archive that was one byteview session, opened in `byteview`
-and ended in `byteview/.local/plans`, which gained 14 `write_outside_project` findings on rebuild.
+and its rebuild disagreed. On the real archive that was one session, opened in `<repo>` and ended
+in `<repo>/.local/plans`, which gained 14 `write_outside_project` findings on rebuild.
 
 **`sessionCwd(first, last)`**: when the last cwd no longer exists and the session was opened in one
 of its ancestors, the launch directory is used instead. The archive keeps that evidence (the first
-line's cwd; for the byteview session it is also the directory the transcript is filed under), so
+line's cwd; for that session it is also the directory the transcript is filed under), so
 nothing new is stored. A rebuild now gives the same answer whether or not the repo is still on disk.
 
 Rejected: keying every session on its first cwd. Of 17,982 archived sessions, 44 change cwd and 6
 of those resolve to a different git root. The other 5 include sessions that are right today and
-that rule would move, such as one opened in `relevamiento-comunidades-fe` and spent in its sibling
-`-data-be`.
+that rule would move, such as one opened in a frontend repo and spent in its sibling
+backend repo.
