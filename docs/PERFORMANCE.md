@@ -74,6 +74,8 @@ server holds one. "Written" is physical (`write_bytes`), "read" includes page-ca
 | `--full`, before | 444–458 s | 1.7 GB | 144–146 GB | 53 GB | — |
 | `--full`, after | 301–330 s | 2.4 GB | 20 GB | 45 GB | 1.0 GB |
 | `--full`, indexes built after the load | 294–395 s | 2.4 GB | 12.5–13 GB | 43 GB | 1.0 GB |
+| `--full`, each turn_id written once | 347 s (vs 437 s same session) | 2.4 GB | 9.6 GB (vs 13.1) | 36 GB | 1.0 GB |
+| incremental, 5 changed files, each turn_id written once | ~2 s | 5 MB (vs 11) | 18 MB (vs 47) | 0.5 GB | 310 MB |
 
 What changed:
 
@@ -93,6 +95,13 @@ What changed:
   `finishBulkLoad` rebuilds it from `SCHEMA_SQL` after `rebuildDerived`. In a same-session A/B the
   old code took 460 s and wrote 20.8 GB (63 GB of write calls); the new one wrote 12.5–13 GB (25 GB)
   in 294–395 s, the wall time moving with machine load.
+- **Each event's `turn_id` is written once.** An events row averages ~3.4 KB, and NULL to a value
+  resizes it, so every write rewrote the whole row. Events used to be inserted with NULL, nulled
+  again for the rebuild's scope, then set: twice per event of every session a run touched. Now
+  `--full` inserts each event with the turn its line order implies, which is the final one for 99.4%
+  of real events, and `rebuildTurns` writes only those that differ. The turn delete in between runs
+  with foreign keys deferred to the commit. On a run that re-reads the whole archive through the
+  incremental path, writes fell from 18.1 to 2.1 GB.
 - **Turning the journal off was measured and rejected.** `journal_mode = OFF` with
   `synchronous = OFF` brings a rebuild's writes to ~13.5 GB, but SQLite refuses to leave WAL while
   the server has the store open (`database is locked`), and it gives up the rollback above.

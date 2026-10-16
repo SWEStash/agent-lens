@@ -207,6 +207,7 @@ export function runIngest(argv: string[] = process.argv.slice(2)): void {
   // and a failed run rolls back whole. It also replaces a commit and WAL checkpoint per file with one.
   // --full runs with foreign keys off, because resetSchema's drops need that and the PRAGMA is a
   // no-op inside a transaction. foreign_key_check before the commit puts the guarantee back.
+  // rebuildDerived defers foreign keys to this commit, so a violation there fails the run as a whole.
   if (args.full) db.exec("PRAGMA foreign_keys = OFF");
   let report: Omit<IngestReport, "pruned">;
   try {
@@ -263,7 +264,7 @@ export function runIngest(argv: string[] = process.argv.slice(2)): void {
           }
 
           const lines = decision.buf ? decision.buf.toString("utf8").split("\n") : streamLines(file.path);
-          ingestFile(db, stmts, adapter, file, lines, { size: st.size, mtimeMs, hash: decision.hash }, now, stats);
+          ingestFile(db, stmts, adapter, file, lines, { size: st.size, mtimeMs, hash: decision.hash }, now, stats, { provisionalTurns: args.full });
           dirty.add(file.sessionId);
         }
 
