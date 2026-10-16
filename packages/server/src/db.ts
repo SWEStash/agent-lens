@@ -1,6 +1,6 @@
 import { existsSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
-import { SCHEMA_VERSION, severityRank, activePricing, canonicalModel, SECURITY_CATEGORIES, errorKind, type ToolErrorType } from "@agent-lens/core";
+import { SCHEMA_VERSION, SEVERITY_ORDER, severityRank, activePricing, canonicalModel, SECURITY_CATEGORIES, errorKind, type ToolErrorType } from "@agent-lens/core";
 import { TASK_FAILURES_TAG, TASK_NOTIFICATION_TAG, TASK_RESULT_TAG, TASK_STATUS_TAG, TASK_SUMMARY_TAG, xmlTag } from "@agent-lens/transcript-format";
 import type {
   Finding,
@@ -38,7 +38,7 @@ import type {
   WorkflowRunResult,
   FindingsPage,
 } from "@agent-lens/contracts";
-import { tableExists, canonModelSql, queryAll, queryGet, orderBy, pushGrouped, pushDateRange, metaJoin, metaProjection } from "./sql-util.js";
+import { tableExists, canonModelSql, queryAll, queryGet, orderBy, pushGrouped, pushDateRange, metaJoin, metaProjection, placeholders, whereClause, type SortDir } from "./sql-util.js";
 import type {
   CategoryRow,
   ToolCallProjection,
@@ -59,9 +59,23 @@ import type {
   WorkflowLaunchRow,
   WorkflowResultRow,
 } from "./rows.js";
-import { sessionUsage, splitOf, tokensOf, costOf, unpricedOf, USAGE_SUMS, type UsageRow } from "./usage.js";
+import { sessionUsage, usageBySession, splitOf, tokensOf, costOf, unpricedOf } from "./usage.js";
 
 export type DB = DatabaseSync;
+
+// The values each list endpoint accepts, declared once: app.ts parses the query against these, and
+// the filter types below are derived from them, so a new key cannot be accepted by one and not the other.
+export const SESSION_SORTS = ["started", "title", "turns", "tokens", "cost", "duration", "errors", "security"] as const;
+export const FILE_SORTS = ["last_ts", "first_ts", "changes", "sessions", "path"] as const;
+export const FINDING_SORTS = ["severity", "session", "rule", "category", "time"] as const;
+export const FINDING_STATUSES = ["open", "dismissed", "muted", "all"] as const;
+
+/** A session's display title: its AI title, else its slug. `||`, not `??` — an empty ai_title falls
+ *  through too, matching the SQL sort key `COALESCE(NULLIF(s.ai_title, ''), s.slug)`. */
+const displayTitle = (aiTitle: string | null, slug: string | null): string | null => aiTitle || slug || null;
+
+/** The `models` column of a session row: the distinct canonical model ids it spent tokens under. */
+const SESSION_MODELS_SQL = `(SELECT GROUP_CONCAT(DISTINCT ${canonModelSql("model")}) FROM token_usage t WHERE t.session_id = s.id) AS models`;
 
 /** Page cache for the read connection, in KiB. */
 const READ_CACHE_KIB = 64 * 1024;
@@ -112,8 +126,8 @@ export interface SessionFilters {
   /** Keep only sessions that have ≥1 errored tool call of one of these error types. */
   errorType?: string[];
   /** Column to sort the whole filtered list by (before pagination). Defaults to "started". */
-  sort?: "started" | "title" | "turns" | "tokens" | "cost" | "duration" | "errors" | "security";
-  dir?: "asc" | "desc";
+  sort?: (typeof SESSION_SORTS)[number];
+  dir?: SortDir;
   limit: number;
   offset: number;
 }
@@ -182,13 +196,14 @@ const TOKENS_SORT_SQL = `(SELECT COALESCE(SUM(t.input_tokens + t.output_tokens
     FROM token_usage t WHERE t.session_id = s.id)`;
 
 /**
- * Security ordering: worst severity first, finding count as the tiebreak — the same metric the JS
- * sort computed as `(severityRank(worst) + 1) * 1e6 + finding_count`. The `+ 1` shift is why an
- * unranked/absent severity is 0 here (`severityRank` returns -1 for it), matching SEVERITY_ORDER.
+ * `severityRank` (core SEVERITY_ORDER) in SQL, shifted up by one: info=1 … critical=5, and anything
+ * else — unknown or absent — 0, so it sorts below info. Generated, so it cannot drift from the order.
  */
-const SECURITY_SORT_SQL = `(CASE worst_severity
-      WHEN 'critical' THEN 5 WHEN 'high' THEN 4 WHEN 'medium' THEN 3 WHEN 'low' THEN 2 WHEN 'info' THEN 1
-      ELSE 0 END) * 1000000 + finding_count`;
+const severityRankSql = (col: string): string =>
+  `CASE ${col} ${SEVERITY_ORDER.map((s, i) => `WHEN '${s}' THEN ${i + 1}`).join(" ")} ELSE 0 END`;
+
+/** Security ordering: worst severity first, finding count as the tiebreak. */
+const SECURITY_SORT_SQL = `(${severityRankSql("worst_severity")}) * 1000000 + finding_count`;
 
 /**
  * Cost for one session, in SQL — a transcription of `costForUsage` (rate per 1M tokens, per class)
@@ -230,7 +245,8 @@ export function ratesCte(): { sql: string; params: unknown[] } {
   };
 }
 
-export function listSessions(db: DB, f: SessionFilters): SessionsPage {
+/** The WHERE clause (over `sessions s`) and its bound params for the session list's filters. */
+function sessionListWhere(f: SessionFilters): { sql: string; params: unknown[] } {
   const where: string[] = [];
   const params: unknown[] = [];
   if (f.source) (where.push("s.source_id = ?"), params.push(f.source));
@@ -241,11 +257,11 @@ export function listSessions(db: DB, f: SessionFilters): SessionsPage {
   if (f.kind === "subagent") where.push("s.is_sidechain = 1");
   // Multi-select: session has ≥1 finding of any listed severity / ≥1 errored tool call of any listed type.
   if (f.severity?.length) {
-    where.push(`EXISTS (SELECT 1 FROM findings fd WHERE fd.session_id = s.id AND fd.severity IN (${f.severity.map(() => "?").join(",")}))`);
+    where.push(`EXISTS (SELECT 1 FROM findings fd WHERE fd.session_id = s.id AND fd.severity IN (${placeholders(f.severity)}))`);
     params.push(...f.severity);
   }
   if (f.errorType?.length) {
-    where.push(`EXISTS (SELECT 1 FROM tool_calls tc WHERE tc.session_id = s.id AND tc.error_type IN (${f.errorType.map(() => "?").join(",")}))`);
+    where.push(`EXISTS (SELECT 1 FROM tool_calls tc WHERE tc.session_id = s.id AND tc.error_type IN (${placeholders(f.errorType)}))`);
     params.push(...f.errorType);
   }
   if (f.model) {
@@ -257,8 +273,8 @@ export function listSessions(db: DB, f: SessionFilters): SessionsPage {
   if (f.q && f.q.trim()) {
     // Match transcript text (FTS) OR the session's own name (slug/ai_title) OR its project path, so a
     // query like "fix-youtube-embed-csp-policy" finds the session by slug even when that string never
-    // appears verbatim in an event. A project-path *subquery* (not a join on p.path) keeps the
-    // un-joined COUNT(*) query above valid. SQLite LIKE is case-insensitive for ASCII.
+    // appears verbatim in an event. A project-path *subquery* (not a join on p.path) keeps
+    // listSessions' un-joined COUNT(*) query valid. SQLite LIKE is case-insensitive for ASCII.
     const like = `%${f.q.trim()}%`;
     where.push(
       `(s.id IN (SELECT DISTINCT e.session_id FROM events e JOIN events_fts f ON f.rowid = e.rowid WHERE events_fts MATCH ?)
@@ -267,18 +283,22 @@ export function listSessions(db: DB, f: SessionFilters): SessionsPage {
     );
     params.push(toFtsQuery(f.q), like, like, like);
   }
-  const whereSql = where.length ? `WHERE ${where.join(" AND ")}` : "";
+  return { sql: whereClause(where), params };
+}
+
+export function listSessions(db: DB, f: SessionFilters): SessionsPage {
+  const { sql: whereSql, params } = sessionListWhere(f);
 
   const total = queryGet<CountRow>(db, `SELECT COUNT(*) n FROM sessions s ${whereSql}`, ...params)!.n;
 
   const baseSelect = `SELECT s.id, s.ai_title, s.slug, s.source_id, s.is_sidechain, s.started_at,
               s.duration_ms, s.event_count, s.turn_count, p.path AS project_path,
-              (SELECT GROUP_CONCAT(DISTINCT ${canonModelSql("model")}) FROM token_usage t WHERE t.session_id = s.id) AS models,
+              ${SESSION_MODELS_SQL},
               (SELECT COUNT(*) FROM tool_calls tc WHERE tc.session_id = s.id) AS tool_call_count,
               (SELECT COUNT(*) FROM tool_calls tc WHERE tc.session_id = s.id AND tc.status = 'error') AS tool_error_count,
               (SELECT COUNT(*) FROM findings fd WHERE fd.session_id = s.id) AS finding_count,
               (SELECT fd.severity FROM findings fd WHERE fd.session_id = s.id
-                 ORDER BY CASE fd.severity WHEN 'critical' THEN 4 WHEN 'high' THEN 3 WHEN 'medium' THEN 2 WHEN 'low' THEN 1 WHEN 'info' THEN 0 ELSE -1 END DESC
+                 ORDER BY ${severityRankSql("fd.severity")} DESC
                  LIMIT 1) AS worst_severity
        FROM sessions s LEFT JOIN projects p ON p.id = s.project_id
        ${whereSql}`;
@@ -319,32 +339,11 @@ export function listSessions(db: DB, f: SessionFilters): SessionsPage {
 }
 
 /** Add per-session `tokens`, `token_split`, `cost` (USD, cache-aware) and `title` to each list row,
- * turning the projection into the response shape. Costs are grouped by model so per-model rates apply.
- * IDs are chunked so the whole-list sort path (which can pass thousands of sessions) stays under
- * SQLite's bound-parameter limit. */
+ * turning the projection into the response shape. Costs are grouped by model so per-model rates apply. */
 function attachSessionCost(db: DB, rows: SessionListRow[]): SessionSummary[] {
-  // Group each session's per-model usage rows, then reuse the shared split/cost helpers. IDs are
-  // chunked so the whole-list sort path (which can pass thousands of sessions) stays under SQLite's
-  // bound-parameter limit.
-  const usageBySession = new Map<string, UsageRow[]>();
-  const ids = rows.map((r) => r.id);
-  const CHUNK = 800;
-  for (let i = 0; i < ids.length; i += CHUNK) {
-    const batch = ids.slice(i, i + CHUNK);
-    const ph = batch.map(() => "?").join(",");
-    const usage = queryAll<UsageRow & { session_id: string }>(
-      db,
-      `SELECT session_id, model, ${USAGE_SUMS} FROM token_usage WHERE session_id IN (${ph}) GROUP BY session_id, model`,
-      ...batch,
-    );
-    for (const u of usage) {
-      const list = usageBySession.get(u.session_id) ?? [];
-      list.push(u);
-      usageBySession.set(u.session_id, list);
-    }
-  }
+  const usage = usageBySession(db, rows.map((r) => r.id));
   return rows.map(({ ai_title, slug, ...r }) => {
-    const u = usageBySession.get(r.id) ?? [];
+    const u = usage.get(r.id) ?? [];
     const split = splitOf(u);
     return {
       ...r,
@@ -352,7 +351,7 @@ function attachSessionCost(db: DB, rows: SessionListRow[]): SessionSummary[] {
       token_split: split,
       cost: costOf(u),
       unpriced_models: unpricedOf(u),
-      title: ai_title || slug || null,
+      title: displayTitle(ai_title, slug),
     };
   });
 }
@@ -567,7 +566,7 @@ function loadParent(db: DB, session: SessionRow): SessionParent | null {
     session.parent_turn_id,
     session.parent_session_id,
   );
-  return p ? { id: p.id, title: p.ai_title || p.slug || null, turn_seq: p.turn_seq ?? null } : null;
+  return p ? { id: p.id, title: displayTitle(p.ai_title, p.slug), turn_seq: p.turn_seq ?? null } : null;
 }
 
 /** Spawned subagents (schema v3): sessions whose parent_session_id points back here. Nesting them
@@ -581,15 +580,16 @@ function loadChildren(db: DB, id: string): SessionChild[] {
   const children = queryAll<SessionChildRow>(
     db,
     `SELECT s.id, s.ai_title, s.slug, s.turn_count, s.started_at, s.workflow_run_id,
-            (SELECT GROUP_CONCAT(DISTINCT ${canonModelSql("model")}) FROM token_usage t WHERE t.session_id = s.id) AS models
+            ${SESSION_MODELS_SQL}
             ${metaProjection(hasMeta)}
      FROM sessions s ${metaJoin(hasMeta)}
      WHERE s.parent_session_id = ? ORDER BY s.started_at`,
     id,
   );
+  const usage = usageBySession(db, children.map((ch) => ch.id));
   return children.map(({ ai_title, slug, ...ch }) => {
-    const u = sessionUsage(db, ch.id);
-    return { ...ch, title: ai_title || slug || null, tokens: tokensOf(splitOf(u)), cost: costOf(u) };
+    const u = usage.get(ch.id) ?? [];
+    return { ...ch, title: displayTitle(ai_title, slug), tokens: tokensOf(splitOf(u)), cost: costOf(u) };
   });
 }
 
@@ -657,7 +657,7 @@ function withSessionTotals(
     token_split: split,
     cost: costOf(usage),
     unpriced_models: unpricedOf(usage),
-    title: session.ai_title || session.slug || null,
+    title: displayTitle(session.ai_title, session.slug),
     tool_call_count: toolRows.length,
     tool_error_count,
     tool_rejection_count,
@@ -739,7 +739,7 @@ function loadAgents(db: DB, runId: string): { agents: WorkflowAgent[]; stats: Wo
   const agentRows = queryAll<WorkflowAgentRow>(
     db,
     `SELECT s.id, s.ai_title, s.slug, s.turn_count, s.started_at, s.ended_at, s.duration_ms,
-            (SELECT GROUP_CONCAT(DISTINCT ${canonModelSql("model")}) FROM token_usage t WHERE t.session_id = s.id) AS models
+            ${SESSION_MODELS_SQL}
             ${metaProjection(hasMeta)}
      FROM sessions s ${metaJoin(hasMeta)}
      WHERE s.workflow_run_id = ? ORDER BY s.started_at`,
@@ -750,9 +750,10 @@ function loadAgents(db: DB, runId: string): { agents: WorkflowAgent[]; stats: Wo
   let total_cost = 0;
   let started_at: string | null = null;
   let ended_at: string | null = null;
+  const usage = usageBySession(db, agentRows.map((r) => r.id));
   const agents: WorkflowAgent[] = agentRows.map(({ ai_title, slug, ...r }) => {
-    const u = sessionUsage(db, r.id);
-    const a = { ...r, title: ai_title || slug || null, tokens: tokensOf(splitOf(u)), cost: costOf(u) };
+    const u = usage.get(r.id) ?? [];
+    const a = { ...r, title: displayTitle(ai_title, slug), tokens: tokensOf(splitOf(u)), cost: costOf(u) };
     total_tokens += a.tokens;
     total_cost += a.cost;
     if (a.started_at && (!started_at || a.started_at < started_at)) started_at = a.started_at;
@@ -877,7 +878,7 @@ export function getWorkflow(db: DB, runId: string): WorkflowDetail | null {
     input_json: wf.input_json ?? null,
     completion,
     run,
-    parent: { id: wf.parent_session_id, title: wf.parent_ai_title || wf.parent_slug || null, turn_seq: wf.turn_seq ?? null },
+    parent: { id: wf.parent_session_id, title: displayTitle(wf.parent_ai_title, wf.parent_slug), turn_seq: wf.turn_seq ?? null },
     agents,
     stats,
   };
@@ -931,8 +932,8 @@ export interface FileFilters {
   q?: string; // path substring
   source?: string;
   project?: string;
-  sort?: "last_ts" | "first_ts" | "changes" | "sessions" | "path";
-  dir?: "asc" | "desc";
+  sort?: (typeof FILE_SORTS)[number];
+  dir?: SortDir;
   limit?: number;
   offset?: number;
 }
@@ -950,7 +951,7 @@ export function listFiles(db: DB, f: FileFilters = {}): FilesPage {
   if (f.q && f.q.trim()) (where.push("fc.file_path LIKE ?"), params.push(`%${f.q.trim()}%`));
   if (f.project) (where.push("fc.project_id = ?"), params.push(f.project));
   if (f.source) (where.push("EXISTS (SELECT 1 FROM sessions s WHERE s.id = fc.session_id AND s.source_id = ?)"), params.push(f.source));
-  const whereSql = where.length ? ` WHERE ${where.join(" AND ")}` : "";
+  const whereSql = whereClause(where);
 
   const grouped = `SELECT fc.project_id, fc.file_path,
        COUNT(DISTINCT fc.session_id) AS sessions,
@@ -959,7 +960,7 @@ export function listFiles(db: DB, f: FileFilters = {}): FilesPage {
        SUM(fc.lines_removed) AS lines_removed,
        MIN(fc.timestamp) AS first_ts,
        MAX(fc.timestamp) AS last_ts
-     FROM file_changes fc${whereSql}
+     FROM file_changes fc ${whereSql}
      GROUP BY fc.project_id, fc.file_path`;
 
   const total = queryGet<CountRow>(db, `SELECT COUNT(*) n FROM (${grouped})`, ...params)!.n;
@@ -1023,7 +1024,7 @@ export function getFileTimeline(db: DB, filePath: string, projectId?: string): F
     if (!g) {
       g = {
         session_id: r.session_id,
-        title: r.ai_title || r.slug || null,
+        title: displayTitle(r.ai_title, r.slug),
         source_id: r.source_id,
         started_at: r.started_at,
         category: cat ? ((cat.get(r.session_id) as CategoryRow | undefined)?.category ?? null) : null,
@@ -1093,7 +1094,7 @@ export function getSkill(db: DB, name: string): SkillDetail | null {
   );
 
   if (!versions.length && !sessionRows.length) return null;
-  const sessions: SkillSession[] = sessionRows.map(({ ai_title, slug, ...s }) => ({ ...s, title: ai_title || slug || null }));
+  const sessions: SkillSession[] = sessionRows.map(({ ai_title, slug, ...s }) => ({ ...s, title: displayTitle(ai_title, slug) }));
   const call_count = sessions.reduce((a, s) => a + s.fire_count, 0);
   return { name, versions, sessions, call_count };
 }
@@ -1110,18 +1111,17 @@ export interface FindingFilters {
   from?: string;
   to?: string;
   /** open (default; excludes dismissed + muted) | dismissed | muted | all. */
-  status?: "open" | "dismissed" | "muted" | "all";
+  status?: (typeof FINDING_STATUSES)[number];
   /** Sort the whole filtered list before pagination. Defaults to "severity" (most-severe first). */
-  sort?: "severity" | "session" | "rule" | "category" | "time";
-  dir?: "asc" | "desc";
+  sort?: (typeof FINDING_SORTS)[number];
+  dir?: SortDir;
   limit: number;
   offset: number;
 }
 
 // Rank severities inside SQL so the list can be severity-ordered and paginated without materializing
-// everything (mirrors SEVERITY_ORDER in core: info=1 … critical=5).
-const SEVERITY_RANK_SQL =
-  "CASE f.severity WHEN 'critical' THEN 5 WHEN 'high' THEN 4 WHEN 'medium' THEN 3 WHEN 'low' THEN 2 WHEN 'info' THEN 1 ELSE 0 END";
+// everything.
+const SEVERITY_RANK_SQL = severityRankSql("f.severity");
 
 // A finding is muted when a muted_rules row matches its rule at global/project/source scope. Only valid
 // when the triage DB is ATTACHed (createApp does this); guarded by triageAttached() everywhere it's used.
@@ -1152,6 +1152,10 @@ function findingWhere(f: FindingScope): { sql: string[]; params: unknown[] } {
   return { sql, params };
 }
 
+/** The LEFT JOIN that `statusWhere` reads its `d` alias from. Empty when triage is absent. */
+const dismissedJoin = (attached: boolean): string =>
+  attached ? "LEFT JOIN triage.dismissed_findings d ON d.finding_id = f.id" : "";
+
 /** Status → WHERE fragment over the dismissed LEFT JOIN (`d`) + MUTED_SQL. Empty when triage absent. */
 function statusWhere(status: FindingFilters["status"], attached: boolean): string {
   if (!attached) return status === "dismissed" || status === "muted" ? "1 = 0" : ""; // no triage → nothing dismissed/muted
@@ -1180,8 +1184,8 @@ export function listFindings(db: DB, f: FindingFilters): FindingsPage {
   const w = findingWhere(f);
   const st = statusWhere(f.status ?? "open", attached);
   const where = [...w.sql, ...(st ? [st] : [])];
-  const whereSql = where.length ? `WHERE ${where.join(" AND ")}` : "";
-  const dismissJoin = attached ? "LEFT JOIN triage.dismissed_findings d ON d.finding_id = f.id" : "";
+  const whereSql = whereClause(where);
+  const dismissJoin = dismissedJoin(attached);
   const triageCols = attached
     ? `, (d.finding_id IS NOT NULL) AS dismissed, d.note AS dismiss_note, d.dismissed_at, ${MUTED_SQL} AS muted`
     : `, 0 AS dismissed, NULL AS dismiss_note, NULL AS dismissed_at, 0 AS muted`;
@@ -1242,8 +1246,8 @@ export function openFindingIds(db: DB, f: FindingScope): string[] {
     `SELECT f.id
      FROM findings f
      JOIN sessions s ON s.id = f.session_id
-     ${attached ? "LEFT JOIN triage.dismissed_findings d ON d.finding_id = f.id" : ""}
-     ${where.length ? `WHERE ${where.join(" AND ")}` : ""}`,
+     ${dismissedJoin(attached)}
+     ${whereClause(where)}`,
     ...w.params,
   ).map((r) => r.id);
 }
@@ -1260,15 +1264,16 @@ export function securitySummary(db: DB): SecuritySummary {
     return { total: 0, sessions_flagged: 0, dismissed: 0, muted: 0, by_severity: [], by_category: [], by_rule: [], categories };
   }
   const attached = triageAttached(db);
-  const dismissJoin = attached ? "LEFT JOIN triage.dismissed_findings d ON d.finding_id = f.id" : "";
+  const dismissJoin = dismissedJoin(attached);
   const base = `FROM findings f JOIN sessions s ON s.id = f.session_id ${dismissJoin}`;
-  const openWhere = attached ? `WHERE d.finding_id IS NULL AND NOT ${MUTED_SQL}` : "";
+  // The same statusWhere the list and bulk dismiss use, so the header counts cannot drift from them.
+  const openWhere = whereClause([statusWhere("open", attached)]);
 
   const scalar = (sql: string): number => queryGet<CountRow>(db, sql)!.n;
   const total = scalar(`SELECT COUNT(*) n ${base} ${openWhere}`);
   const sessions_flagged = scalar(`SELECT COUNT(DISTINCT f.session_id) n ${base} ${openWhere}`);
-  const dismissed = attached ? scalar(`SELECT COUNT(*) n FROM findings f LEFT JOIN triage.dismissed_findings d ON d.finding_id = f.id WHERE d.finding_id IS NOT NULL`) : 0;
-  const muted = attached ? scalar(`SELECT COUNT(*) n ${base} WHERE d.finding_id IS NULL AND ${MUTED_SQL}`) : 0;
+  const dismissed = attached ? scalar(`SELECT COUNT(*) n FROM findings f ${dismissJoin} WHERE ${statusWhere("dismissed", attached)}`) : 0;
+  const muted = attached ? scalar(`SELECT COUNT(*) n ${base} WHERE ${statusWhere("muted", attached)}`) : 0;
 
   const by_severity = queryAll<SecuritySummary["by_severity"][number]>(
     db,

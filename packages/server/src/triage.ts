@@ -76,7 +76,8 @@ export function reopen(db: TriageDB, ids: string[]): number {
   return n;
 }
 
-export type MuteScope = "global" | "project" | "source";
+export const MUTE_SCOPES = ["global", "project", "source"] as const;
+export type MuteScope = (typeof MUTE_SCOPES)[number];
 
 /** Mute a rule (optionally scoped). Idempotent. */
 export function muteRule(db: TriageDB, ruleId: string, scope: MuteScope = "global", scopeId = "", note?: string | null): void {

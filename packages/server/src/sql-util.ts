@@ -27,6 +27,15 @@ export function queryGet<T>(db: DB, sql: string, ...params: unknown[]): T | unde
   return db.prepare(sql).get(...bind(params)) as T | undefined;
 }
 
+/** `WHERE a AND b …` over the non-empty fragments, or "" when there are none. */
+export function whereClause(parts: string[]): string {
+  const live = parts.filter(Boolean);
+  return live.length ? `WHERE ${live.join(" AND ")}` : "";
+}
+
+/** `?,?,?` — one bound placeholder per value, for an `IN (…)` list. */
+export const placeholders = (values: readonly unknown[]): string => values.map(() => "?").join(",");
+
 /**
  * Append an inclusive `from`/`to` date-range filter on `col` to a WHERE-clause accumulator. Both ends
  * compare the DATE part (`date(col) >= date(?)`) so a picked `to` day includes that whole day — a plain
@@ -71,6 +80,15 @@ export function metaProjection(hasMeta: boolean): string {
   return hasMeta
     ? ", sm.agent_type, sm.agent_description, sm.spawn_depth"
     : ", NULL AS agent_type, NULL AS agent_description, NULL AS spawn_depth";
+}
+
+/** The two sort directions a list endpoint accepts. */
+export const SORT_DIRS = ["asc", "desc"] as const;
+export type SortDir = (typeof SORT_DIRS)[number];
+
+/** `raw` when it is one of `values`, else undefined — parsing a query-string enum against its allowlist. */
+export function pickEnum<T extends string>(values: readonly T[], raw: unknown): T | undefined {
+  return values.find((v) => v === raw);
 }
 
 /**

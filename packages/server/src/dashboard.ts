@@ -5,10 +5,11 @@
  * (input / output / cache-creation / cache-read); cache-read is never folded into a single
  * "tokens" number because it dominates and misleads. Cost is derived via the shared pricing table.
  */
-import { canonicalModel, costForUsage, rateForModel, unpricedModels, SYNTHETIC_MODEL, errorKind, type ToolErrorType } from "@agent-lens/core";
+import { canonicalModel, rateForModel, SYNTHETIC_MODEL, errorKind, type ToolErrorType } from "@agent-lens/core";
 import type { DashAudit, DashBreakdowns, DashOverview, DashTime, DashTimeseries, ReviewLatency, TimeseriesPoint } from "@agent-lens/contracts";
 import type { DB } from "./db.js";
-import { tableExists, canonModelSql, pushDateRange, queryAll, queryGet } from "./sql-util.js";
+import { tableExists, canonModelSql, pushDateRange, queryAll, queryGet, placeholders, whereClause } from "./sql-util.js";
+import { addUsage, costOf, hasTokens, rowCost, splitOf, tokensOf, unpricedOf, usageSums, zeroSplit, type UsageRow } from "./usage.js";
 import type {
   BucketCountRow,
   BucketErrorRow,
@@ -21,7 +22,6 @@ import type {
   OverviewCountsRow,
   ReviewLatencyRow,
   SpanRow,
-  UsageAggRow,
   WorkflowStatusAggRow,
 } from "./rows.js";
 
@@ -59,10 +59,8 @@ function sessionWhere(f: DashFilters): Where {
     );
     params.push(...models);
   }
-  return { sql: where.length ? `WHERE ${where.join(" AND ")}` : "", params, models };
+  return { sql: whereClause(where), params, models };
 }
-
-const placeholders = (xs: unknown[]) => xs.map(() => "?").join(",");
 
 /** Append one more predicate to a session WHERE, keeping bound params in positional order. */
 const and = (w: Where, sql: string, params: unknown[] = []): Where => ({
@@ -105,30 +103,6 @@ const andWhere = (w: Where) => (w.sql ? w.sql + " AND" : "WHERE");
  */
 const mainOnly = (w: Where): Where => ({ sql: `${andWhere(w)} s.is_sidechain = 0`, params: w.params, models: w.models });
 
-interface Split {
-  input: number;
-  output: number;
-  cache_creation: number;
-  cache_read: number;
-}
-const zeroSplit = (): Split => ({ input: 0, output: 0, cache_creation: 0, cache_read: 0 });
-
-/** Sum a grouped usage row into a split accumulator. */
-function addUsage(acc: Split, r: UsageAggRow) {
-  acc.input += r.i ?? 0;
-  acc.output += r.o ?? 0;
-  acc.cache_creation += r.cw ?? 0;
-  acc.cache_read += r.cr ?? 0;
-}
-
-/** The per-model cost arguments, unpacked from a usage aggregate's short SQL aliases. */
-const usageForCost = (u: UsageAggRow) => ({
-  input_tokens: u.i ?? 0,
-  output_tokens: u.o ?? 0,
-  cache_creation_input_tokens: u.cw ?? 0,
-  cache_read_input_tokens: u.cr ?? 0,
-});
-
 /**
  * p50/p95 (nearest-rank) plus the sample size, computed **in SQL**.
  *
@@ -161,7 +135,7 @@ function workflowWhere(f: DashFilters): Where {
   const params: unknown[] = [];
   if (f.source) (where.push("source_id = ?"), params.push(f.source));
   pushDateRange(where, params, "started_at", f.from, f.to);
-  return { sql: where.length ? `WHERE ${where.join(" AND ")}` : "", params };
+  return { sql: whereClause(where), params };
 }
 
 /** Aggregate the async-workflow runs (schema v9+): counts by status, success rate over decided runs
@@ -230,23 +204,15 @@ export function dashboardOverview(db: DB, f: DashFilters): DashOverview {
 
   // Per-model usage → token split + cache-aware cost; track unpriced models honestly.
   const uw = withModel(w, "t.model");
-  const usage = queryAll<UsageAggRow>(
+  const usage = queryAll<UsageRow>(
     db,
-    `SELECT t.model model, SUM(t.input_tokens) i, SUM(t.output_tokens) o,
-            SUM(t.cache_creation_input_tokens) cw, SUM(t.cache_read_input_tokens) cr
+    `SELECT t.model model, ${usageSums("t.")}
      FROM token_usage t JOIN sessions s ON s.id = t.session_id ${uw.sql}
      GROUP BY t.model`,
     ...uw.params,
   );
-  const tokens = zeroSplit();
-  let cost = 0;
-  const used: Array<string | null> = [];
-  for (const u of usage) {
-    addUsage(tokens, u);
-    cost += costForUsage(u.model, usageForCost(u));
-    if (u.i || u.o || u.cw || u.cr) used.push(u.model);
-  }
-  const totalTokens = tokens.input + tokens.output + tokens.cache_creation + tokens.cache_read;
+  const tokens = splitOf(usage);
+  const totalTokens = tokensOf(tokens);
 
   // Turn-duration percentiles (work cadence), excluding null durations.
   const tnw = withModel(w, "tn.model");
@@ -282,8 +248,8 @@ export function dashboardOverview(db: DB, f: DashFilters): DashOverview {
     tokens, // {input, output, cache_creation, cache_read}
     total_tokens: totalTokens,
     cache_read_ratio: totalTokens ? tokens.cache_read / totalTokens : 0,
-    cost: Number(cost.toFixed(4)),
-    unpriced_models: unpricedModels(used),
+    cost: costOf(usage),
+    unpriced_models: unpricedOf(usage),
     turn_duration_ms: turnDur,
     session_duration_ms: sessDur,
     workflows: workflowAgg(db, f),
@@ -335,8 +301,7 @@ export function dashboardTimeseries(db: DB, f: DashFilters, bucketParam?: string
   const ew = withModel(w, "e.model");
   for (const u of queryAll<BucketUsageAggRow>(
     db,
-    `SELECT ${expr} b, t.model model, SUM(t.input_tokens) i, SUM(t.output_tokens) o,
-            SUM(t.cache_creation_input_tokens) cw, SUM(t.cache_read_input_tokens) cr
+    `SELECT ${expr} b, t.model model, ${usageSums("t.")}
      FROM token_usage t JOIN sessions s ON s.id = t.session_id
      ${uw.sql} GROUP BY b, t.model`,
     ...uw.params,
@@ -344,7 +309,7 @@ export function dashboardTimeseries(db: DB, f: DashFilters, bucketParam?: string
     if (!u.b) continue;
     const r = get(u.b);
     addUsage(r, u);
-    r.cost += costForUsage(u.model, usageForCost(u));
+    r.cost += rowCost(u);
   }
   for (const s of queryAll<BucketCountRow>(db, `SELECT ${expr} b, COUNT(*) n FROM sessions s ${w.sql} GROUP BY b`, ...w.params)) {
     if (s.b) get(s.b).sessions = s.n;
@@ -397,11 +362,9 @@ function modelBreakdown(db: DB, w: Where): DashBreakdowns["by_model"] {
   const canon = canonModelSql("t.model");
   const modelRows = queryAll<ModelBreakdownRow>(
     db,
-    `SELECT COALESCE(${canon}, '(unknown)') model, SUM(t.input_tokens) i, SUM(t.output_tokens) o,
-            SUM(t.cache_creation_input_tokens) cw, SUM(t.cache_read_input_tokens) cr,
-            COUNT(DISTINCT t.session_id) sessions
+    `SELECT COALESCE(${canon}, '(unknown)') model, ${usageSums("t.")}, COUNT(DISTINCT t.session_id) sessions
      FROM token_usage t JOIN sessions s ON s.id = t.session_id ${uw.sql}
-     GROUP BY 1 ORDER BY (SUM(t.input_tokens)+SUM(t.output_tokens)+SUM(t.cache_creation_input_tokens)+SUM(t.cache_read_input_tokens)) DESC`,
+     GROUP BY 1 ORDER BY (i + o + cw + cr) DESC`,
     ...uw.params,
   );
 
@@ -409,24 +372,26 @@ function modelBreakdown(db: DB, w: Where): DashBreakdowns["by_model"] {
   const unpriced = new Set<string>();
   for (const u of queryAll<ModelBreakdownRow>(
     db,
-    `SELECT COALESCE(t.model, '(unknown)') model, SUM(t.input_tokens) i, SUM(t.output_tokens) o,
-            SUM(t.cache_creation_input_tokens) cw, SUM(t.cache_read_input_tokens) cr
+    `SELECT COALESCE(t.model, '(unknown)') model, ${usageSums("t.")}
      FROM token_usage t JOIN sessions s ON s.id = t.session_id ${uw.sql} GROUP BY t.model`,
     ...uw.params,
   )) {
     const key = canonicalModel(u.model);
-    cost.set(key, (cost.get(key) ?? 0) + costForUsage(u.model, usageForCost(u)));
-    if ((u.i || u.o || u.cw || u.cr) && u.model !== SYNTHETIC_MODEL && !rateForModel(u.model)) unpriced.add(key);
+    cost.set(key, (cost.get(key) ?? 0) + rowCost(u));
+    if (hasTokens(u) && u.model !== SYNTHETIC_MODEL && !rateForModel(u.model)) unpriced.add(key);
   }
 
-  return modelRows.map((u) => ({
-    model: u.model,
-    tokens: { input: u.i ?? 0, output: u.o ?? 0, cache_creation: u.cw ?? 0, cache_read: u.cr ?? 0 },
-    total_tokens: (u.i ?? 0) + (u.o ?? 0) + (u.cw ?? 0) + (u.cr ?? 0),
-    cost: Number((cost.get(u.model) ?? 0).toFixed(4)),
-    sessions: u.sessions ?? 0,
-    priced: !unpriced.has(u.model),
-  }));
+  return modelRows.map((u) => {
+    const tokens = splitOf([u]);
+    return {
+      model: u.model,
+      tokens,
+      total_tokens: tokensOf(tokens),
+      cost: Number((cost.get(u.model) ?? 0).toFixed(4)),
+      sessions: u.sessions,
+      priced: !unpriced.has(u.model),
+    };
+  });
 }
 
 function sourceBreakdown(db: DB, w: Where): DashBreakdowns["by_source"] {

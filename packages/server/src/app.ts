@@ -9,14 +9,14 @@ import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest }
 import fastifyStatic from "@fastify/static";
 import { resolveVersion } from "@agent-lens/core";
 import { renderSessionExport, parseRedactionLevel } from "./export.js";
-import { type DB, lastIngested, schemaStatus, listSources, listProjects, listModels, listSessions, getSession, sessionLocation, getWorkflow, listSkills, getSkill, listFindings, openFindingIds, securitySummary, listFiles, getFileTimeline, safeJson } from "./db.js";
+import { type DB, lastIngested, schemaStatus, listSources, listProjects, listModels, listSessions, getSession, sessionLocation, getWorkflow, listSkills, getSkill, listFindings, openFindingIds, securitySummary, listFiles, getFileTimeline, safeJson, SESSION_SORTS, FILE_SORTS, FINDING_SORTS, FINDING_STATUSES } from "./db.js";
 import { dashboardOverview, dashboardTimeseries, dashboardBreakdowns, dashboardTime, dashboardAudit, type DashFilters } from "./dashboard.js";
 import { writeBlocked, runRefresh, LOOPBACK_HOSTS } from "./refresh.js";
-import { openTriage, dismiss, reopen, muteRule, unmute, listMutes, type TriageDB } from "./triage.js";
+import { openTriage, dismiss, reopen, muteRule, unmute, listMutes, MUTE_SCOPES, type TriageDB } from "./triage.js";
 import { about, type AboutContext } from "./about.js";
 import { PREFS_SCHEMA_SQL, getPref, setPref } from "./prefs.js";
 import { dataVersionCache } from "./response-cache.js";
-import { pageLimit, pageOffset } from "./sql-util.js";
+import { pageLimit, pageOffset, pickEnum, SORT_DIRS } from "./sql-util.js";
 
 export interface CreateAppOpts {
   /** Absolute path to the built web SPA; when present it is served with a history fallback. */
@@ -203,8 +203,8 @@ export async function createApp(db: DB, opts: CreateAppOpts = {}): Promise<Fasti
       kind: q.kind === "main" || q.kind === "subagent" ? q.kind : undefined,
       severity: q.severity ? q.severity.split(",").filter(Boolean) : undefined,
       errorType: q.error_type ? q.error_type.split(",").filter(Boolean) : undefined,
-      sort: (["started", "title", "turns", "tokens", "cost", "duration", "errors", "security"] as const).find((s) => s === q.sort),
-      dir: q.dir === "asc" ? "asc" : q.dir === "desc" ? "desc" : undefined,
+      sort: pickEnum(SESSION_SORTS, q.sort),
+      dir: pickEnum(SORT_DIRS, q.dir),
       limit: pageLimit(q.limit, 50, 200),
       offset: pageOffset(q.offset),
     });
@@ -247,14 +247,14 @@ export async function createApp(db: DB, opts: CreateAppOpts = {}): Promise<Fasti
     project: q.project,
     from: q.from,
     to: q.to,
-    status: (["open", "dismissed", "muted", "all"] as const).find((s) => s === q.status),
+    status: pickEnum(FINDING_STATUSES, q.status),
   });
   app.get("/api/security/findings", async (req) => {
     const q = req.query as Record<string, string>;
     return listFindings(db, {
       ...findingFilters(q),
-      sort: (["severity", "session", "rule", "category", "time"] as const).find((s) => s === q.sort),
-      dir: q.dir === "asc" ? "asc" : q.dir === "desc" ? "desc" : undefined,
+      sort: pickEnum(FINDING_SORTS, q.sort),
+      dir: pickEnum(SORT_DIRS, q.dir),
       limit: pageLimit(q.limit, 50, 5000),
       offset: pageOffset(q.offset),
     });
@@ -286,7 +286,7 @@ export async function createApp(db: DB, opts: CreateAppOpts = {}): Promise<Fasti
     if (!guardWrite(req, reply)) return reply;
     const b = (req.body ?? {}) as { rule_id?: string; scope?: string; scope_id?: string; note?: string };
     if (!b.rule_id) return reply.code(400).send({ error: { code: "BAD_REQUEST", message: "rule_id required" } });
-    const scope = (["global", "project", "source"] as const).find((s) => s === b.scope) ?? "global";
+    const scope = pickEnum(MUTE_SCOPES, b.scope) ?? "global";
     muteRule(triageDb!, b.rule_id, scope, b.scope_id ?? "", b.note ?? null);
     return { ok: true };
   });
@@ -294,7 +294,7 @@ export async function createApp(db: DB, opts: CreateAppOpts = {}): Promise<Fasti
     if (!guardWrite(req, reply)) return reply;
     const b = (req.body ?? {}) as { rule_id?: string; scope?: string; scope_id?: string };
     if (!b.rule_id) return reply.code(400).send({ error: { code: "BAD_REQUEST", message: "rule_id required" } });
-    const scope = (["global", "project", "source"] as const).find((s) => s === b.scope) ?? "global";
+    const scope = pickEnum(MUTE_SCOPES, b.scope) ?? "global";
     const n = unmute(triageDb!, b.rule_id, scope, b.scope_id ?? "");
     return { ok: true, unmuted: n };
   });
@@ -322,13 +322,13 @@ export async function createApp(db: DB, opts: CreateAppOpts = {}): Promise<Fasti
   // path travels as a query param (it contains slashes), not a route segment.
   app.get("/api/files", async (req) => {
     const q = req.query as Record<string, string>;
-    const sort = (["last_ts", "first_ts", "changes", "sessions", "path"] as const).find((s) => s === q.sort);
+    const sort = pickEnum(FILE_SORTS, q.sort);
     return listFiles(db, {
       q: q.q,
       source: q.source,
       project: q.project,
       sort,
-      dir: q.dir === "asc" ? "asc" : "desc",
+      dir: pickEnum(SORT_DIRS, q.dir) ?? "desc",
       limit: pageLimit(q.limit, 50, 200),
       offset: pageOffset(q.offset),
     });

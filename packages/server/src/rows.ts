@@ -239,19 +239,20 @@ export interface FileTimelineRow {
 // ---- Dashboard aggregates ----------------------------------------------
 // These use short SQL aliases (i/o/cw/cr, b, n, d) so the GROUP BY expressions stay readable; the
 // shapes below are where those aliases are given a meaning. SUM() over no rows is NULL in SQLite,
-// hence the nullable numbers — every consumer coalesces with `?? 0`.
+// hence the nullable numbers — every consumer coalesces with `?? 0`. Token sums are the exception:
+// they are always GROUP BY queries (no group, no row) over NOT NULL columns, so they are never NULL.
 
-/** Per-model token sums: input / output / cache-write / cache-read. */
-export interface UsageAggRow {
+/** Per-model token sums: input / output / cache-write / cache-read. Shared by every usage query. */
+export interface UsageRow {
   model: string | null;
-  i: number | null;
-  o: number | null;
-  cw: number | null;
-  cr: number | null;
+  i: number;
+  o: number;
+  cw: number;
+  cr: number;
 }
 
-/** `UsageAggRow` bucketed by a `strftime` expression (the timeseries). */
-export interface BucketUsageAggRow extends UsageAggRow {
+/** `UsageRow` bucketed by a `strftime` expression (the timeseries). */
+export interface BucketUsageAggRow extends UsageRow {
   b: string | null;
 }
 
@@ -292,11 +293,11 @@ export interface WorkflowStatusAggRow {
   dur_n: number | null;
 }
 
-/** `UsageAggRow` plus the distinct-session count, for the by-model breakdown. `model` narrows to
+/** `UsageRow` plus the distinct-session count, for the by-model breakdown. `model` narrows to
  *  non-null here because that query COALESCEs the bucket label to `(unknown)`. */
-export interface ModelBreakdownRow extends UsageAggRow {
+export interface ModelBreakdownRow extends UsageRow {
   model: string;
-  sessions: number | null;
+  sessions: number;
 }
 
 /** Work tokens per UTC hour per source, for the burn heatmap. `src` is nullable (unassigned source). */
