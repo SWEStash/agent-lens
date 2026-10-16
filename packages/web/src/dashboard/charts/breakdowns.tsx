@@ -130,7 +130,7 @@ export function TokensByModel({ hidden, bd, drill }: ChartProps) {
 }
 
 export function Category({ hidden, bd }: ChartProps) {
-  const { PALETTE, axisProps, gridProps, tooltipStyle } = useChartTokens();
+  const { C, PALETTE, axisProps, gridProps, tooltipStyle } = useChartTokens();
   const data = (bd?.by_category ?? []).map((c) => ({ name: c.category, value: c.n }));
   return (
     <ChartCard
@@ -164,7 +164,7 @@ export function Category({ hidden, bd }: ChartProps) {
         <BarChart data={data} margin={CHART_MARGIN}>
           <CartesianGrid {...gridProps} />
           <XAxis dataKey="name" {...axisProps} />
-          <YAxis {...axisProps} width={36} allowDecimals={false} label={unitLabel("sessions", axisProps.stroke)} />
+          <YAxis {...axisProps} width={36} allowDecimals={false} label={unitLabel("sessions", C.muted)} />
           <Tooltip {...tooltipStyle} />
           <Bar dataKey="value">
             {data.map((_, i) => (
@@ -215,7 +215,7 @@ export function Complexity({ hidden, bd }: ChartProps) {
         <BarChart data={data} margin={CHART_MARGIN}>
           <CartesianGrid {...gridProps} />
           <XAxis dataKey="name" {...axisProps} />
-          <YAxis {...axisProps} width={36} allowDecimals={false} label={unitLabel("sessions", axisProps.stroke)} />
+          <YAxis {...axisProps} width={36} allowDecimals={false} label={unitLabel("sessions", C.muted)} />
           <Tooltip {...tooltipStyle} />
           <Bar dataKey="value" fill={C.violet} />
         </BarChart>

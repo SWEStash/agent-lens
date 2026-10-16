@@ -210,8 +210,7 @@ export function BurnBySource({ hidden, ts, time }: ChartProps) {
   const { C, PALETTE, axisProps, gridProps, tooltipStyle } = useChartTokens();
   const zone = resolveZone();
   // Follow the bucket the dashboard actually resolved, so this card and "Tokens over time" always
-  // agree on granularity. Before `ts` lands there is nothing to follow, so fall back to the bucket
-  // this card used when it was pinned to weeks.
+  // agree on granularity. Before `ts` lands there is nothing to follow, so fall back to weeks.
   const bucket = ts?.bucket ?? "week";
   const { points, sources } = useMemo(() => burnBySource(time?.burn_hours ?? [], zone, bucket), [time, zone, bucket]);
   const data = points.map((p) => ({ bucket: p.bucket, ...p.bySource }));

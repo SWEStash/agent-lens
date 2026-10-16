@@ -7,6 +7,7 @@
  * client simply keeps its local value. Single-user local tool → prefs are global (no per-user key).
  */
 import type { TriageDB } from "./triage.js";
+import { queryGet } from "./sql-util.js";
 
 export const PREFS_SCHEMA_SQL = /* sql */ `
 CREATE TABLE IF NOT EXISTS ui_prefs (
@@ -18,7 +19,7 @@ CREATE TABLE IF NOT EXISTS ui_prefs (
 
 /** Raw stored JSON string for a key, or null if unset. */
 export function getPref(db: TriageDB, key: string): string | null {
-  const row = db.prepare("SELECT value FROM ui_prefs WHERE key = ?").get(key) as { value: string } | undefined;
+  const row = queryGet<{ value: string }>(db, "SELECT value FROM ui_prefs WHERE key = ?", key);
   return row ? row.value : null;
 }
 

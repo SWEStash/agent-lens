@@ -22,8 +22,9 @@ import { spawnSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { dirname, join, parse } from "node:path";
 import { fileURLToPath } from "node:url";
+import type { VersionSource } from "@agent-lens/contracts";
 
-export type VersionSource = "npm" | "git" | "unknown";
+export type { VersionSource };
 
 export interface ResolvedVersion {
   /** "0.9.6" (npm) · "v0.9.6-3-gabc1234-dirty" (git) · "unknown". Not necessarily semver — see source. */
@@ -58,18 +59,15 @@ function nearestPackageVersion(dir: string): string | null {
  * problem is a missing tag (shallow clone), which is more useful than nothing.
  */
 function gitDescribe(cwd: string): string | null {
-  try {
-    const r = spawnSync("git", ["describe", "--tags", "--always", "--dirty"], {
-      cwd,
-      encoding: "utf8",
-      stdio: ["ignore", "pipe", "ignore"],
-    });
-    if (r.status !== 0) return null;
-    const out = r.stdout?.trim();
-    return out ? out : null;
-  } catch {
-    return null; // git binary absent
-  }
+  // A missing git binary does not throw: spawnSync reports it as `error` with a null status.
+  const r = spawnSync("git", ["describe", "--tags", "--always", "--dirty"], {
+    cwd,
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "ignore"],
+  });
+  if (r.status !== 0) return null;
+  const out = r.stdout?.trim();
+  return out ? out : null;
 }
 
 /** Uncached resolution — exported for tests, which need to drive each branch independently. */
@@ -92,9 +90,4 @@ let cached: ResolvedVersion | null = null;
 export function resolveVersion(): ResolvedVersion {
   if (!cached) cached = computeVersion();
   return cached;
-}
-
-/** Test seam: drop the memo so a test can drive resolution against a different tree. */
-export function resetVersionCache(): void {
-  cached = null;
 }

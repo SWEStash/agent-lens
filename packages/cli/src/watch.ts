@@ -10,7 +10,7 @@
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import chokidar from "chokidar";
-import { acquireLock, collectAll, findRepoRoot, loadSources, resolveDataDir, type Source } from "@agent-lens/core";
+import { acquireLock, collectAll, loadSources, resolveLockPath, type Source } from "@agent-lens/core";
 import { runIngest } from "@agent-lens/ingest";
 
 export interface WatchOptions {
@@ -20,7 +20,7 @@ export interface WatchOptions {
 
 export async function runWatch(opts: WatchOptions = {}): Promise<void> {
   const sources: Source[] = loadSources();
-  const lockPath = join(resolveDataDir(findRepoRoot()), ".agent-lens.lock");
+  const lockPath = resolveLockPath();
 
   let running = false;
   let pending = false;

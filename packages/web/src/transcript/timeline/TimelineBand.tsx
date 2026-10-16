@@ -34,6 +34,11 @@ const MIN_MARK_W = 2;
 const TICK_W = 3;
 /** Shortest bar that still reads as a bar, so a small-but-nonzero message isn't invisible. */
 const MIN_BAR_H = 3;
+/** A pointer within this many px of a selection edge grabs that handle instead of starting anew. */
+const HANDLE_GRAB = 6;
+
+/** A mark kind as words, for the tooltip and the screen-reader announcement. */
+const kindLabel = (kind: string) => (kind === "tool-error" ? "tool error" : kind);
 
 /** Measure the band's width so the scale can be built in real pixels. Before the first observation
  *  lands — and in jsdom, which has no ResizeObserver — width is 0 and the band renders its caption
@@ -93,7 +98,6 @@ export interface TimelineBandProps {
   /** What the axis currently SHOWS. Distinct from `range`, which is what the transcript FILTERS to —
    *  conflating the two is the usual mistake here. */
   domain: [number, number] | null;
-  onDomain: (d: [number, number] | null) => void;
 }
 
 /** Where a mark sits and how wide it is. A span for anything that genuinely occupies time; a fixed
@@ -115,7 +119,7 @@ type Drag = { kind: "new" | "start" | "end"; anchor: number; x: number; pointerI
 
 export function TimelineBand(props: TimelineBandProps) {
   const { events, findings, fileChanges, userPromptUuids, turnSeqById, axisMode, onAxisMode, metric, onMetric } = props;
-  const { range, onRange, onJump, domain, onDomain } = props;
+  const { range, onRange, onJump, domain } = props;
   const [ref, width] = useMeasuredWidth();
   const svgRef = useRef<SVGSVGElement>(null);
   const [drag, setDrag] = useState<Drag | null>(null);
@@ -160,8 +164,6 @@ export function TimelineBand(props: TimelineBandProps) {
 
   const rangeX: [number, number] | null = range && !scale.degenerate ? [scale.x(range[0]), scale.x(range[1])] : null;
 
-  /** A pointer within this many px of a selection edge grabs that handle instead of starting anew. */
-  const HANDLE_GRAB = 6;
   const handleHit = (x: number): "start" | "end" | null => {
     if (!rangeX) return null;
     if (Math.abs(x - rangeX[0]) <= HANDLE_GRAB) return "start";
@@ -181,12 +183,12 @@ export function TimelineBand(props: TimelineBandProps) {
    *  bar unhoverable and unclickable. Zero when the pointer is on the mark. */
   const nearestMark = (px: number) => {
     let best: { uuid: string; d: number; i: number; x: number; w: number } | null = null;
-    marks.forEach((m, i) => {
+    for (const [i, m] of marks.entries()) {
       const { x, w } = markGeom(m, scale);
       const d = px < x ? x - px : px > x + w ? px - (x + w) : 0;
       if (!best || d < best.d) best = { uuid: m.uuid, d, i, x, w };
-    });
-    return best as { uuid: string; d: number; i: number; x: number; w: number } | null;
+    }
+    return best;
   };
 
   const cursorMark = marks[Math.min(cursor, marks.length - 1)] ?? null;
@@ -196,7 +198,7 @@ export function TimelineBand(props: TimelineBandProps) {
   const announcement = cursorMark
     ? [
         `message ${Math.min(cursor, marks.length - 1) + 1} of ${marks.length}`,
-        cursorMark.kind === "tool-error" ? "tool error" : cursorMark.kind,
+        kindLabel(cursorMark.kind),
         usagePresent && cursorMark.value > 0 ? `${fmtTokens(cursorMark.value)} tokens` : null,
         new Date(cursorMark.t).toLocaleTimeString(),
         cursorMark.finding ? `${cursorMark.finding} security finding` : null,
@@ -271,14 +273,13 @@ export function TimelineBand(props: TimelineBandProps) {
       setHover(near && near.d <= HOVER_RADIUS_PX ? { uuid: near.uuid, x: near.x, w: near.w } : null);
       return;
     }
-    const x = px;
-    const dragging = Math.abs(x - drag.anchor) >= DRAG_THRESHOLD;
+    const dragging = Math.abs(px - drag.anchor) >= DRAG_THRESHOLD;
     // Capture keeps a drag alive when the pointer leaves the band; it is an enhancement, so where it
     // is unavailable the drag must still work rather than throwing out of the handler.
     if (dragging && !drag.captured) e.currentTarget.setPointerCapture?.(drag.pointerId);
-    setDrag({ ...drag, x, captured: drag.captured || dragging });
+    setDrag({ ...drag, x: px, captured: drag.captured || dragging });
     // Live filtering while dragging: the point of a brush is watching the transcript narrow.
-    if (dragging) onRange(orderedRange(drag.anchor, x));
+    if (dragging) onRange(orderedRange(drag.anchor, px));
   };
 
   const onPointerUp = (e: ReactPointerEvent<SVGSVGElement>) => {
@@ -462,7 +463,7 @@ export function TimelineBand(props: TimelineBandProps) {
               className="tl-cursor"
               x={scale.x(cursorMark.t) - 1}
               y={0}
-              width={Math.max(TICK_W, 2)}
+              width={TICK_W}
               height={PLOT_H}
             />
           )}
@@ -502,7 +503,7 @@ export function TimelineBand(props: TimelineBandProps) {
         >
           <div className="tl-tip-head">
             {hovered.mark.turnSeq != null && <span className="tl-tip-turn">turn {hovered.mark.turnSeq}</span>}
-            <span>{hovered.mark.kind === "tool-error" ? "tool error" : hovered.mark.kind}</span>
+            <span>{kindLabel(hovered.mark.kind)}</span>
           </div>
           <div className="tl-tip-row muted">
             {new Date(hovered.mark.t).toLocaleTimeString()}

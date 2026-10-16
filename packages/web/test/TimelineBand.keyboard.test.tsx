@@ -70,7 +70,6 @@ function setup(over: Partial<Parameters<typeof TimelineBand>[0]> = {}) {
     onRange,
     onJump,
     domain: null,
-    onDomain: vi.fn(),
     ...over,
   };
   render(<TimelineBand {...props} />);
@@ -269,12 +268,10 @@ describe("timeline band keyboard support", () => {
     expect(onRange).not.toHaveBeenCalled();
   });
 
-  it("clears the selection on Escape without touching the zoom domain", () => {
-    const onDomain = vi.fn();
-    const { onRange } = setup({ range: [Date.parse("2026-01-01T10:00:00Z"), Date.parse("2026-01-01T10:02:00Z")], onDomain });
+  it("clears the selection on Escape", () => {
+    const { onRange } = setup({ range: [Date.parse("2026-01-01T10:00:00Z"), Date.parse("2026-01-01T10:02:00Z")] });
     fireEvent.keyDown(document, { key: "Escape" });
     expect(onRange).toHaveBeenCalledWith(null);
-    expect(onDomain).not.toHaveBeenCalled();
   });
 
   it("hides the axis toggle when the session has no idle gaps to collapse", () => {

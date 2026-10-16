@@ -7,5 +7,6 @@
   "compilerOptions": {
     "noEmit": true
   },
-  "include": ["test/**/*"]
+  // vite-env.d.ts types `import.meta.env` for the source files the tests import.
+  "include": ["test/**/*", "src/vite-env.d.ts"]
 }

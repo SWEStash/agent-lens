@@ -1,6 +1,6 @@
 /**
- * Agent Lens — ingest engine (the DB-writing core of Stage 2), separated from the CLI bootstrap in
- * index.ts so it can be driven in-process by tests against an :memory: DB. index.ts handles argv/env,
+ * Agent Lens — ingest engine (the DB-writing core of Stage 2), separated from the run driver in
+ * run.ts so it can be driven in-process by tests against an :memory: DB. run.ts handles argv/env,
  * the disk walk, and the incremental-skip check; everything here operates on an open DB + file content.
  */
 import { createHash } from "node:crypto";

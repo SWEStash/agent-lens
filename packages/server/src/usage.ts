@@ -5,6 +5,7 @@
  * single edit rather than one per call site.
  */
 import { costForUsage, unpricedModels } from "@agent-lens/core";
+import type { TokenSplit } from "@agent-lens/contracts";
 import { type DB } from "./db.js";
 import { queryAll } from "./sql-util.js";
 
@@ -17,13 +18,6 @@ export interface UsageRow {
   cr: number;
 }
 
-/** The token categories, kept split so the UI can show input/output/cache-write/cache-read separately. */
-export interface TokenSplit {
-  input: number;
-  output: number;
-  cache_creation: number;
-  cache_read: number;
-}
 
 /** The `SUM(...)` column list every usage query shares (aliased i/o/cw/cr). */
 export const USAGE_SUMS =

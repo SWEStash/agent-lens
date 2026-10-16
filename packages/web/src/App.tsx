@@ -1,10 +1,11 @@
-import { useCallback, useEffect, useState } from "react";
+import { Suspense, useCallback, useEffect, useState } from "react";
 import { Link, NavLink, Outlet, useLocation } from "react-router-dom";
 import BackToTop from "./BackToTop";
 import { TooltipLayer } from "./Tooltip";
 import logoUrl from "./assets/logo.png";
 import { api, apiPost, SNAPSHOT, type HealthResponse } from "./api";
 import { useTheme } from "./theme";
+import { Loading } from "./AsyncBoundary";
 
 /** Compact "3m ago" style label for an ISO8601 instant. */
 function relativeTime(iso: string): string {
@@ -149,7 +150,10 @@ export default function App() {
         </div>
       )}
       <main className={"content" + (wide ? " wide" : "")} id="main" tabIndex={-1}>
-        <Outlet />
+        {/* The lazy routes (main.tsx) suspend here, so the header stays up while a page's chunk loads. */}
+        <Suspense fallback={<Loading />}>
+          <Outlet />
+        </Suspense>
       </main>
       {/* Every page here can run long — a transcript of hundreds of messages, a thousand-row session
           list, the files index. It shows itself only once there is somewhere to go back to. */}

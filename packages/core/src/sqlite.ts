@@ -32,13 +32,12 @@ let savepointSeq = 0;
 /**
  * Run `fn` inside a transaction, committing on return and rolling back on throw.
  *
- * Returns a *callable* rather than running immediately, matching the better-sqlite3 shape the call
- * sites were written against (`const tx = transaction(db, fn); tx(args)`) — arguments and the return
- * value pass straight through.
+ * Returns a *callable* rather than running immediately (`const tx = transaction(db, fn); tx(args)`) —
+ * arguments and the return value pass straight through.
  *
- * Uses `SAVEPOINT` when a transaction is already open, because SQLite rejects a nested `BEGIN`.
- * Nothing nests today, but `createDirtySet` runs immediately before several of these and would
- * otherwise fail at runtime the first time one moved inside another.
+ * Uses `SAVEPOINT` when a transaction is already open, because SQLite rejects a nested `BEGIN`. That
+ * is the normal case during ingest: `runIngest` wraps the whole run in one transaction, so every
+ * `transaction()` beneath it (per file, per derived pass) runs as a savepoint of that one.
  */
 export function transaction<A extends unknown[], R>(db: DatabaseSync, fn: (...args: A) => R): (...args: A) => R {
   return (...args: A): R => {

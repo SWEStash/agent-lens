@@ -12,10 +12,12 @@
  */
 import { DatabaseSync } from "node:sqlite";
 import { transaction } from "@agent-lens/core";
+import type { MuteRow } from "@agent-lens/contracts";
+import { queryAll } from "./sql-util.js";
 
 export type TriageDB = DatabaseSync;
 
-export const TRIAGE_SCHEMA_SQL = /* sql */ `
+const TRIAGE_SCHEMA_SQL = /* sql */ `
 PRAGMA journal_mode = WAL;
 
 -- Findings the user reviewed and marked safe. Keyed by the stable finding id so it survives re-ingest.
@@ -93,17 +95,7 @@ export function unmute(db: TriageDB, ruleId: string, scope: MuteScope = "global"
   );
 }
 
-export interface MuteRow {
-  rule_id: string;
-  scope: string;
-  scope_id: string;
-  note: string | null;
-  muted_at: string;
-}
-
 /** All muted rules, newest first — for the management panel. */
 export function listMutes(db: TriageDB): MuteRow[] {
-  return db
-    .prepare("SELECT rule_id, scope, scope_id, note, muted_at FROM muted_rules ORDER BY muted_at DESC")
-    .all() as unknown as MuteRow[];
+  return queryAll<MuteRow>(db, "SELECT rule_id, scope, scope_id, note, muted_at FROM muted_rules ORDER BY muted_at DESC");
 }

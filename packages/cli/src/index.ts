@@ -18,6 +18,7 @@ import {
   resolveConfigFile,
   resolveDataDir,
   resolveDbPath,
+  resolveLockPath,
   resolvePricing,
   resolveRetention,
   resolveServerConfig,
@@ -53,8 +54,7 @@ function die(e: unknown): never {
 
 /** Run `fn` under the single-instance lock so collect/ingest never overlap another run. */
 function withLock(fn: () => void): void {
-  const lockPath = join(resolveDataDir(findRepoRoot()), ".agent-lens.lock");
-  const lock = acquireLock(lockPath);
+  const lock = acquireLock(resolveLockPath());
   if (!lock) {
     console.error("agent-lens: another collect/ingest run is in progress — skipping");
     return;

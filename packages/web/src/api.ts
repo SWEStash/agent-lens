@@ -2,8 +2,8 @@
 // Pages) with no live API — each endpoint's default response was pre-exported to
 // `<base>/snapshot/<path>.json` by scripts/export-snapshot.mjs. Query params (filters, pagination)
 // are stripped, so the snapshot always serves the default unfiltered view.
-export const SNAPSHOT = (import.meta as any).env?.VITE_SNAPSHOT === "1";
-const BASE = (import.meta as any).env?.BASE_URL ?? "/";
+export const SNAPSHOT = import.meta.env.VITE_SNAPSHOT === "1";
+const BASE = import.meta.env.BASE_URL ?? "/";
 
 function resolveUrl(path: string): string {
   if (!SNAPSHOT) return "/api" + path;

@@ -255,8 +255,7 @@ export function dashboardOverview(db: DB, f: DashFilters): DashOverview {
   // disagree with "Activity over time", which counts turn rows. They are identical with no filter
   // (validate.mjs asserts turn_count == COUNT(turns)), so the cheap column stays the default.
   const turns = tnw.models
-    ? (queryGet<CountRow>(db, `SELECT COUNT(*) n FROM turns tn JOIN sessions s ON s.id = tn.session_id ${tnw.sql}`, ...tnw.params)
-        ?.n ?? 0)
+    ? queryGet<CountRow>(db, `SELECT COUNT(*) n FROM turns tn JOIN sessions s ON s.id = tn.session_id ${tnw.sql}`, ...tnw.params)!.n
     : (counts.turns ?? 0);
   const turnDur = percentiles(
     db,
@@ -279,7 +278,7 @@ export function dashboardOverview(db: DB, f: DashFilters): DashOverview {
     sessions_subagent: counts.subagent ?? 0,
     turns,
     projects: counts.projects ?? 0,
-    tool_calls: toolCount ?? 0,
+    tool_calls: toolCount,
     tokens, // {input, output, cache_creation, cache_read}
     total_tokens: totalTokens,
     cache_read_ratio: totalTokens ? tokens.cache_read / totalTokens : 0,
@@ -634,6 +633,8 @@ export function dashboardTime(db: DB, f: DashFilters, bucketParam?: string): Das
   };
 }
 
+/** A latency cell needs at least this many turns to report a percentile (see {@link modelLatency}). */
+const MIN_LATENCY_SAMPLES = 5;
 
 /**
  * Prompt to first assistant token, p50 and p90 per (bucket, model), main sessions only.
@@ -658,8 +659,6 @@ export function dashboardTime(db: DB, f: DashFilters, bucketParam?: string): Das
  * still reported, because "the slowest tenth took this long" is a fact; the tile says what it
  * includes rather than pretending the number is pure model latency.
  */
-const MIN_LATENCY_SAMPLES = 5;
-
 function modelLatency(db: DB, mw: Where, bucket: Bucket): DashTime["latency"] {
   // Follows the dashboard's bucket control like every other tile. The thin-sample failure this once
   // guarded against with a hard weekly floor is handled by MIN_LATENCY_SAMPLES instead, which is the

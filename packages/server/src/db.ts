@@ -1,6 +1,6 @@
 import { existsSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
-import { SCHEMA_VERSION, severityRank, activePricing, canonicalModel, SECURITY_CATEGORIES, errorKind, type ToolErrorType, type Rate } from "@agent-lens/core";
+import { SCHEMA_VERSION, severityRank, activePricing, canonicalModel, SECURITY_CATEGORIES, errorKind, type ToolErrorType } from "@agent-lens/core";
 import { TASK_FAILURES_TAG, TASK_NOTIFICATION_TAG, TASK_RESULT_TAG, TASK_STATUS_TAG, TASK_SUMMARY_TAG, xmlTag } from "@agent-lens/transcript-format";
 import type {
   Finding,
@@ -84,9 +84,7 @@ export function openReadonly(file: string): DB {
  * on an unstamped/never-ingested DB (treated as not-stale: nothing to warn about yet).
  */
 export function schemaStatus(db: DB): { db_version: number | null; expected: number; stale: boolean } {
-  const row = db.prepare("SELECT value FROM meta WHERE key = 'schema_version'").get() as
-    | { value: string }
-    | undefined;
+  const row = queryGet<{ value: string }>(db, "SELECT value FROM meta WHERE key = 'schema_version'");
   const dbVersion = row ? Number(row.value) : null;
   const db_version = dbVersion != null && Number.isFinite(dbVersion) ? dbVersion : null;
   return { db_version, expected: SCHEMA_VERSION, stale: db_version != null && db_version !== SCHEMA_VERSION };
@@ -98,8 +96,7 @@ export function schemaStatus(db: DB): { db_version: number | null; expected: num
  * max across `ingest_state` is exactly "data last refreshed at". Powers the header freshness readout.
  */
 export function lastIngested(db: DB): string | null {
-  const row = db.prepare("SELECT MAX(ingested_at) AS last FROM ingest_state").get() as { last: string | null };
-  return row?.last ?? null;
+  return queryGet<{ last: string | null }>(db, "SELECT MAX(ingested_at) AS last FROM ingest_state")!.last;
 }
 
 export interface SessionFilters {
@@ -217,7 +214,7 @@ const COST_SORT_SQL = `(SELECT COALESCE(SUM((tu.input_tokens * mr.i_rate + tu.ou
  * can swap the table at startup and tests install their own.
  */
 export function ratesCte(): { sql: string; params: unknown[] } {
-  const entries = Object.entries(activePricing()) as Array<[string, Rate]>;
+  const entries = Object.entries(activePricing());
   return {
     // `model_rate` resolves the prefix match ONCE per distinct model id, not once per token_usage row.
     // Inlining the lookup into the cost expression instead re-ran it for every usage row of every
@@ -425,7 +422,6 @@ function loadFindings(db: DB, id: string, toolRows: ToolCallProjection[]): Findi
   return sessionFindings;
 }
 
-/** The session's transcript events in order, each with its flattened text/thinking and its tool calls. */
 /** Drop the columns the query needed but the response does not ship (ADR-026): `event_uuid` has just
  *  been used to nest this call under its event, and `error_type` feeds the server-side
  *  failure-vs-rejection split and reaches the UI only as a dashboard breakdown. */
@@ -489,6 +485,7 @@ function foldUsage(
   return out;
 }
 
+/** The session's transcript events in order, each with its flattened text/thinking and its tool calls. */
 function loadEvents(db: DB, id: string, toolRows: ToolCallProjection[]): EventNode[] {
   const eventRows = queryAll<EventProjectionRow>(
     db,
@@ -548,12 +545,7 @@ function loadClassification(db: DB, id: string): Classification | null {
   if (!cls) return null;
   // Asserted, not validated (ADR-026) — a malformed blob degrades to null, a well-formed one of the
   // wrong shape reaches the UI as declared.
-  let signals: ClassificationSignals | null = null;
-  try {
-    signals = cls.signals_json ? (JSON.parse(cls.signals_json) as ClassificationSignals) : null;
-  } catch {
-    /* ignore malformed */
-  }
+  const signals = safeJson(cls.signals_json) as ClassificationSignals | null;
   return {
     category: cls.category,
     complexity_score: cls.complexity_score,
@@ -728,13 +720,6 @@ export function sessionLocation(db: DB, id: string): SessionLocation | null {
   return { session_id: id, path, exists: existsSync(path), source_id: session.source_id };
 }
 
-/**
- * A Workflow-tool run's detail: the launching tool_call (name, status, returned result) + the turn
- * and session it was launched from, every subagent session fanned out under its `workflow_run_id`,
- * and roll-up stats (agent count, tokens, cost, wall-clock span). Powers the /workflow/:run_id page.
- * Returns null when no Workflow tool_call carries this run id (→ 404).
- */
-
 /** Parse a stored JSON column back to a value, or null when absent/malformed. */
 export function safeJson(s: string | null): unknown {
   if (!s) return null;
@@ -858,6 +843,12 @@ function loadRunSidecar(
   return { wr, run, completion };
 }
 
+/**
+ * A Workflow-tool run's detail: the launching tool_call (name, status, returned result) + the turn
+ * and session it was launched from, every subagent session fanned out under its `workflow_run_id`,
+ * and roll-up stats (agent count, tokens, cost, wall-clock span). Powers the /workflow/:run_id page.
+ * Returns null when no Workflow tool_call carries this run id (→ 404).
+ */
 export function getWorkflow(db: DB, runId: string): WorkflowDetail | null {
   const wf = queryGet<WorkflowLaunchRow>(
     db,
@@ -1138,8 +1129,8 @@ const MUTED_SQL = `EXISTS (SELECT 1 FROM triage.muted_rules m WHERE m.rule_id = 
    AND (m.scope='global' OR (m.scope='project' AND m.scope_id = s.project_id) OR (m.scope='source' AND m.scope_id = s.source_id)))`;
 
 /** Whether the writable triage store is ATTACHed to this (read) connection — gates all triage SQL. */
-export function triageAttached(db: DB): boolean {
-  return (db.prepare("PRAGMA database_list").all() as Array<{ name: string }>).some((r) => r.name === "triage");
+function triageAttached(db: DB): boolean {
+  return queryAll<{ name: string }>(db, "PRAGMA database_list").some((r) => r.name === "triage");
 }
 
 /** The filter half of FindingFilters — what narrows the set, without status/sort/paging. */

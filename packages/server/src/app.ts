@@ -5,14 +5,14 @@
  * be driven by the CLI entry (index.ts, with .listen) and by tests (app.inject, no socket).
  */
 import { existsSync } from "node:fs";
-import Fastify, { type FastifyInstance, type FastifyReply } from "fastify";
+import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from "fastify";
 import fastifyStatic from "@fastify/static";
 import { resolveVersion } from "@agent-lens/core";
 import { renderSessionExport, parseRedactionLevel } from "./export.js";
 import { type DB, lastIngested, schemaStatus, listSources, listProjects, listModels, listSessions, getSession, sessionLocation, getWorkflow, listSkills, getSkill, listFindings, openFindingIds, securitySummary, listFiles, getFileTimeline, safeJson } from "./db.js";
 import { dashboardOverview, dashboardTimeseries, dashboardBreakdowns, dashboardTime, dashboardAudit, type DashFilters } from "./dashboard.js";
 import { writeBlocked, runRefresh, LOOPBACK_HOSTS } from "./refresh.js";
-import { openTriage, dismiss, reopen, muteRule, unmute, listMutes, type TriageDB, type MuteScope } from "./triage.js";
+import { openTriage, dismiss, reopen, muteRule, unmute, listMutes, type TriageDB } from "./triage.js";
 import { about, type AboutContext } from "./about.js";
 import { PREFS_SCHEMA_SQL, getPref, setPref } from "./prefs.js";
 import { dataVersionCache } from "./response-cache.js";
@@ -84,7 +84,7 @@ export async function createApp(db: DB, opts: CreateAppOpts = {}): Promise<Fasti
   }
 
   // Shared CSRF + availability guard for the triage write routes (same posture as /api/refresh).
-  const guardWrite = (req: any, reply: any): boolean => {
+  const guardWrite = (req: FastifyRequest, reply: FastifyReply): boolean => {
     if (writeBlocked(req.headers)) {
       reply.code(403).send({ error: { code: "FORBIDDEN_ORIGIN", message: "cross-origin write blocked" } });
       return false;
@@ -130,7 +130,7 @@ export async function createApp(db: DB, opts: CreateAppOpts = {}): Promise<Fasti
     let result;
     try {
       result = runRefresh();
-    } catch (e: any) {
+    } catch (e) {
       // Don't leak the raw exception (may include host filesystem paths, LOW-003) to the client; the
       // recipient is the local user but a generic message keeps this safe if ever exposed. Detail → log.
       console.error("agent-lens-server: refresh failed:", e);
@@ -149,7 +149,7 @@ export async function createApp(db: DB, opts: CreateAppOpts = {}): Promise<Fasti
   // `models` is a comma-joined include-list (same convention as severity/error_type below). Absent
   // means no model predicate at all, which is what the client sends when every model is ticked.
   // They only change when an ingest commits, so each answer is kept until then, keyed on the URL.
-  const dashFilters = (req: any): DashFilters => {
+  const dashFilters = (req: FastifyRequest): DashFilters => {
     const q = req.query as Record<string, string>;
     return { source: q.source, from: q.from, to: q.to, models: q.models?.split(",").filter(Boolean) };
   };
@@ -287,7 +287,7 @@ export async function createApp(db: DB, opts: CreateAppOpts = {}): Promise<Fasti
     const b = (req.body ?? {}) as { rule_id?: string; scope?: string; scope_id?: string; note?: string };
     if (!b.rule_id) return reply.code(400).send({ error: { code: "BAD_REQUEST", message: "rule_id required" } });
     const scope = (["global", "project", "source"] as const).find((s) => s === b.scope) ?? "global";
-    muteRule(triageDb!, b.rule_id, scope as MuteScope, b.scope_id ?? "", b.note ?? null);
+    muteRule(triageDb!, b.rule_id, scope, b.scope_id ?? "", b.note ?? null);
     return { ok: true };
   });
   app.post("/api/security/unmute", async (req, reply) => {
@@ -295,7 +295,7 @@ export async function createApp(db: DB, opts: CreateAppOpts = {}): Promise<Fasti
     const b = (req.body ?? {}) as { rule_id?: string; scope?: string; scope_id?: string };
     if (!b.rule_id) return reply.code(400).send({ error: { code: "BAD_REQUEST", message: "rule_id required" } });
     const scope = (["global", "project", "source"] as const).find((s) => s === b.scope) ?? "global";
-    const n = unmute(triageDb!, b.rule_id, scope as MuteScope, b.scope_id ?? "");
+    const n = unmute(triageDb!, b.rule_id, scope, b.scope_id ?? "");
     return { ok: true, unmuted: n };
   });
 

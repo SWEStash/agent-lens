@@ -35,7 +35,7 @@ export interface ChartProps {
 }
 
 /**
- * The unit caption for a numeric axis, e.g. `<YAxis label={unitLabel("work tokens")} />`.
+ * The unit caption for a numeric axis, e.g. `<YAxis label={unitLabel("work tokens", C.muted)} />`.
  *
  * Always rendered, never behind a hover: "15.0M" of what is the first question a reader has, and a
  * unit you have to discover by interacting with the chart is a unit most readers never see. Sits

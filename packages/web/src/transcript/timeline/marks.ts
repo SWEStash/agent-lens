@@ -133,8 +133,8 @@ export function buildMarks({ events, points, findings, fileChanges, turnSeqById,
   return marks;
 }
 
-/** True when no event carries a usage row — the band then falls back to uniform heights and hides the
- *  metric toggle, which is the case a newer SPA hits against a server that predates per-event usage. */
+/** True when any event carries a usage row. When none does, the band falls back to uniform heights and
+ *  hides the metric toggle — which is the case a newer SPA hits against a server that predates per-event usage. */
 export function hasUsage(events: readonly EventNode[]): boolean {
   return events.some((e) => e.usage);
 }
