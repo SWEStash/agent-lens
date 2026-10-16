@@ -1,4 +1,4 @@
-# ADR-004: Heuristic (no-AI) classification for category & complexity, pluggable
+# ADR-004 — Heuristic (no-AI) classification for category & complexity, pluggable
 
 - Status: Accepted
 - Date: 2026-06-25
@@ -6,12 +6,12 @@
 
 ## Context
 
-Dashboards want **task category** and **task complexity**, but neither exists in the traces: they
+Dashboards want **task category** and **task complexity**, but neither exists in the traces — they
 must be derived. The strict local-only privacy NFR rules out sending trace content to a cloud LLM.
 
 ## Decision
 
-Derive both with **deterministic heuristics** over signals already present in the traces: no AI:
+Derive both with **deterministic heuristics** over signals already present in the traces — no AI:
 
 - `category = f(tool_mix, skills_invoked, keyword_rules)` → e.g. feature / bugfix / refactor / docs /
   ops / review.
@@ -34,7 +34,7 @@ without schema changes, if richer labels are wanted while staying on-device.
   a pluggable upgrade.
 - **Cloud LLM (Claude API).** Best quality but **violates the local-only NFR**. Rejected.
 
-## Update: v2 (2026-06-26)
+## Update — v2 (2026-06-26)
 
 `CLASSIFIER_VERSION = 2`, re-runnable via `agent-lens-metrics` (no re-ingest). Same design; tuned
 against the real session distribution:

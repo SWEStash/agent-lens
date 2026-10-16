@@ -1,6 +1,6 @@
-# ADR-002: Collection mechanism: rsync --append-verify + backup-dir via user systemd timer
+# ADR-002 — Collection mechanism: rsync --append-verify + backup-dir via user systemd timer
 
-- Status: Accepted: mechanism superseded by [ADR-013](ADR-013-portable-collection-scheduling.md)
+- Status: Accepted — mechanism superseded by [ADR-013](ADR-013-portable-collection-scheduling.md)
 - Date: 2026-06-25
 - Deciders: project owner
 
@@ -17,7 +17,7 @@ append-only during a session, but can be **compacted** (rewritten shorter) and t
 ## Decision
 
 Update the mirror with `rsync --append-verify` (no `--delete`), and capture conflicting versions with
-a **prefix-check pre-pass**, NOT rsync's own `--backup`. Driven by a **user** systemd timer.
+a **prefix-check pre-pass** — NOT rsync's own `--backup`. Driven by a **user** systemd timer.
 
 ```
 # pre-pass (per changed *.jsonl): snapshot only the lossy cases into .versions/<ts>/
@@ -52,7 +52,7 @@ Stage 2 reconciles by ingesting the mirror **and** all `.versions/` backups, ded
 ## Consequences
 
 - Cheap, native, no daemon to write. Secrets are explicitly excluded.
-- `.versions/` accumulates only on real divergence (rare); it is dead weight unless Stage 2 reads it,
+- `.versions/` accumulates only on real divergence (rare); it is dead weight unless Stage 2 reads it —
   so Stage 2 MUST ingest it (tracked in Phase 2).
 - The mirror holds the longest-seen copy, which can mix pre/post-compaction prefixes for a file; this
   is why dedup-by-uuid at ingest (not the raw file) is the correctness boundary.

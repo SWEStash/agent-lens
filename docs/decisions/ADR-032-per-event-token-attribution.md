@@ -1,4 +1,4 @@
-# ADR-032: Per-event token usage is attributed to the message that renders it
+# ADR-032 — Per-event token usage is attributed to the message that renders it
 
 - Status: Accepted
 - Date: 2026-08-21
@@ -8,7 +8,7 @@
 ## Context
 
 `EventNode` carried no token usage. Putting it on the wire is what lets the transcript show a
-per-message token chip and lets the session timeline band size a mark by the work behind it: one
+per-message token chip and lets the session timeline band size a mark by the work behind it — one
 server change serving both.
 
 The obvious implementation is to join `token_usage` on `event_uuid` and ship the row as-is. Measured
@@ -25,17 +25,17 @@ The cause is not a defect in collection or ingest. Two correct behaviours compos
 1. **Claude Code writes one transcript line per content block** of an assistant response, and every
    one of those lines repeats the same `usage` and the same `message.id`.
 2. **Ingest deduplicates them** on the unique `(session_id, message_id)` index
-   (`pipeline.ts`, `insTokens`), so a response contributes exactly one `token_usage` row: no
+   (`pipeline.ts`, `insTokens`), so a response contributes exactly one `token_usage` row — no
    double-counting. `ON CONFLICT DO NOTHING` means the surviving row keeps the **first** line's
    `event_uuid`.
 
 That first block is almost always a `thinking` block, and thinking arrives with its text already
-stripped: an empty string plus a signature. Sampling 1 050 thinking blocks found **0** with text in
+stripped — an empty string plus a signature. Sampling 1 050 thinking blocks found **0** with text in
 the source and **0** cases where text existed in the source but was not stored: nothing is lost, and
 `events.thinking` is empty across the corpus for this reason, not because of
 [ADR-031](ADR-031-transcript-text-is-stored.md)'s read path.
 
-So the anchor event is real, correct, and invisible, and a naive per-row join would have made the
+So the anchor event is real, correct, and invisible — and a naive per-row join would have made the
 token chip appear on a fifth of the messages it belongs on, and the timeline band's bar heights
 describe a quarter of reality (measured: 136 of 157 marks pinned to the minimum height).
 
@@ -72,7 +72,7 @@ on the largest in the corpus (1 632 events).
 
 - **Totals are unaffected.** Session and dashboard figures aggregate `token_usage` directly and never
   pass through the fold. A test asserts that the folded per-event values still sum to the session
-  total: the fold redistributes, it never creates or drops tokens.
+  total — the fold redistributes, it never creates or drops tokens.
 - **`usage` is a derived, presentation-facing field.** Anything needing raw per-row attribution must
   query `token_usage`, not read it off `EventNode`.
 - The fold depends on `events.seq` and `turn_id`, so `loadEvents` selects `seq` (server-internal; it

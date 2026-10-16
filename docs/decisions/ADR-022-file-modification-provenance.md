@@ -1,4 +1,4 @@
-# ADR-022: File-modification provenance from tool calls (level 1)
+# ADR-022 — File-modification provenance from tool calls (level 1)
 
 - Status: Accepted
 - Date: 2026-07-22
@@ -6,17 +6,17 @@
 
 ## Context
 
-Agent Lens can answer "what happened in that session?" but not the inverse: **"this file changed,
+Agent Lens can answer "what happened in that session?" but not the inverse: **"this file changed —
 which session, and which turn, did it?"** Today that question means remembering which session to
 open and scrolling its transcript for Edit/Write calls. For a solo maintainer auditing or reviewing
 after the fact, the file (or the commit built from it) is the natural entry point, not the session.
 
 The transcript data already contains the answer. Every `Edit`/`Write` tool call's verbatim
-`input_json` is stored per `tool_calls` row (full `file_path`, `old_string`/`new_string`/`content`)
+`input_json` is stored per `tool_calls` row — full `file_path`, `old_string`/`new_string`/`content` —
 keyed to session, turn, event, and timestamp. In the current archive that is ~8.4k Edit/Write calls,
 all attributable to a project via `sessions.project_id`. Like classification (ADR-004) and security
 findings (ADR-017), provenance can therefore be a **deterministic, re-runnable derivation** over data
-already ingested: no new collection, retroactive over the whole archive, no AI, local-only
+already ingested — no new collection, retroactive over the whole archive, no AI, local-only
 (ADR-005).
 
 What the transcript does *not* contain is a complete write history of the filesystem. Human edits in
@@ -27,10 +27,10 @@ presented honestly.
 
 This frames a scope ladder, from cheap-and-deterministic to inference:
 
-1. **File-touch index**: which sessions/turns touched which files, from Edit/Write calls.
-2. **Commit ↔ session mapping**: hashes extracted from agent-run `git commit` output (observed
+1. **File-touch index** — which sessions/turns touched which files, from Edit/Write calls.
+2. **Commit ↔ session mapping** — hashes extracted from agent-run `git commit` output (observed
    present in `result_summary`, e.g. `[main e79e246] …`), later inference for human-made commits.
-3. **Line-level blame**: compose `git blame` (line → commit) with level 2 (commit → session),
+3. **Line-level blame** — compose `git blame` (line → commit) with level 2 (commit → session),
    rather than rebuilding line tracking ourselves.
 
 ## Decision
@@ -41,11 +41,11 @@ timeline). Levels 2–3 are recorded as the roadmap, pending their own technical
 
 - A new derivation pass (alongside `classify`/`detect`) parses each file-modifying tool call's
   `input_json`, normalizes the path (absolute, `.`/`..` resolved), and emits one row per
-  `(tool_call, file)` into `file_changes`: schema v14. Incremental runs are scoped by the dirty
+  `(tool_call, file)` into `file_changes` — schema v14. Incremental runs are scoped by the dirty
   session set `rebuildDerived` returns, delete-then-insert per session, exactly like findings.
 - **Row key** is `hash(tool_call_id, file_path)` (the findings pattern), so a future multi-file
   source (e.g. a Bash-write heuristic) is additive rather than a schema break.
-- **Failed calls are excluded at derivation** (`status = 'error'`: 306 rows in the current
+- **Failed calls are excluded at derivation** (`status = 'error'` — 306 rows in the current
   archive): a failed edit did not change the file, and storing it would push the filter onto every
   consumer.
 - Rows carry denormalized `session_id` / `turn_id` / `project_id` / `event_uuid` / `timestamp`
@@ -55,24 +55,24 @@ timeline). Levels 2–3 are recorded as the roadmap, pending their own technical
   files can legitimately live outside the project root (the SA08 detector exists precisely because
   of such writes).
 - The UI states the contract plainly: *tracked from Edit/Write tool calls; changes made via shell
-  commands or outside sessions are not captured.* Determinism is the trust story: no
+  commands or outside sessions are not captured.* Determinism is the trust story — no
   fake precision (e.g. no created-vs-modified guess for `Write`, which the trace cannot
   reliably distinguish).
 
 ### Out of scope (recorded, not forgotten)
 
 - **Deletions and renames.** No Delete tool exists; all deletions are Bash (`rm`, `git rm`, `mv`,
-  globs, variables): a strictly lower confidence class that cannot be resolved after the fact in
+  globs, variables) — a strictly lower confidence class that cannot be resolved after the fact in
   general (`rm *.log`, `rm $FILE`). Tracked-file deletions and renames arrive *authoritatively* in
   level 2 via `git log --diff-filter=D` / `-R`, which also repairs rename-fragmented timelines. When
   they land, an additive `op` column (default `'modify'`) extends `file_changes` without migration
   pain.
 - **Bash-write heuristics** (literal-path `rm`/`tee`/redirect parsing): parked; serves the same need
-  level 2 serves better, and it is the first crack in the determinism claim. *(Partly revisited: see
+  level 2 serves better, and it is the first crack in the determinism claim. *(Partly revisited — see
   the amendment below.)*
 - **Git command execution at ingest.** Level 1 runs zero git commands. Level 2's design must bound
   git usage to per-repo batch reads (`git log --since=<last ingest>`), never per-edit calls, and
-  degrade gracefully when a repo is missing: that validation is a precondition for level 2, not an
+  degrade gracefully when a repo is missing — that validation is a precondition for level 2, not an
   assumption of this ADR.
 
 ## Consequences
@@ -82,7 +82,7 @@ timeline). Levels 2–3 are recorded as the roadmap, pending their own technical
 - The provenance question gets a first-class entry point (`/files`) instead of transcript
   spelunking; sessions gain a "what did this change" summary; both retroactive over the entire
   archive on the next `--full` ingest.
-- Deterministic and explainable end to end: every row traces to one verbatim tool call, and jumps
+- Deterministic and explainable end to end — every row traces to one verbatim tool call, and jumps
   to it in the transcript.
 - The schema and UI are deliberately shaped so levels 2–3 (commits, blame) extend rather than
   rework: the file timeline later gains commit markers; the session roll-up later gains "resulted in
@@ -93,7 +93,7 @@ timeline). Levels 2–3 are recorded as the roadmap, pending their own technical
 - The index is knowingly incomplete (Bash writes, human edits, other machines). Accepted: the
   caveat is stated in-UI, and completeness for *tracked* files is exactly what the git-composed
   levels add later.
-- `lines_added`/`lines_removed` are newline-count deltas, not diff hunks: magnitude signal, not a
+- `lines_added`/`lines_removed` are newline-count deltas, not diff hunks — magnitude signal, not a
   diff. Accepted for v1; the verbatim strings remain in `input_json` for anything richer.
 - One more derived table to rebuild on `--full` ingest. Negligible: single JSON parse per
   Edit/Write row, no I/O beyond the DB.
@@ -108,17 +108,17 @@ timeline). Levels 2–3 are recorded as the roadmap, pending their own technical
   undiscoverable, and provides no per-file aggregation or timeline. May still be added later as a
   complement.
 - **A denormalized per-file aggregate table.** The `/files` list is a `GROUP BY (project_id,
-  file_path)` over ~10⁴ rows with a covering composite index: measured need for denormalization is
+  file_path)` over ~10⁴ rows with a covering composite index — measured need for denormalization is
   absent (KISS/YAGNI).
 - **Real-time capture via PostToolUse hooks** instead of derivation. Would observe writes the
   transcript misses, but breaks the passive, zero-config collection model (ADR-003 posture) and
   captures nothing retroactively.
 
-## Amendment: 2026-09-02: shell writes are in scope after all
+## Amendment — 2026-09-02: shell writes are in scope after all
 
 Profiling the corpus put a number on what parking Bash writes cost. Of the shell writes that resolve
 to a source file inside a known project, **83% (896 of 1,074) had no `file_changes` row, across 131
-of 390 main sessions**: a third of sessions changing project files invisibly, while the UI told the
+of 390 main sessions** — a third of sessions changing project files invisibly, while the UI told the
 reader that provenance was tracked. The gap was concentrated in `.md`, `.mjs`, `.py`, `.yaml` and
 `.ts` files.
 
@@ -133,5 +133,5 @@ before scanning**, so a `>` inside a document being written never invents a file
 and renames remain level 2's territory.
 
 Relative targets resolve against the command's own leading `cd` when it is absolute, else the
-session's project root, and are skipped when neither anchors them, on the same reasoning as level
+session's project root — and are skipped when neither anchors them, on the same reasoning as level
 1's relative-path stance: an unanchored path would poison per-file grouping with false identities.

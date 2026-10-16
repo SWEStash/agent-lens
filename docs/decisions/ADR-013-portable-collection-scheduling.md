@@ -1,4 +1,4 @@
-# ADR-013: Portable Node collection + cross-platform scheduling
+# ADR-013 — Portable Node collection + cross-platform scheduling
 
 - Status: Accepted
 - Date: 2026-07-01
@@ -32,7 +32,7 @@ Reimplement collection and scheduling in portable Node, shipped in the `agent-le
     from the archive. Excluded projects (ADR + `AGENT_LENS_EXCLUDE`) are never mirrored. POSIX file
     perms `0600`/dirs `0700` (bash used `umask 077`); a no-op on Windows.
 - **Single-instance lock (`core/lock.ts`).** A stale-aware PID lock (`<dataDir>/.agent-lens.lock`) so a
-  scheduled run and a `watch` cycle, or a too-frequent schedule, never run two collectors against the
+  scheduled run and a `watch` cycle — or a too-frequent schedule — never run two collectors against the
   same archive or two writers against the same SQLite DB.
 - **`watch` mode.** A resident process (chokidar) that collects+ingests on file change, debounced, with
   an in-process guard; the Node-native periodic option.

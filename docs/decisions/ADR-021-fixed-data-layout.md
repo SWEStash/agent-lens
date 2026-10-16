@@ -1,4 +1,4 @@
-# ADR-021: The archive and triage store are fixed to the data dir
+# ADR-021 — The archive and triage store are fixed to the data dir
 
 - Status: Accepted
 - Date: 2026-07-20
@@ -12,12 +12,12 @@ next step looked like symmetry: give the archive and the triage sidecar the same
 path in the layout is configurable the same way.
 
 Investigating that surfaced a latent bug. `AGENT_LENS_ARCHIVE` was honored by `ingest`, `refresh`,
-and `agent-lens config`, but **not** by `collectAll`, which resolved `<dataDir>/archive`
+and `agent-lens config` — but **not** by `collectAll`, which resolved `<dataDir>/archive`
 unconditionally. Setting the variable therefore split the pipeline: collect mirrored transcripts into
 the default directory while ingest read the override, found nothing, and reported a *successful* run
 with zero sessions. Nothing errored; the data simply stopped flowing.
 
-That bug is easy to fix in either direction: teach collect the variable, or delete it. Choosing
+That bug is easy to fix in either direction — teach collect the variable, or delete it. Choosing
 required naming what the three stores actually are:
 
 | Store | Rebuildable? | From what |
@@ -27,12 +27,12 @@ required naming what the three stores actually are:
 | `triage.db` | **no** | hand-authored triage state + UI prefs (ADR-018); nothing can regenerate a human's decisions |
 
 A configuration key that repoints a *derived* store is cheap to get wrong: the worst case is a
-rebuild. A key that repoints a store holding the only copy of its data is not: a typo, a stale
+rebuild. A key that repoints a store holding the only copy of its data is not — a typo, a stale
 export in a shell rc, or a config file copied between machines silently strands it. The tool keeps
 running and looks healthy, which is precisely the failure mode we already saw with the split archive.
 
 There is also a coherence argument. If every path inside the data dir can be individually relocated,
-`AGENT_LENS_DATA` stops meaning anything: "the data dir" becomes a default for three independent
+`AGENT_LENS_DATA` stops meaning anything — "the data dir" becomes a default for three independent
 paths rather than a place.
 
 ## Decision
@@ -43,7 +43,7 @@ config key of their own.**
 - `resolveArchiveDir()` → always `<dataDir>/archive`.
 - `triageDbFor(db)` → always `triage.db` in the resolved db's directory.
 - `AGENT_LENS_ARCHIVE` and `AGENT_LENS_TRIAGE_DB` are **removed**, not deprecated.
-- The supported way to relocate raw data is `AGENT_LENS_DATA`: it moves the whole layout together.
+- The supported way to relocate raw data is `AGENT_LENS_DATA` — it moves the whole layout together.
 - The db keeps its `--db` / `AGENT_LENS_DB` / config `db` chain: it is derived, so relocating it is
   recoverable, and the triage sidecar follows it so the pair never splits.
 - `ingest --archive <path>` survives as an **explicit, per-run, read-only** override, for ingesting a
@@ -57,7 +57,7 @@ at which point the question is not "which env var" but a real storage design.
 
 **Good**
 
-- Collect, ingest, refresh, and `agent-lens config` cannot disagree about where the archive is: one
+- Collect, ingest, refresh, and `agent-lens config` cannot disagree about where the archive is — one
   helper, one answer.
 - The class of silent-data-stranding bugs is removed rather than fixed once.
 - `AGENT_LENS_DATA` regains a single clear meaning; `agent-lens config` reports the two paths as
@@ -66,11 +66,11 @@ at which point the question is not "which env var" but a real storage design.
 **Bad / accepted**
 
 - **Breaking change** for anyone who set `AGENT_LENS_TRIAGE_DB`, which did work: the server now reads
-  `triage.db` beside the db and ignores the variable. The old file is not deleted or migrated:
+  `triage.db` beside the db and ignores the variable. The old file is not deleted or migrated —
   recovery is `mv <old> <dataDir>/triage.db`. Judged acceptable because the variable is undocumented
   in practice, local-only, and pre-1.0.
-- `AGENT_LENS_ARCHIVE` users are unaffected in any *working* configuration, because there wasn't one:
-the variable produced the split described above. Repo scripts that used it (`sandbox.sh`,
+- `AGENT_LENS_ARCHIVE` users are unaffected in any *working* configuration, because there wasn't one
+  — the variable produced the split described above. Repo scripts that used it (`sandbox.sh`,
   `screenshots.mjs`, `export-snapshot.mjs`) now pass `ingest --archive` instead.
 - Relocating just the archive (e.g. onto a larger disk while keeping the db on SSD) is no longer
   possible without moving the whole data dir. Accepted: a symlink covers the rare case, and the
@@ -85,5 +85,5 @@ the variable produced the split described above. Repo scripts that used it (`san
   default one holds data. Strictly better than silence, but it is a guardrail around a feature nobody
   asked for, and warnings on a background collector timer are not read by anyone.
 - **Fix `triage.db` to `<dataDir>/triage.db`** rather than to the db's directory. Simpler to state,
-  but it splits the pair whenever `db` is relocated: the db moves and its triage state stays behind,
+  but it splits the pair whenever `db` is relocated — the db moves and its triage state stays behind,
   which is the exact failure this ADR exists to prevent.

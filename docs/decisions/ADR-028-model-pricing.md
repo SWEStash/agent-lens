@@ -1,4 +1,4 @@
-# ADR-028: Model pricing: derived at read time, overridable in config, never silently missing
+# ADR-028 — Model pricing: derived at read time, overridable in config, never silently missing
 
 - Status: Accepted
 - Date: 2026-08-01
@@ -13,7 +13,7 @@ moved to `claude-opus-5`, and `PRICE_TABLE` in `packages/core/src/pricing.ts` ha
 rate, and $0 is a perfectly ordinary-looking number. Re-deriving over the real store afterwards
 showed **$712.34** of Opus 5 usage that had been reported as free for a week.
 
-Transcripts do not record cost: they record token counts and a model id. Cost is therefore always
+Transcripts do not record cost — they record token counts and a model id. Cost is therefore always
 *derived*, and its correctness rides entirely on a table of rates that a human maintains. That table
 has two failure modes, and the incident was both at once:
 
@@ -21,12 +21,12 @@ has two failure modes, and the incident was both at once:
    cut a release. Between those two moments every session using it is mispriced.
 2. **It fails silently.** A missing rate is indistinguishable, in the UI, from a genuinely free
    session. The dashboard KPI already listed `unpriced_models`, but nothing said so at ingest, on the
-   About page, or next to the per-session cost figure, which is where the $0 was actually read.
+   About page, or next to the per-session cost figure — which is where the $0 was actually read.
 
 A third constraint frames the whole decision: **there is no such thing as effective cost here.**
 Usage is drawn against subscription quota whose internals are not observable from a transcript. Any
 number this tool shows is a list-price estimate of what the same tokens would have cost on the API.
-That is genuinely useful (for attributing spend across projects, or feeding an invoice) but it is
+That is genuinely useful — for attributing spend across projects, or feeding an invoice — but it is
 an estimate, and the design should stop pretending otherwise rather than chase an accuracy it cannot
 reach.
 
@@ -46,7 +46,7 @@ recomputes the derived tables, and the stamped engines (`classifications.classif
 same shape of problem and gets the same answer.
 
 Freezing at ingest also does not buy what it appears to. "The price when it ran" is not "the price in
-the table on the day we happened to ingest it": those differ for any backfill, re-ingest, or archive
+the table on the day we happened to ingest it" — those differ for any backfill, re-ingest, or archive
 ingested later. Point-in-time accuracy would need effective-dated rates, which is a different feature
 (see Decision 5).
 
@@ -54,10 +54,10 @@ There is no performance case either: the aggregate is a `GROUP BY model` over ~3
 
 > **Amended (2026-08).** Deriving cost at read time means the session list cannot `ORDER BY` a stored
 > column, so sorting by cost now happens in SQL against a **rates CTE** built from
-> `activePricing()`: `COST_SORT_SQL` / `ratesCte()` in `packages/server/src/db.ts`. Two consequences
+> `activePricing()` — `COST_SORT_SQL` / `ratesCte()` in `packages/server/src/db.ts`. Two consequences
 > for anyone changing pricing:
 >
-> 1. The cost formula now has **two implementations**: `costForUsage()` and its SQL transcription.
+> 1. The cost formula now has **two implementations** — `costForUsage()` and its SQL transcription.
 >    `packages/server/test/pricing-sql.test.ts` pins them together and must keep passing.
 > 2. The CTE is built from the **active** table, never `PRICE_TABLE`, so config overrides (Decision 2)
 >    reach the ordering as well as the displayed figure. The join reproduces the longest-prefix match
@@ -79,7 +79,7 @@ keyed by the same model-id prefix:
 ```
 
 `cacheWrite` and `cacheRead` are optional and default to the convention the table already documents
-(1.25× and 0.1× of input): they are mechanical in every entry we ship and the easiest to mistype.
+(1.25× and 0.1× of input) — they are mechanical in every entry we ship and the easiest to mistype.
 
 This does not remove the maintenance: the built-in table still wants updating, because most users
 will never write a `pricing` block. It removes the *urgency*. A model that launches between releases
@@ -88,7 +88,7 @@ and anyone who doesn't care is unaffected.
 
 Resolution follows the existing idiom exactly (`resolvePricing(cfg)` beside `resolveDbPath` /
 `resolveServerConfig`): a pure function over an injected config, tagged with a `ConfigOrigin`.
-Deliberately narrower than the full precedence chain: like `resolveRetention`, only `file` and
+Deliberately narrower than the full precedence chain — like `resolveRetention`, only `file` and
 `default` are reachable. Prices are a table, not a scalar; there is no sensible flag or env layer,
 and inventing one would mean a second way to be wrong.
 
@@ -99,7 +99,7 @@ derives a cost, and the diagnostics report the table actually in force rather th
 
 ### 3. A malformed override degrades the estimate. It does not stop the tool.
 
-An entry with a non-numeric or negative `input`/`output`, or a mistyped optional cache key, is
+An entry with a non-numeric or negative `input`/`output` — or a mistyped optional cache key — is
 reported and dropped, leaving the built-in rate in place. This is deliberately unlike `validatePort`,
 which throws on a bad value from any layer.
 
@@ -124,8 +124,8 @@ it:
 The dashboard KPI already carried `unpriced_models` and is unchanged.
 
 Per-session scope is carried by a single `unpriced_models: string[]` on `SessionSummary` and
-`SessionDetailData`, produced by the one `attachSessionCost` path both share. `<synthetic>`, Claude
-Code's stamp for locally-generated messages, is excluded everywhere: it made no API call, so it is
+`SessionDetailData`, produced by the one `attachSessionCost` path both share. `<synthetic>` — Claude
+Code's stamp for locally-generated messages — is excluded everywhere: it made no API call, so it is
 correctly unpriced and reporting it would train the operator to ignore the warning.
 
 `WorkflowView` and `AgentRow` also render costs and are deliberately **not** marked in this change,
@@ -143,7 +143,7 @@ explicitly:
   already records one such event (Opus 4.5 cut the Opus tier from $15/$75 to $5/$25); it is handled
   only because the change came with new model ids.
 
-Revisit if, and only if, someone needs per-period historical accuracy. The trigger is a concrete
+Revisit if — and only if — someone needs per-period historical accuracy. The trigger is a concrete
 request to reconcile a specific month against a real invoice, not the general observation that prices
 move.
 
@@ -151,13 +151,13 @@ move.
 
 - The price table is now two things: a shipped default, and a user-owned overlay. Both are reported
   with provenance, so "which rates am I using?" is answerable without reading source.
-- A new model still needs a table entry to be priced, but it is now *loud* while it isn't, and the
+- A new model still needs a table entry to be priced — but it is now *loud* while it isn't, and the
   operator can fix it themselves without waiting for a release.
 - No schema change, no migration, no new table. Cost remains absent from the store by construction
   ([ADR-003](ADR-003-data-model-and-store.md)).
 - The corpus guard in `packages/core/test/pricing.test.ts` asserts every model id in the committed
   fixture corpus resolves to a rate. When the corpus is refreshed from newer transcripts, an unpriced
-  new model fails the build instead of quietly zeroing out: the closest thing to an automatic
+  new model fails the build instead of quietly zeroing out — the closest thing to an automatic
   early-warning available without network access.
 - `unpriced_models` is optional-chained in the two UI call sites: a newer SPA served by an older
   server (the mismatch the About page already warns about) degrades to no marker rather than
@@ -167,29 +167,29 @@ move.
 
 - **Fetch prices from the API and refresh automatically.** Rejected, primarily because *there is no
   machine-readable price source*. `GET /v1/models/{id}` returns `max_input_tokens`, `max_tokens` and
-  a capability tree: no pricing. Automation would mean scraping a docs page, which fails by
+  a capability tree — no pricing. Automation would mean scraping a docs page, which fails by
   returning **wrong** numbers rather than missing ones: strictly worse than the failure this ADR
   exists to fix. It would also put a network call into a tool that is local-only and loopback-bound
   by design ([ADR-005](ADR-005-privacy-posture.md)), for a cosmetic estimate. The one thing the
-  Models API could tell us, "a model exists that you don't know about", we already learn from our
+  Models API could tell us — "a model exists that you don't know about" — we already learn from our
   own ingested data, offline.
-- **Freeze cost at ingest time.** Rejected: Decision 1. Would have made this very incident
+- **Freeze cost at ingest time.** Rejected — Decision 1. Would have made this very incident
   unfixable without a backfill.
 - **Store cost with a `pricing_version` stamp**, mirroring `classifier_version`. Rejected: the stamp
   pattern exists so an expensive derivation need not be recomputed. This one is a multiplication over
-  a `GROUP BY`: the bookkeeping would cost more than the arithmetic it saves.
-- **Fail startup on a malformed `pricing` entry**, consistent with `validatePort`. Rejected:
+  a `GROUP BY` — the bookkeeping would cost more than the arithmetic it saves.
+- **Fail startup on a malformed `pricing` entry**, consistent with `validatePort`. Rejected —
   Decision 3.
-- **Effective-dated rates now.** Rejected as speculative: Decision 5 records the trigger to revisit.
+- **Effective-dated rates now.** Rejected as speculative — Decision 5 records the trigger to revisit.
 - **A `agent-lens pricing check` command.** Rejected: the ingest report and the About page already
   answer the question at the moments it arises, and a command only helps someone who already
   suspects the problem.
-- **Marking cost everywhere it appears** (workflow view, agent rows). Deferred: Decision 4.
+- **Marking cost everywhere it appears** (workflow view, agent rows). Deferred — Decision 4.
 
 ## Related
 
-- [ADR-003](ADR-003-data-model-and-store.md): the normalized store; no cost is recorded in traces
-- [ADR-005](ADR-005-privacy-posture.md): local-only posture, which the auto-refresh option violated
-- [ADR-011](ADR-011-compressed-raw-json.md): lossless re-derivation, the invariant Decision 1 rests on
-- [ADR-026](ADR-026-api-response-contracts.md): where `AboutResponse.pricing` and `unpriced_models` are declared
-- [ADR-027](ADR-027-runtime-diagnostics-surface.md): the About page, and its rule that it mirrors `agent-lens config`
+- [ADR-003](ADR-003-data-model-and-store.md) — the normalized store; no cost is recorded in traces
+- [ADR-005](ADR-005-privacy-posture.md) — local-only posture, which the auto-refresh option violated
+- [ADR-011](ADR-011-compressed-raw-json.md) — lossless re-derivation, the invariant Decision 1 rests on
+- [ADR-026](ADR-026-api-response-contracts.md) — where `AboutResponse.pricing` and `unpriced_models` are declared
+- [ADR-027](ADR-027-runtime-diagnostics-surface.md) — the About page, and its rule that it mirrors `agent-lens config`

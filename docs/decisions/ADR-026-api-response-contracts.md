@@ -1,4 +1,4 @@
-# ADR-026: API response contracts live in the shared package
+# ADR-026 — API response contracts live in the shared package
 
 - Status: Accepted
 - Date: 2026-07-28
@@ -15,13 +15,13 @@ all read the same declarations. It deliberately stopped there, and said so:
 > `web/api.ts` for now; only the primitive row shapes and shared unions (`Severity`) are unified in
 > this ADR.
 
-Phase 2 typed the other end, the **query** boundary, with `queryAll<T>` / `queryGet<T>` in
+Phase 2 typed the other end — the **query** boundary — with `queryAll<T>` / `queryGet<T>` in
 `sql-util.ts`, so a column a query doesn't select is a compile error rather than a runtime
 `undefined`. But those helpers only reached the code written since; `db.ts` and `dashboard.ts` never
 adopted them.
 
-That leaves the response boundary (what an endpoint actually returns and what the SPA actually
-consumes) unowned by either. Three symptoms:
+That leaves the response boundary — what an endpoint actually returns and what the SPA actually
+consumes — unowned by either. Three symptoms:
 
 - `packages/web/src/api.ts` hand-mirrored 36 response types (the audit's count of 33 predates a few
   additions). They were a description of the
@@ -31,12 +31,12 @@ consumes) unowned by either. Three symptoms:
   `db.prepare(…).all(…) as any[]` or `params: any[]`. Rows entered the response assembly untyped, so
   even an explicit return type on the endpoint function would have absorbed the mismatch silently.
 - The drift the ADR-024 context predicted had already happened. Auditing the two sides against each
-  other found four fields the server returns that `web/api.ts` never declared: `/api/sources` emits
+  other found four fields the server returns that `web/api.ts` never declared — `/api/sources` emits
   `agent_id` and `config_dir`, `listSessions` emits `ended_at`, `getSkill`'s session rows emit
   `ai_title`, and `loadToolCalls` emits `error_type`. Three of them (`agent_id`, `config_dir`,
   `ai_title`) appear nowhere in `packages/web/src` at all: they are payload nobody reads.
 
-Nothing was *broken*, extra fields are harmless on the wire, but the drift is one-directional
+Nothing was *broken* — extra fields are harmless on the wire — but the drift is one-directional
 luck. The same mechanism that added an unread field would have dropped a read one.
 
 ## Decision
@@ -50,7 +50,7 @@ sides.
 `packages/contracts/src` splits into `rows.ts` (ADR-024's DDL mirrors, unchanged) and `api.ts` (the
 response shapes), with `index.ts` as a barrel. The leaf guarantee is unchanged and is what makes this
 possible at all: zero runtime, zero `node:` imports, so `web` importing a response type pulls no Node
-code into the bundle. `server` gains a direct dependency on `contracts`: it reaches the row types
+code into the bundle. `server` gains a direct dependency on `contracts` — it reaches the row types
 through `core`'s re-export today, but responses have no such path and inventing one would put the
 API contract behind a Node-only barrel again.
 
@@ -66,13 +66,13 @@ merges a `tool_calls` row, a `workflow_results` sidecar and a parsed `<task-noti
 `Row[]` is almost never the answer, and a response type that tried to be `SessionRow & {…}` would
 mostly be exclusions.
 
-The one clean exception is `SessionDetailData extends SessionRow`: `getSession` does `SELECT s.*`,
+The one clean exception is `SessionDetailData extends SessionRow` — `getSession` does `SELECT s.*`,
 so the whole row genuinely is in the payload, and the inheritance is kept. Everywhere else the
 response type is written out in full, next to its sibling shapes, and named for the endpoint rather
 than the table.
 
 The counterpart lives on the server: projections that are neither a contracts row nor a response get
-named shapes in the new `packages/server/src/rows.ts`: the file `sql-util.ts`'s own docstring
+named shapes in the new `packages/server/src/rows.ts` — the file `sql-util.ts`'s own docstring
 already referred to before it existed. `queryAll<SessionListRow>(…)` in, `SessionsPage` out, with the
 transformation between them visible and checked.
 
@@ -84,7 +84,7 @@ transformation between them visible and checked.
   emits `NULL AS agent_type, …` when `session_meta` doesn't exist, precisely so the row shape is
   stable across a pre-ingest DB. Typed `T | null`, not `T | undefined`.
 - Triage state (`dismissed`, `dismiss_note`, `dismissed_at`, `muted`) follows the same rule for the
-  same reason: `listFindings` emits `0 AS dismissed, NULL AS dismiss_note, …` when the triage store
+  same reason — `listFindings` emits `0 AS dismissed, NULL AS dismiss_note, …` when the triage store
   isn't ATTACHed.
 - `Finding.signals` is present in the inline session projection and absent from the `/security` list
   projection, which doesn't select `signals_json`. Genuinely optional, and typed that way.
@@ -99,7 +99,7 @@ Types are erased at runtime; a shared type is a compile-time agreement, not a wi
 deliberate and sufficient here. Both ends of every response are in this repository, built together
 by `pnpm -r build` in topological order, shipped as one npm package and one static snapshot. There is
 no third-party producer, no version skew across a network, and no untrusted input on the response
-path: the server reads a SQLite file that this repo's own ingest wrote.
+path — the server reads a SQLite file that this repo's own ingest wrote.
 
 So the JSON-blob columns keep their rich types (`FindingSignals`, `ClassificationSignals`,
 `WorkflowProgressEntry`, `WorkflowRunResult.phases`/`logs`) even though `safeJson()` hands back
@@ -124,7 +124,7 @@ the unread fields visible.
 
 **Good**
 
-- Renaming a field is a compile error at every consumer, `web` included: the drift that produced the
+- Renaming a field is a compile error at every consumer, `web` included — the drift that produced the
   four stray fields cannot recur silently.
 - The `any` count in the two highest-churn server files goes to zero on the read path, so the
   response types are actually enforced rather than nominally declared.
@@ -149,7 +149,7 @@ the unread fields visible.
 
 - **Infer the response types from the server's return types** (`ReturnType<typeof getSession>`) and
   have `web` import those. No hand-maintenance at all, but it makes `web` depend on
-  `@agent-lens/server` (a Node package with `node:sqlite` and `fastify` in it) for types alone,
+  `@agent-lens/server` — a Node package with `node:sqlite` and `fastify` in it — for types alone,
   which is exactly the barrel problem ADR-024 created `contracts` to avoid. It also inverts the
   dependency: the contract would be whatever the implementation happens to return, so an accidental
   extra field becomes part of the API rather than a diff to review.
