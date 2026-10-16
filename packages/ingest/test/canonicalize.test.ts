@@ -9,7 +9,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { SCHEMA_SQL } from "@agent-lens/core";
-import { canonicalizeProjects } from "../dist/canonicalize.js";
+import { canonicalizeProjects, sessionCwd } from "../dist/canonicalize.js";
 
 let root: string; // fake $HOME for every test
 
@@ -151,5 +151,25 @@ describe("canonicalizeProjects", () => {
     const p = db.prepare("SELECT first_seen, last_seen FROM projects").get() as any;
     expect(p.first_seen).toBe("2026-07-01T00:00:00Z");
     expect(p.last_seen).toBe("2026-07-02T00:00:00Z");
+  });
+});
+
+// A session's project is keyed on the last cwd it used. When that directory has since been deleted,
+// nothing on disk can fold it into its repo any more, so the cwd the session was opened in decides,
+// provided it is an ancestor: a session opened at a repo root that ended in a subdir it later
+// deleted (or whose repo was deleted) stays the repo's.
+describe("sessionCwd", () => {
+  it("keeps the last cwd while it exists", () => {
+    expect(sessionCwd(join(root, "repo"), join(root, "repo", "packages", "lib"))).toBe(join(root, "repo", "packages", "lib"));
+  });
+  it("falls back to the launch dir when the last cwd is gone and lies under it", () => {
+    expect(sessionCwd(join(root, "gone"), join(root, "gone", ".local", "plans"))).toBe(join(root, "gone"));
+  });
+  it("keeps a vanished last cwd that is not under the launch dir", () => {
+    expect(sessionCwd(join(root, "fe"), join(root, "be"))).toBe(join(root, "be"));
+    expect(sessionCwd(join(root, "gone"), join(root, "gone-two"))).toBe(join(root, "gone-two"));
+  });
+  it("is the identity when the session never moved", () => {
+    expect(sessionCwd(join(root, "gone"), join(root, "gone"))).toBe(join(root, "gone"));
   });
 });

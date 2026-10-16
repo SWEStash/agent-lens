@@ -7,6 +7,7 @@ import { createHash } from "node:crypto";
 import type { StatementSync } from "node:sqlite";
 import { packRaw, runNamed, transaction, type SourceAdapter, type SourceFile, type TurnRow } from "@agent-lens/core";
 import { isCommandResultCarrier } from "@agent-lens/transcript-format";
+import { sessionCwd } from "./canonicalize.js";
 import { type DB } from "./db.js";
 import { createDirtySet } from "./dirtyset.js";
 import { ARG_TRAILERS, maskDynamic, maskKnownValues, mergeSlots, type Slot } from "./skillslots.js";
@@ -651,6 +652,7 @@ export function ingestFile(
   // `provisionalTurns` (--full, foreign keys off): insert each event with the turn its line order
   // implies, so rebuildTurns has to rewrite only where timestamps disagree (0.6% of real events).
   let turnSeq = -1;
+  let firstCwd: string | null = null;
 
   const tx = transaction(db, () => {
     // Ensure the session row exists before any event references it (FK).
@@ -666,7 +668,10 @@ export function ingestFile(
         continue;
       }
       const parsed = adapter.parseLine(raw, file, seq++);
-      if (parsed.meta) Object.assign(sessionMeta, parsed.meta);
+      if (parsed.meta) {
+        if (parsed.meta.cwd && firstCwd === null) firstCwd = parsed.meta.cwd;
+        Object.assign(sessionMeta, parsed.meta);
+      }
       if (parsed.event) {
         // raw_json is stored gzip-compressed (ADR-011); compress at this single write chokepoint so
         // adapters stay agent-agnostic and emit a plain string.
@@ -703,11 +708,12 @@ export function ingestFile(
     // Persist session + project metadata (survives later skip runs).
     let projectId: string | null = null;
     if (sessionMeta.cwd) {
-      projectId = createHash("sha1").update(`${adapter.agentId}\0${sessionMeta.cwd}`).digest("hex").slice(0, 16);
+      const cwd = sessionCwd(firstCwd ?? sessionMeta.cwd, sessionMeta.cwd);
+      projectId = createHash("sha1").update(`${adapter.agentId}\0${cwd}`).digest("hex").slice(0, 16);
       stmts.upsertProject.run({
         id: projectId,
         agent_id: adapter.agentId,
-        path: sessionMeta.cwd,
+        path: cwd,
         encoded_dir: file.encodedDir || null,
         now,
       });
