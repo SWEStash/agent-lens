@@ -44,7 +44,7 @@ export default function SessionView() {
   const { hash } = useLocation();
   const { d, error, wfMap } = useSessionDetail(id);
   // Turn ids that are collapsed. Empty = all expanded (preserves the prior always-open behavior).
-  const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
+  const [collapsed, setCollapsed] = useResetOn<Set<string>>(id ?? "", new Set());
   // How message bodies render. Defaults to markdown; persisted so the choice sticks across sessions.
   const [format, setFormat] = useState<MsgFormat>(loadFormat);
   // Hide mechanical tool chips to read only the human-facing conversation. Persisted like format.
@@ -52,8 +52,6 @@ export default function SessionView() {
   // Timeline band: axis mode and which token number drives mark height. Persisted the same way.
   const [axisMode, setAxisMode] = useState<AxisMode>(loadAxisMode);
   const [metric, setMetric] = useState<TokenMetric>(loadTimelineMetric);
-
-  useEffect(() => setCollapsed(new Set()), [id]);
 
   // Painted from the localStorage cache above; reconcile with the server's stored value (source of
   // truth when a writable store is configured), like the dashboard/sessions prefs do.
@@ -112,8 +110,7 @@ export default function SessionView() {
     set(r ? { from: new Date(r[0]).toISOString(), to: new Date(r[1]).toISOString() } : { from: "", to: "" }, {
       replace: true,
     });
-  const [domain, setDomain] = useState<[number, number] | null>(null);
-  useEffect(() => setDomain(null), [id]);
+  const [domain, setDomain] = useResetOn<[number, number] | null>(id ?? "", null);
 
   // renderable -> time-range filter -> search, so a match count always describes what is on screen.
   // An event with NO timestamp is never filtered out: it cannot be placed on the axis, and hiding it
@@ -138,8 +135,7 @@ export default function SessionView() {
   const activeHit = model.hits[pos.idx] ?? null;
   // Clicking a timeline mark is the third caller of the same jump, after `#ev-` deep links and
   // find-in-session's arrows. `nonce` re-fires it when the same mark is clicked twice.
-  const [banded, setBanded] = useState<{ uuid: string; nonce: number } | null>(null);
-  useEffect(() => setBanded(null), [id]);
+  const [banded, setBanded] = useResetOn<{ uuid: string; nonce: number } | null>(id ?? "", null);
   const jumpTo = (uuid: string) => setBanded((b) => ({ uuid, nonce: (b?.nonce ?? 0) + 1 }));
 
   // A search that matches nothing leaves the reader wherever the last match had scrolled them, with

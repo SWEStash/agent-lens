@@ -5,7 +5,7 @@
  * (input / output / cache-creation / cache-read); cache-read is never folded into a single
  * "tokens" number because it dominates and misleads. Cost is derived via the shared pricing table.
  */
-import { canonicalModel, costForUsage, rateForModel, errorKind, type ToolErrorType } from "@agent-lens/core";
+import { canonicalModel, costForUsage, rateForModel, unpricedModels, SYNTHETIC_MODEL, errorKind, type ToolErrorType } from "@agent-lens/core";
 import type { DashAudit, DashBreakdowns, DashOverview, DashTime, DashTimeseries, ReviewLatency, TimeseriesPoint } from "@agent-lens/contracts";
 import type { DB } from "./db.js";
 import { tableExists, canonModelSql, pushDateRange, queryAll, queryGet } from "./sql-util.js";
@@ -240,11 +240,11 @@ export function dashboardOverview(db: DB, f: DashFilters): DashOverview {
   );
   const tokens = zeroSplit();
   let cost = 0;
-  const unpriced: string[] = [];
+  const used: Array<string | null> = [];
   for (const u of usage) {
     addUsage(tokens, u);
     cost += costForUsage(u.model, usageForCost(u));
-    if (u.model && !rateForModel(u.model) && (u.i || u.o || u.cw || u.cr)) unpriced.push(u.model);
+    if (u.i || u.o || u.cw || u.cr) used.push(u.model);
   }
   const totalTokens = tokens.input + tokens.output + tokens.cache_creation + tokens.cache_read;
 
@@ -284,7 +284,7 @@ export function dashboardOverview(db: DB, f: DashFilters): DashOverview {
     total_tokens: totalTokens,
     cache_read_ratio: totalTokens ? tokens.cache_read / totalTokens : 0,
     cost: Number(cost.toFixed(4)),
-    unpriced_models: [...new Set(unpriced)].sort(),
+    unpriced_models: unpricedModels(used),
     turn_duration_ms: turnDur,
     session_duration_ms: sessDur,
     workflows: workflowAgg(db, f),
@@ -304,6 +304,12 @@ function chooseBucket(db: DB, f: DashFilters): Bucket {
   return "month";
 }
 
+/** The requested bucket when it names one, else one sized to the filtered range — so an absent and an
+ *  unrecognised `?bucket=` behave the same on every endpoint. */
+function bucketOf(db: DB, f: DashFilters, param?: string): Bucket {
+  return param === "day" || param === "week" || param === "month" ? param : chooseBucket(db, f);
+}
+
 /** The bucket key expression over an arbitrary timestamp column. Every series but one buckets on
  *  `s.started_at`; findings buckets on their own event's timestamp, which is why the column is a
  *  parameter rather than baked in. */
@@ -311,7 +317,7 @@ const bucketExpr = (b: Bucket, col: string): string =>
   b === "day" ? `strftime('%Y-%m-%d', ${col})` : b === "week" ? `strftime('%Y-W%W', ${col})` : `strftime('%Y-%m', ${col})`;
 
 export function dashboardTimeseries(db: DB, f: DashFilters, bucketParam?: string): DashTimeseries {
-  const bucket: Bucket = bucketParam === "day" || bucketParam === "week" || bucketParam === "month" ? bucketParam : chooseBucket(db, f);
+  const bucket = bucketOf(db, f, bucketParam);
   const w = sessionWhere(f);
   const expr = bucketExpr(bucket, "s.started_at");
 
@@ -411,7 +417,7 @@ function modelBreakdown(db: DB, w: Where): DashBreakdowns["by_model"] {
   )) {
     const key = canonicalModel(u.model);
     cost.set(key, (cost.get(key) ?? 0) + costForUsage(u.model, usageForCost(u)));
-    if (!rateForModel(u.model)) unpriced.add(key);
+    if ((u.i || u.o || u.cw || u.cr) && u.model !== SYNTHETIC_MODEL && !rateForModel(u.model)) unpriced.add(key);
   }
 
   return modelRows.map((u) => ({
@@ -579,8 +585,6 @@ export function dashboardBreakdowns(db: DB, f: DashFilters): DashBreakdowns {
  * buckets by `sessions.started_at`, which for a population running at median 92% idle drops a
  * six-hour session's entire spend into the hour it began.
  */
-const bucketFor = (b: string): Bucket => (b === "day" || b === "week" || b === "month" ? b : "day");
-
 export function dashboardTime(db: DB, f: DashFilters, bucketParam?: string): DashTime {
   const w = sessionWhere(f);
   const mw = mainOnly(w);
@@ -625,7 +629,7 @@ export function dashboardTime(db: DB, f: DashFilters, bucketParam?: string): Das
   return {
     burn_hours,
     turn_hours,
-    latency: modelLatency(db, mw, bucketParam ? bucketFor(bucketParam) : chooseBucket(db, f)),
+    latency: modelLatency(db, mw, bucketOf(db, f, bucketParam)),
     review: reviewLatency(db, mw),
   };
 }
@@ -746,7 +750,7 @@ function reviewLatency(db: DB, mw: Where): DashTime["review"] {
  */
 export function dashboardAudit(db: DB, f: DashFilters, bucketParam?: string): DashAudit {
   const w = sessionWhere(f);
-  const bucket: Bucket = bucketParam ? bucketFor(bucketParam) : chooseBucket(db, f);
+  const bucket = bucketOf(db, f, bucketParam);
   return {
     bucket,
     edit_reliability: editReliability(db, w),

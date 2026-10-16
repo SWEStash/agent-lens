@@ -474,7 +474,7 @@ export function ModelLatency({ hidden, time }: ChartProps) {
             while hiding it here only takes it off this one.
           </p>
           <p>
-            Main sessions only, and only the highest-volume models are plotted. A {bucket} holding
+            Main sessions only. A {bucket} holding
             fewer than <strong>5 turns for a given model is dropped</strong>, because a percentile over
             three observations is not a percentile — so a finer bucket gives a sparser chart, not a
             noisier one. Where a cell holds only a handful of turns its &quot;p90&quot; is close to

@@ -32,7 +32,7 @@ import { ingestFile, newStats, prepareStatements, pruneExcluded, rebuildDerived,
 import { ingestWorkflowResults, newWorkflowStats } from "./workflows.js";
 import { ingestSubagentMeta, newMetaStats } from "./meta.js";
 import { ingestToolResults, newToolResultStats } from "./toolResults.js";
-import { parseExcludes, isExcludedArchivePath } from "./redact.js";
+import { encodeProjectPath, isExcludedArchivePath } from "./redact.js";
 import { sha256, sha256File, streamLines, STREAM_THRESHOLD } from "./fileread.js";
 
 function parseIngestArgs(argv: string[]) {
@@ -198,7 +198,7 @@ export function runIngest(argv: string[] = process.argv.slice(2)): void {
   // Excluded projects (config `exclude` + AGENT_LENS_EXCLUDE): drop any already-ingested ones now,
   // then filter them out of discovery below.
   const excludePaths = loadExcludes();
-  const excludedDirs = parseExcludes(excludePaths.join(","));
+  const excludedDirs = excludePaths.map(encodeProjectPath);
   // --full skips it: the rebuild below starts from empty tables, and the old schema may be stale.
   const pruned = args.full ? 0 : pruneExcluded(db, excludePaths);
 

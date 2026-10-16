@@ -24,6 +24,11 @@ export interface RefreshResult {
  *  header both yield `[::1]` (not `::1`) for the IPv6 loopback, so the set must carry the brackets. */
 export const LOOPBACK_HOSTS = new Set(["127.0.0.1", "localhost", "[::1]"]);
 
+/** True when a bind address (`--host`, unbracketed: `::1`) is loopback — the same set the guards use. */
+export function isLoopbackBind(host: string): boolean {
+  return LOOPBACK_HOSTS.has(host) || LOOPBACK_HOSTS.has(`[${host}]`);
+}
+
 /**
  * CSRF guard for the loopback server. Allow requests with no `Origin` (non-browser callers like curl
  * or the CLI — not a CSRF vector) and same-machine origins; reject anything cross-site. The server

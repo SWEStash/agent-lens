@@ -4,10 +4,11 @@
  * left OFF (same stance as detect.test.ts): we test deterministic derivation, not referential
  * integrity. Imports the BUILT dist.
  */
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { DatabaseSync } from "node:sqlite";
 import { SCHEMA_SQL } from "@agent-lens/core";
 import { deriveFileChanges, normalizeFilePath, FILECHANGES_VERSION } from "../dist/filechanges.js";
+import { malformedStoredJson, resetMalformedStoredJson } from "../dist/storedjson.js";
 
 function freshDb(): DatabaseSync {
   const db = new DatabaseSync(":memory:");
@@ -223,5 +224,24 @@ describe("deriveFileChanges — shell writes", () => {
     expect(rows).toHaveLength(2);
     expect(new Set(rows.map((r) => r.file_path))).toEqual(new Set(["/proj/a.md"]));
     expect(new Set(rows.map((r) => r.tool_name))).toEqual(new Set(["Write", "Bash"]));
+  });
+});
+
+describe("deriveFileChanges over a corrupt row", () => {
+  it("skips the row but counts it, rather than dropping it silently", () => {
+    const db = freshDb();
+    addSession(db, "s", "/proj");
+    const bad = addTool(db, "s", "Write", { input: { file_path: "/proj/a.ts", content: "x" } });
+    addTool(db, "s", "Write", { input: { file_path: "/proj/b.ts", content: "y" } });
+    db.prepare("UPDATE tool_calls SET input_json = '{truncated' WHERE id = ?").run(bad);
+    resetMalformedStoredJson();
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      deriveFileChanges(db);
+      expect(rowsFor(db, "s").map((r) => r.file_path)).toEqual(["/proj/b.ts"]);
+      expect(malformedStoredJson()).toBe(1);
+    } finally {
+      warn.mockRestore();
+    }
   });
 });

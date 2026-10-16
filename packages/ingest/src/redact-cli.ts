@@ -14,7 +14,8 @@
  */
 import { mkdirSync, readFileSync, writeFileSync, readdirSync } from "node:fs";
 import { basename, join, relative } from "node:path";
-import { Redactor, findLeak, parseExcludes, isExcludedDir } from "./redact.js";
+import { loadExcludes } from "@agent-lens/core";
+import { Redactor, findLeak, encodeProjectPath, isExcludedDir } from "./redact.js";
 
 function listJsonl(dir: string): string[] {
   const out: string[] = [];
@@ -40,9 +41,9 @@ function main() {
     process.exit(2);
   }
 
-  // Projects to keep out of the corpus, from AGENT_LENS_EXCLUDE (CSV of real paths) — the same
-  // global exclude list honored by collect + ingest. See scripts/sources.mjs.
-  const excluded = parseExcludes(process.env.AGENT_LENS_EXCLUDE);
+  // Projects to keep out of the corpus: the config `exclude` list plus AGENT_LENS_EXCLUDE — the same
+  // global exclude list honored by collect + ingest (core/src/sources.ts loadExcludes).
+  const excluded = loadExcludes().map(encodeProjectPath);
   // A fixed salt makes the corpus reproducible (stable pseudonyms → reviewable diffs). Privacy does
   // not depend on salt secrecy: text/PII is scrubbed regardless; the salt only stabilizes pseudonyms.
   const salt = process.env.AGENT_LENS_REDACT_SALT;
@@ -52,7 +53,7 @@ function main() {
   for (const projectDir of inputs) {
     const encoded = basename(projectDir);
     if (isExcludedDir(encoded, excluded)) {
-      console.error(`skipped (AGENT_LENS_EXCLUDE): ${projectDir}`);
+      console.error(`skipped (excluded): ${projectDir}`);
       continue;
     }
     const pseudoDir = red.ident("proj", encoded); // pseudonymize the path-encoding project folder

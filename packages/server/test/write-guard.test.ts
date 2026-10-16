@@ -6,7 +6,7 @@ import { describe, it, expect, beforeAll } from "vitest";
 import { DatabaseSync } from "node:sqlite";
 import { SCHEMA_SQL } from "@agent-lens/core";
 import { createApp } from "../dist/app.js";
-import { writeBlocked, originAllowed } from "../dist/refresh.js";
+import { writeBlocked, originAllowed, isLoopbackBind } from "../dist/refresh.js";
 
 function db(): DatabaseSync {
   const d = new DatabaseSync(":memory:");
@@ -55,5 +55,12 @@ describe("baseline security headers (LOW-002)", () => {
     expect(r.headers["x-content-type-options"]).toBe("nosniff");
     expect(r.headers["referrer-policy"]).toBe("no-referrer");
     expect(r.headers["content-security-policy"]).toContain("frame-ancestors 'none'");
+  });
+});
+
+describe("isLoopbackBind", () => {
+  it("accepts every loopback bind address, IPv6 included, and nothing else", () => {
+    for (const h of ["127.0.0.1", "localhost", "::1", "[::1]"]) expect(isLoopbackBind(h)).toBe(true);
+    for (const h of ["0.0.0.0", "::", "192.168.1.2", "example.com"]) expect(isLoopbackBind(h)).toBe(false);
   });
 });

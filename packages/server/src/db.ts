@@ -293,7 +293,7 @@ export function listSessions(db: DB, f: SessionFilters): SessionsPage {
   // replaces — which is what made the session list the worst-scaling query in the server.
   const ORDER = {
     started: "s.started_at",
-    title: "COALESCE(s.ai_title, s.slug)",
+    title: "COALESCE(NULLIF(s.ai_title, ''), s.slug)",
     turns: "s.turn_count",
     duration: "s.duration_ms",
     errors: "tool_error_count",
@@ -1213,7 +1213,7 @@ export function listFindings(db: DB, f: FindingFilters): FindingsPage {
     db,
     `SELECT f.id, f.session_id, f.tool_call_id, f.event_uuid, f.turn_id, f.rule_id, f.category,
             f.framework_ref, f.severity, f.title, f.evidence, tc.tool_name,
-            COALESCE(s.ai_title, s.slug) AS session_title, s.source_id, s.is_sidechain,
+            COALESCE(NULLIF(s.ai_title, ''), s.slug) AS session_title, s.source_id, s.is_sidechain,
             s.started_at, p.path AS project_path, s.project_id ${triageCols}
      FROM findings f
      JOIN sessions s ON s.id = f.session_id
