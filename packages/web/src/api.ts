@@ -24,7 +24,8 @@ function resolveUrl(path: string): string {
  * Stable snapshot key for a file's provenance timeline (/file). The file path contains slashes and
  * can be long, so it can't be a filename directly — hash (project, path) with cyrb53 to a short,
  * filesystem-safe token. scripts/export-snapshot.mjs computes the IDENTICAL key when it writes
- * snapshot/file/<key>.json — KEEP THE TWO IN SYNC (change one, change the other).
+ * snapshot/file/<key>.json — KEEP THE TWO IN SYNC. test/snapshotKey.test.ts and check-snapshot-links.mjs
+ * pin both to the same keys, so CI fails if they drift.
  */
 export function snapshotFileKey(path: string, project?: string | null): string {
   const s = `${project ?? ""}\n${path}`;

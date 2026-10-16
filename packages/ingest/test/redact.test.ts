@@ -17,11 +17,11 @@ import { classify } from "../dist/classify.js";
 import { ClaudeCodeAdapter } from "../dist/adapters/claude-code.js";
 import { Redactor, findLeak } from "../dist/redact.js";
 import { DYNAMIC_PLACEHOLDER } from "../dist/skillslots.js";
+import { jsonl } from "./helpers/seed.js";
 
 const SOURCE = "test";
 const AGENT = "claude-code";
 const T = (n: number) => `2026-01-01T00:0${n}:00.000Z`;
-const jsonl = (...l: unknown[]) => l.map((x) => JSON.stringify(x)).join("\n") + "\n";
 
 // A main session (PII-laden) that spawns an Explore subagent, plus the subagent transcript.
 const RAW: Array<{ id: string; content: string }> = [

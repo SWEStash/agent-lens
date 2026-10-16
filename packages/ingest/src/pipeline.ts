@@ -7,7 +7,7 @@ import { createHash } from "node:crypto";
 import type { StatementSync } from "node:sqlite";
 import { packRaw, runNamed, transaction, type SourceAdapter, type SourceFile, type TurnRow } from "@agent-lens/core";
 import { isCommandResultCarrier } from "@agent-lens/transcript-format";
-import { sessionCwd } from "./canonicalize.js";
+import { projectId, sessionCwd } from "./canonicalize.js";
 import { type DB } from "./db.js";
 import { createDirtySet } from "./dirtyset.js";
 import { ARG_TRAILERS, maskDynamic, maskKnownValues, mergeSlots, type Slot } from "./skillslots.js";
@@ -701,12 +701,12 @@ export function ingestFile(
     }
 
     // Persist session + project metadata (survives later skip runs).
-    let projectId: string | null = null;
+    let project: string | null = null;
     if (sessionMeta.cwd) {
       const cwd = sessionCwd(firstCwd ?? sessionMeta.cwd, sessionMeta.cwd);
-      projectId = createHash("sha1").update(`${adapter.agentId}\0${cwd}`).digest("hex").slice(0, 16);
+      project = projectId(adapter.agentId, cwd);
       stmts.upsertProject.run({
-        id: projectId,
+        id: project,
         agent_id: adapter.agentId,
         path: cwd,
         encoded_dir: file.encodedDir || null,
@@ -717,7 +717,7 @@ export function ingestFile(
       id: file.sessionId,
       agent_id: adapter.agentId,
       source_id: file.sourceId,
-      project_id: projectId,
+      project_id: project,
       slug: sessionMeta.slug ?? null,
       ai_title: sessionMeta.ai_title ?? null,
       cli_version: sessionMeta.cli_version ?? null,

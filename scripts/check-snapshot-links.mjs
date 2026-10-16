@@ -16,10 +16,9 @@
  * Usage: node scripts/check-snapshot-links.mjs   (run it after scripts/export-snapshot.mjs)
  */
 import { existsSync, readFileSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { join } from "node:path";
+import { REPO } from "./lib/sandbox.mjs";
 
-const REPO = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const SNAP = join(REPO, "packages/web/public/snapshot");
 
 /**
@@ -38,6 +37,22 @@ function snapshotFileKey(path, project) {
   h1 = Math.imul(h1 ^ (h1 >>> 16), 2246822507) ^ Math.imul(h2 ^ (h2 >>> 13), 3266489909);
   h2 = Math.imul(h2 ^ (h2 >>> 16), 2246822507) ^ Math.imul(h1 ^ (h1 >>> 13), 3266489909);
   return (4294967296 * (2097151 & h2) + (h1 >>> 0)).toString(36);
+}
+
+// The same pinned keys packages/web/test/snapshotKey.test.ts asserts for the SPA's copy. This copy
+// is checked against the exporter's output below; pinning both copies to these values is what ties
+// the SPA to the exporter, so a change to any one of the three fails CI.
+const KEY_VECTORS = [
+  ["/repo/src/index.ts", "p1", "14dcd1agrya"],
+  ["/repo/src/index.ts", null, "2cvfynf0gkm"],
+  ["/ü/naïve file.md", "proj-2", "15yst67hqxq"],
+];
+for (const [path, project, key] of KEY_VECTORS) {
+  const got = snapshotFileKey(path, project);
+  if (got !== key) {
+    console.error(`check-snapshot-links: snapshotFileKey(${JSON.stringify(path)}, ${project}) = ${got}, pinned ${key}`);
+    process.exit(1);
+  }
 }
 
 const readSnap = (rel) => JSON.parse(readFileSync(join(SNAP, rel), "utf8"));

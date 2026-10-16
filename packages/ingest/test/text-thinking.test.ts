@@ -16,13 +16,10 @@ import type { SourceFile } from "@agent-lens/core";
 import { openDb } from "../dist/db.js";
 import { prepareStatements, ingestFile, rebuildDerived, newStats } from "../dist/pipeline.js";
 import { ClaudeCodeAdapter } from "../dist/adapters/claude-code.js";
+import { jsonl } from "./helpers/seed.js";
 
 const SOURCE = "test";
 const AGENT = "claude-code";
-
-function jsonl(...lines: unknown[]): string {
-  return lines.map((l) => JSON.stringify(l)).join("\n") + "\n";
-}
 
 function file(sessionId: string, content: string): { file: SourceFile; content: string } {
   return {

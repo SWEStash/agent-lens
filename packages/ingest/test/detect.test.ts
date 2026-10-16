@@ -6,26 +6,8 @@
  */
 import { describe, it, expect } from "vitest";
 import { DatabaseSync } from "node:sqlite";
-import { SCHEMA_SQL } from "@agent-lens/core";
 import { detect, bumpSeverity } from "../dist/detect.js";
-
-function freshDb(): DatabaseSync {
-  const db = new DatabaseSync(":memory:");
-  db.exec(SCHEMA_SQL);
-  db.exec("PRAGMA foreign_keys = OFF");
-  return db;
-}
-
-/** Seed a session (optionally with a project path for outside-project checks). */
-function addSession(db: DatabaseSync, id: string, projectPath?: string) {
-  if (projectPath) {
-    const pid = `p-${id}`;
-    db.prepare(`INSERT INTO projects (id, agent_id, path) VALUES (?, 'claude-code', ?)`).run(pid, projectPath);
-    db.prepare(`INSERT INTO sessions (id, agent_id, project_id) VALUES (?, 'claude-code', ?)`).run(id, pid);
-  } else {
-    db.prepare(`INSERT INTO sessions (id, agent_id) VALUES (?, 'claude-code')`).run(id);
-  }
-}
+import { addSession, freshDb } from "./helpers/seed.js";
 
 let seq = 0;
 /** Seed a tool call; returns its id. */

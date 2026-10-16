@@ -14,6 +14,7 @@ import { prepareStatements, ingestFile, rebuildDerived, newStats } from "../dist
 import { ClaudeCodeAdapter } from "../dist/adapters/claude-code.js";
 import { parseSkillInjection } from "../dist/pipeline.js";
 import { learnSlots, maskDynamic, maskKnownValues, DYNAMIC_PLACEHOLDER } from "../dist/skillslots.js";
+import { jsonl } from "./helpers/seed.js";
 
 const EMPTY = "(Bash completed with no output)";
 const render = (step1: string, pr: string) =>
@@ -102,7 +103,6 @@ describe("maskKnownValues", () => {
 
 const SOURCE = "test";
 const TS = (n: number) => `2026-01-03T00:${String(n).padStart(2, "0")}:00.000Z`;
-const jsonl = (...lines: unknown[]) => lines.map((l) => JSON.stringify(l)).join("\n") + "\n";
 const inject = (body: string) => `Base directory for this skill: /home/x/.claude/skills/git-workflow\n\n${body}\n\nARGUMENTS: go`;
 
 function firingSession(sessionId: string, body: string, t0: number, args = "go", rawInject = inject(body)) {

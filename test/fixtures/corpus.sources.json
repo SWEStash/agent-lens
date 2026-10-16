@@ -1,0 +1,7 @@
+{
+  "sources": [
+    { "label": "team-a", "agent": "claude-code", "configDir": "/unused-in-ingest" },
+    { "label": "team-b", "agent": "claude-code", "configDir": "/unused-in-ingest" },
+    { "label": "scenarios", "agent": "claude-code", "configDir": "/unused-in-ingest" }
+  ]
+}

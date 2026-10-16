@@ -30,9 +30,9 @@ import { dirname, join } from "node:path";
 import { transaction } from "@agent-lens/core";
 import type { DB } from "./db.js";
 
-/** Same derivation ingestFile uses (pipeline.ts), so a created canonical row is identical to one
- * that ingest would have minted for that cwd. */
-function projectId(agentId: string, path: string): string {
+/** A project's id: a hash of agent + path, so ingest (pipeline.ts) and canonicalization mint the same
+ * row for the same cwd. */
+export function projectId(agentId: string, path: string): string {
   return createHash("sha1").update(`${agentId}\0${path}`).digest("hex").slice(0, 16);
 }
 

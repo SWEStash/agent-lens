@@ -6,7 +6,7 @@
  * this checks they all hold together over the real committed fixture.
  */
 import { describe, it, expect, beforeAll } from "vitest";
-import { readdirSync, readFileSync, statSync } from "node:fs";
+import { readFileSync, statSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join, basename, relative } from "node:path";
 import type { SourceFile } from "@agent-lens/core";
@@ -15,18 +15,9 @@ import { prepareStatements, ingestFile, rebuildDerived, newStats } from "../dist
 import { classify } from "../dist/classify.js";
 import { detect } from "../dist/detect.js";
 import { ClaudeCodeAdapter, parentSessionFromPath, workflowRunFromPath } from "../dist/adapters/claude-code.js";
+import { listJsonl } from "./helpers/seed.js";
 
 const CORPUS = join(dirname(fileURLToPath(import.meta.url)), "../../../test/fixtures/corpus");
-
-function listJsonl(dir: string): string[] {
-  const out: string[] = [];
-  for (const e of readdirSync(dir, { withFileTypes: true })) {
-    const p = join(dir, e.name);
-    if (e.isDirectory()) out.push(...listJsonl(p));
-    else if (e.isFile() && e.name.endsWith(".jsonl")) out.push(p);
-  }
-  return out.sort();
-}
 
 let db: ReturnType<typeof openDb>;
 let malformed = 0;

@@ -20,16 +20,9 @@ PORT="${AGENT_LENS_PORT:-14477}"
 export AGENT_LENS_DATA="$SBX"
 CORPUS="$REPO/test/fixtures/corpus"   # passed as `ingest --archive` (the archive location itself is fixed)
 export AGENT_LENS_DB="$SBX/sandbox.db"
-export AGENT_LENS_CONFIG="$SBX/sources.json"
+# The corpus's three sources, shared with CI's invariant step.
+export AGENT_LENS_CONFIG="$REPO/test/fixtures/corpus.sources.json"
 export AGENT_LENS_PORT="$PORT"
-
-cat >"$AGENT_LENS_CONFIG" <<'JSON'
-{ "sources": [
-  { "label": "team-a",    "agent": "claude-code", "configDir": "/unused-in-ingest" },
-  { "label": "team-b",    "agent": "claude-code", "configDir": "/unused-in-ingest" },
-  { "label": "scenarios", "agent": "claude-code", "configDir": "/unused-in-ingest" }
-] }
-JSON
 
 SERVER_PID=""
 cleanup() { [ -n "$SERVER_PID" ] && kill "$SERVER_PID" 2>/dev/null || true; rm -rf "$SBX"; }

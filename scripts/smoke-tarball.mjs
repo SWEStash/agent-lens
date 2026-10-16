@@ -19,9 +19,9 @@ import { execFileSync, spawn } from "node:child_process";
 import { mkdtempSync, mkdirSync, writeFileSync, readdirSync, rmSync, symlinkSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
+import { REPO, waitForHealth } from "./lib/sandbox.mjs";
 
 const GLOBAL = process.argv.includes("--global");
-const REPO = resolve(import.meta.dirname, "..");
 const CLI = join(REPO, "packages/cli");
 const CORPUS_LABEL = join(REPO, "test/fixtures/corpus/team-a"); // a source-shaped dir (has projects/)
 const TMP = mkdtempSync(join(tmpdir(), "al-smoke."));
@@ -85,11 +85,7 @@ if (GLOBAL) {
   server = spawn("node", [join(TMP, "pkg", "dist", "agent-lens.js"), "serve"], { env, stdio: "ignore" });
 }
 const base = "http://127.0.0.1:14733";
-let up = false;
-for (let i = 0; i < 100; i++) {
-  try { if ((await (await fetch(base + "/api/health")).json()).ok) { up = true; break; } } catch {}
-  await new Promise((r) => setTimeout(r, 100));
-}
+const up = await waitForHealth(base).then(() => true, () => false);
 up ? ok("server healthy") : fail("server did not become healthy");
 if (up) {
   const html = await (await fetch(base + "/")).text();

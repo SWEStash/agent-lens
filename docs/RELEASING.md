@@ -38,7 +38,7 @@ git commit --allow-empty -m "feat(web): <what actually shipped>"
 
 On every push to `main`, `.github/workflows/release.yml`:
 
-1. **Gates the release** on `pnpm build`, `pnpm test`, and `node scripts/smoke-tarball.mjs --global`,
+1. **Gates the release** on `pnpm build`, the vitest suite, and `node scripts/smoke-tarball.mjs --global`,
    which installs the packed tarball globally the way a user would. That smoke test is the only
    check of the bundled CLI; the test suite runs per-package output.
 2. **Releases** with `semantic-release` (`.releaserc.json`, `pkgRoot: packages/cli`): sets the

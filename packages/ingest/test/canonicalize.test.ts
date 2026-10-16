@@ -8,8 +8,8 @@ import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import { SCHEMA_SQL } from "@agent-lens/core";
 import { canonicalizeProjects, sessionCwd } from "../dist/canonicalize.js";
+import { freshDb } from "./helpers/seed.js";
 
 let root: string; // fake $HOME for every test
 
@@ -28,13 +28,6 @@ beforeAll(() => {
   mkdirSync(join(root, "plainws", "evals"), { recursive: true });
 });
 afterAll(() => rmSync(root, { recursive: true, force: true }));
-
-function freshDb(): DatabaseSync {
-  const db = new DatabaseSync(":memory:");
-  db.exec(SCHEMA_SQL);
-  db.exec("PRAGMA foreign_keys = OFF");
-  return db;
-}
 
 let n = 0;
 /** Seed a project row + one session in it; returns the project id. */
