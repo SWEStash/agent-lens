@@ -12,9 +12,9 @@ import { prepareStatements, ingestFile, rebuildDerived, pruneExcluded, newStats 
 import { classify } from "../dist/classify.js";
 import { ClaudeCodeAdapter } from "../dist/adapters/claude-code.js";
 import type { SourceFile } from "@agent-lens/core";
+import { jsonl } from "./helpers/seed.js";
 
 const T = (n: number) => `2026-01-01T00:0${n}:00.000Z`;
-const jsonl = (...l: unknown[]) => l.map((x) => JSON.stringify(x)).join("\n") + "\n";
 
 describe("path encoding + exclusion matchers", () => {
   it("encodes a real cwd to its projects/<encodedDir> name ('/' and '.' → '-')", () => {

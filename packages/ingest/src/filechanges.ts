@@ -19,6 +19,7 @@ import { transaction } from "@agent-lens/core";
 import { parseShellWrites } from "./shellwrites.js";
 import type { DB } from "./db.js";
 import { parseStored } from "./storedjson.js";
+import { createDirtySet } from "./dirtyset.js";
 
 export const FILECHANGES_VERSION = 2;
 
@@ -69,14 +70,7 @@ interface ToolRow {
  */
 export function deriveFileChanges(db: DB, dirty?: Set<string> | null): { count: number; version: number } {
   const incremental = dirty != null;
-  if (incremental) {
-    db.exec("DROP TABLE IF EXISTS _dirty_fc");
-    db.exec("CREATE TEMP TABLE _dirty_fc (id TEXT PRIMARY KEY)");
-    const ins = db.prepare("INSERT OR IGNORE INTO _dirty_fc (id) VALUES (?)");
-    transaction(db, (ids: Iterable<string>) => {
-      for (const id of ids) ins.run(id);
-    })(dirty);
-  }
+  if (incremental) createDirtySet(db, "_dirty_fc", dirty);
   const scope = incremental ? " AND tc.session_id IN (SELECT id FROM _dirty_fc)" : "";
 
   // Project path + id per (scoped) session — to resolve relative paths and stamp project_id.

@@ -287,28 +287,7 @@ export function runIngest(argv: string[] = process.argv.slice(2)): void {
       // After rebuildDerived's per-event turn_id update, before the passes and ANALYZE that read them.
       if (args.full) finishBulkLoad(db);
 
-      // Canonical project roots (ADR-023): fold cwd-grained project rows into their git root (or
-      // observed ancestor) BEFORE the passes below — classify/detect/file-changes all consume the
-      // session's project path. Global + re-runnable (the table is a few dozen rows), so an existing
-      // DB heals on its next ingest without --full.
-      canonicalizeProjects(db);
-
-      // Heuristic classification (ADR-004) over the now-stable derived tables. Deterministic +
-      // re-runnable; also exposed standalone as `agent-lens metrics` (see runMetrics).
-      const classified = classify(db, args.full ? null : expanded);
-
-      // Security findings (ADR-017) over the same derived tool_calls. Deterministic + re-runnable; the
-      // detector reuses the expanded dirty set and delete-then-inserts the touched sessions' findings.
-      const detected = detect(db, args.full ? null : expanded);
-
-      // Tool-error classification (error_type on errored tool_calls). Deterministic + re-runnable; reuses
-      // the same expanded dirty set. Powers the sessions error-type filter + dashboard/detail breakdowns.
-      classifyErrors(db, args.full ? null : expanded);
-
-      // File-modification provenance (ADR-022) from Edit/Write/NotebookEdit inputs and Bash shell
-      // writes. Deterministic +
-      // re-runnable; reuses the same expanded dirty set and delete-then-inserts per touched session.
-      const fileChanges = deriveFileChanges(db, args.full ? null : expanded);
+      const { classified, detected, fileChanges } = runDerivedPasses(db, args.full ? null : expanded);
 
       // Planner statistics, last, so they describe the tables as the server will read them. The
       // dashboard's covering indexes only win with stats present (see ANALYZE_SQL).
@@ -329,6 +308,23 @@ export function runIngest(argv: string[] = process.argv.slice(2)): void {
   printIngestReport(db, dbPath, { ...report, pruned });
 }
 
+/**
+ * The deterministic, re-runnable passes over the derived tables, in dependency order. Shared by ingest
+ * and `agent-lens metrics` so the two cannot run different sequences. `scope` is the expanded dirty
+ * set rebuildDerived returns; null runs every pass over everything.
+ */
+function runDerivedPasses(db: DB, scope: Set<string> | null) {
+  // Canonical project roots (ADR-023) first: classify, detect and file changes all read the session's
+  // project path. Global (the table is a few dozen rows), so an existing DB heals without --full.
+  canonicalizeProjects(db);
+  return {
+    classified: classify(db, scope), // heuristic categories (ADR-004)
+    detected: detect(db, scope), // security findings (ADR-017)
+    errors: classifyErrors(db, scope), // error_type on errored tool calls
+    fileChanges: deriveFileChanges(db, scope), // file provenance (ADR-022), incl. Bash shell writes
+  };
+}
+
 /** Standalone reclassification over an already-ingested DB (no archive re-read). */
 export function runMetrics(argv: string[] = process.argv.slice(2)): void {
   let dbArg = "";
@@ -341,11 +337,7 @@ export function runMetrics(argv: string[] = process.argv.slice(2)): void {
   }
 
   const db = openDb(dbPath);
-  canonicalizeProjects(db); // ADR-023 — heal cwd-grained projects before the passes read them
-  const r = classify(db);
-  const d = detect(db);
-  const e = classifyErrors(db);
-  const fc = deriveFileChanges(db);
+  const { classified: r, detected: d, errors: e, fileChanges: fc } = runDerivedPasses(db, null);
   db.close();
   console.log(
     `agent-lens-metrics: classified=${r.count} classifier_version=${CLASSIFIER_VERSION} ` +

@@ -6,27 +6,9 @@
  */
 import { describe, it, expect, vi } from "vitest";
 import { DatabaseSync } from "node:sqlite";
-import { SCHEMA_SQL } from "@agent-lens/core";
 import { deriveFileChanges, normalizeFilePath, FILECHANGES_VERSION } from "../dist/filechanges.js";
 import { malformedStoredJson, resetMalformedStoredJson } from "../dist/storedjson.js";
-
-function freshDb(): DatabaseSync {
-  const db = new DatabaseSync(":memory:");
-  db.exec(SCHEMA_SQL);
-  db.exec("PRAGMA foreign_keys = OFF");
-  return db;
-}
-
-/** Seed a session (optionally with a project path, for relative-path resolution + project_id). */
-function addSession(db: DatabaseSync, id: string, projectPath?: string) {
-  if (projectPath) {
-    const pid = `p-${id}`;
-    db.prepare(`INSERT INTO projects (id, agent_id, path) VALUES (?, 'claude-code', ?)`).run(pid, projectPath);
-    db.prepare(`INSERT INTO sessions (id, agent_id, project_id) VALUES (?, 'claude-code', ?)`).run(id, pid);
-  } else {
-    db.prepare(`INSERT INTO sessions (id, agent_id) VALUES (?, 'claude-code')`).run(id);
-  }
-}
+import { addSession, freshDb } from "./helpers/seed.js";
 
 let seq = 0;
 /** Seed a tool call (+ its event, so the derived row picks up a timestamp); returns its id. */

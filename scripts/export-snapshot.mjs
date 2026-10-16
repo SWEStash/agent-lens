@@ -44,7 +44,8 @@ async function getText(path) {
 /**
  * Stable snapshot key for a file's provenance timeline (/file). Mirror of snapshotFileKey in
  * packages/web/src/api.ts — the SPA computes the identical key to fetch snapshot/file/<key>.json, so
- * KEEP THE TWO IN SYNC (change one, change the other). cyrb53 over `${project}\n${path}`.
+ * KEEP THE TWO IN SYNC (CI pins both to the same keys — see check-snapshot-links.mjs). cyrb53 over
+ * `${project}\n${path}`.
  */
 function snapshotFileKey(path, project) {
   const s = `${project ?? ""}\n${path}`;

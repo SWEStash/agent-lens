@@ -9,8 +9,8 @@
  */
 import { describe, it, expect, beforeAll } from "vitest";
 import { DatabaseSync } from "node:sqlite";
-import { SCHEMA_SQL } from "@agent-lens/core";
 import { classify, locDelta } from "../dist/classify.js";
+import { freshDb } from "./helpers/seed.js";
 
 describe("locDelta — LoC parsed from a tool call's verbatim input", () => {
   it("Write counts content lines as added (no removed); trailing newline doesn't add a line", () => {
@@ -34,13 +34,6 @@ describe("locDelta — LoC parsed from a tool call's verbatim input", () => {
 });
 
 // ---- Complexity formula (weighted, with v2 ceilings) ----
-
-function freshDb(): DatabaseSync {
-  const db = new DatabaseSync(":memory:");
-  db.exec(SCHEMA_SQL);
-  db.exec("PRAGMA foreign_keys = OFF"); // seed only what the classifier reads, not the full FK graph
-  return db;
-}
 
 function addSession(db: DatabaseSync, id: string, opts: { sidechain?: number; turns?: number; durationMs?: number } = {}) {
   db.prepare(

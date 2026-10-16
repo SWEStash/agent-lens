@@ -20,14 +20,11 @@ import { classify } from "../dist/classify.js";
 import { classifyErrors } from "../dist/errors.js";
 import { ClaudeCodeAdapter, parentSessionFromPath, workflowRunFromPath } from "../dist/adapters/claude-code.js";
 import { sha256, sha256File, streamLines } from "../dist/fileread.js";
+import { jsonl } from "./helpers/seed.js";
 
 const SOURCE = "test";
 const AGENT = "claude-code";
 const T = (n: number) => `2026-01-01T00:0${n}:00.000Z`; // distinct ordered timestamps
-
-function jsonl(...lines: unknown[]): string {
-  return lines.map((l) => JSON.stringify(l)).join("\n") + "\n";
-}
 
 function file(sessionId: string, content: string): { file: SourceFile; content: string } {
   return {
