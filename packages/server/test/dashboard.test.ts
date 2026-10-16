@@ -65,7 +65,19 @@ describe("dashboardOverview", () => {
   it("derives cache-aware cost and reports unpriced models honestly", () => {
     // opus: 5+25+6.25+5 = 41.25 ; haiku: (100+500)/1e6 = 0.0006 ; synthetic: 0 → 41.2506
     expect(o.cost).toBeCloseTo(41.2506, 6);
-    expect(o.unpriced_models).toEqual(["<synthetic>"]);
+    // `<synthetic>` never called a model, so it is unpriced but never a *missing* rate.
+    expect(o.unpriced_models).toEqual([]);
+  });
+
+  it("flags a real model with no rate, but not one whose usage rows are all zero", () => {
+    const db = seed();
+    db.exec(`INSERT INTO token_usage (event_uuid, session_id, model, input_tokens, output_tokens, cache_creation_input_tokens, cache_read_input_tokens) VALUES
+      ('z1','m1','claude-zeta-9',10,10,0,0), ('z2','m1','claude-empty-1',0,0,0,0)`);
+    expect(dashboardOverview(db, {}).unpriced_models).toEqual(["claude-zeta-9"]);
+    const byModel = dashboardBreakdowns(db, {}).by_model;
+    expect(byModel.find((m) => m.model === "claude-zeta-9")!.priced).toBe(false);
+    expect(byModel.find((m) => m.model === "claude-empty-1")!.priced).toBe(true);
+    expect(byModel.find((m) => m.model === "<synthetic>")!.priced).toBe(true);
   });
 
   it("computes turn-duration percentiles over non-null durations", () => {
@@ -99,7 +111,7 @@ describe("dashboardBreakdowns", () => {
     expect(opus.total_tokens).toBe(13_000_000);
     expect(opus.cost).toBeCloseTo(41.25, 6);
     expect(opus.priced).toBe(true);
-    expect(b.by_model.find((m: any) => m.model === "<synthetic>").priced).toBe(false);
+    expect(b.by_model.find((m: any) => m.model === "<synthetic>").priced).toBe(true);
   });
 
   it("counts sessions+turns per source (all sessions, incl. subagents)", () => {
@@ -656,5 +668,17 @@ describe("a dated model id and its alias are one model", () => {
     // haiku is $1/$5 per 1M: (400 * 1 + 40 * 5) / 1e6 = 0.0006, whichever id carried the tokens.
     expect(breakdowns().by_model[0].cost).toBeCloseTo(0.0006, 8);
     expect(breakdowns().by_model[0].priced).toBe(true);
+  });
+});
+
+describe("bucket parameter", () => {
+  it("treats an unrecognised bucket like an absent one on every endpoint", () => {
+    const db = seed();
+    // Widen the span past 92 days so the range-sized choice is "week", distinct from a "day" fallback.
+    db.exec(`INSERT INTO sessions (id, agent_id, source_id, is_sidechain, started_at) VALUES ('late','claude-code','work',0,'2026-06-01T00:00:00Z')`);
+    expect(dashboardTimeseries(db, {}).bucket).toBe("week");
+    expect(dashboardTimeseries(db, {}, "bogus").bucket).toBe("week");
+    expect(dashboardTime(db, {}, "bogus").latency.bucket).toBe("week");
+    expect(dashboardAudit(db, {}, "bogus").bucket).toBe("week");
   });
 });

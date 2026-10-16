@@ -11,6 +11,7 @@ import { fileURLToPath } from "node:url";
 import { findRepoRoot, installPricing, resolveDbPath, resolveServerConfig, resolveWebDist, triageDbFor } from "@agent-lens/core";
 import { openReadonly } from "./db.js";
 import { createApp } from "./app.js";
+import { isLoopbackBind } from "./refresh.js";
 
 // Re-exported for the unified CLI (bundles this package): the read-only DB open + the shared
 // session-export helpers back the `agent-lens export` command without a second server process.
@@ -37,7 +38,7 @@ export async function startServer(overrides: StartServerOverrides = {}): Promise
   const pricing = installPricing();
   const webDist = resolveWebDist(here, repoRoot);
 
-  if (host !== "127.0.0.1" && host !== "localhost" && !process.env.AGENT_LENS_ALLOW_NONLOCAL) {
+  if (!isLoopbackBind(host) && !process.env.AGENT_LENS_ALLOW_NONLOCAL) {
     console.error(
       `agent-lens-server: refusing to bind non-loopback host '${host}' (privacy). ` +
         `Set AGENT_LENS_ALLOW_NONLOCAL=1 to override.`,
@@ -56,7 +57,7 @@ export async function startServer(overrides: StartServerOverrides = {}): Promise
   const db = openReadonly(dbPath);
   // Enforce a loopback Host allowlist (DNS-rebinding defense) whenever we're bound to loopback. An
   // intentional non-loopback bind (host set + AGENT_LENS_ALLOW_NONLOCAL, checked above) opts out.
-  const enforceLoopbackHost = host === "127.0.0.1" || host === "localhost";
+  const enforceLoopbackHost = isLoopbackBind(host);
   // /api/about reports what this process actually resolved (ADR-027) — pass the facts down rather
   // than letting it re-resolve, or `serve --db /custom.db` would report the default path instead.
   const app = await createApp(db, {

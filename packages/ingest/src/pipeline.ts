@@ -11,6 +11,7 @@ import { sessionCwd } from "./canonicalize.js";
 import { type DB } from "./db.js";
 import { createDirtySet } from "./dirtyset.js";
 import { ARG_TRAILERS, maskDynamic, maskKnownValues, mergeSlots, type Slot } from "./skillslots.js";
+import { parseStored } from "./storedjson.js";
 
 type Stmt = StatementSync;
 
@@ -350,14 +351,8 @@ function linkSkillVersions(db: DB, sessionIds: Array<{ id: string }>): void {
           for (const c of here) {
             if (!c.skill_name) continue;
             const key = skillNameKey(c.skill_name);
-            let args: string | null = null;
-            try {
-              args = c.input_json ? (JSON.parse(c.input_json).args ?? null) : null;
-              if (typeof args === "string") args = args.trim() || null;
-              else if (args != null) args = JSON.stringify(args);
-            } catch {
-              /* keep null */
-            }
+            const raw = parseStored<{ args?: unknown }>(c.input_json, "skill versions: tool_calls.input_json")?.args;
+            const args = typeof raw === "string" ? raw.trim() || null : raw != null ? JSON.stringify(raw) : null;
             const arr = pending.get(key) ?? [];
             arr.push({ id: c.id, args });
             pending.set(key, arr);

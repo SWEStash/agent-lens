@@ -18,6 +18,7 @@ import { posix as path } from "node:path";
 import { transaction } from "@agent-lens/core";
 import { parseShellWrites } from "./shellwrites.js";
 import type { DB } from "./db.js";
+import { parseStored } from "./storedjson.js";
 
 export const FILECHANGES_VERSION = 2;
 
@@ -111,12 +112,7 @@ export function deriveFileChanges(db: DB, dirty?: Set<string> | null): { count: 
     db.exec(delScope);
     for (const row of rows) {
       if (row.status === "error") continue; // a failed call did not change the file
-      let input: any = null;
-      try {
-        input = row.input_json ? JSON.parse(row.input_json) : null;
-      } catch {
-        input = null;
-      }
+      const input: any = parseStored(row.input_json, "filechanges: tool_calls.input_json");
       if (!input) continue;
       const p = proj.get(row.session_id);
 
