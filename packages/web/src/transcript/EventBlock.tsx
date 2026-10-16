@@ -54,8 +54,8 @@ export function EventBlock({ e }: { e: EventNode }) {
             {fmtTokens(workTokens(e.usage))} tok
           </span>
         )}
-        <span className="muted ev-time">{fmtDate(e.timestamp)}</span>
         {copyText && <CopyButton text={copyText} className="ev-copy copy-hover" title="Copy message" />}
+        <span className="muted ev-time">{fmtDate(e.timestamp)}</span>
       </div>
       {e.thinking && (
         <div className="thinking">

@@ -1124,7 +1124,10 @@ summary.export:hover,
 .copy-hover { opacity: 0; transition: opacity 0.12s; }
 .event:hover .copy-hover,
 .copy-hover:focus-visible { opacity: 1; }
+/* The copy button sits just before the timestamp and takes the push to the right itself: two auto
+   margins split the free space, which used to centre the timestamp on every message with a button. */
 .ev-copy { margin-left: auto; }
+.ev-copy + .ev-time { margin-left: 0; }
 /* A copy button pinned to the top-right corner of a code block. Hidden at rest so it never overlaps the
  * command/code text underneath; revealed on hover of the block (or keyboard focus). */
 .code-block { position: relative; }
