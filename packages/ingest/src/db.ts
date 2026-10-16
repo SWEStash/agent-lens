@@ -67,7 +67,8 @@ export function openDb(file: string): DB {
 export function resetSchema(db: DB, { bulk = false } = {}): void {
   // Disable FK enforcement during teardown: the v3 schema has cross/self references
   // (sessions.parent_turn_id → turns, parent_session_id → sessions) that otherwise make DROP order
-  // matter and trip "FOREIGN KEY constraint failed". applySchema re-enables FKs (PRAGMA in SCHEMA_SQL).
+  // matter and trip "FOREIGN KEY constraint failed". SQLite ignores this PRAGMA inside a transaction,
+  // which is where `runIngest --full` calls this — that caller turns FKs off itself before BEGIN.
   // `finally` so a failed drop/apply can't leave the connection unguarded for the rest of the process.
   db.exec("PRAGMA foreign_keys = OFF");
   try {

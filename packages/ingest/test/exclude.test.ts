@@ -6,7 +6,7 @@
  * Imports the BUILT dist.
  */
 import { describe, it, expect } from "vitest";
-import { encodeProjectPath, parseExcludes, isExcludedDir, isExcludedArchivePath } from "../dist/redact.js";
+import { encodeProjectPath, isExcludedDir, isExcludedArchivePath } from "../dist/redact.js";
 import { openDb } from "../dist/db.js";
 import { prepareStatements, ingestFile, rebuildDerived, pruneExcluded, newStats } from "../dist/pipeline.js";
 import { classify } from "../dist/classify.js";
@@ -23,21 +23,15 @@ describe("path encoding + exclusion matchers", () => {
     expect(encodeProjectPath("/home/u/.config/app")).toBe("-home-u--config-app");
   });
 
-  it("parseExcludes splits CSV and encodes each entry", () => {
-    expect(parseExcludes(" /a/b , ,/c/d ")).toEqual(["-a-b", "-c-d"]);
-    expect(parseExcludes("")).toEqual([]);
-    expect(parseExcludes(undefined)).toEqual([]);
-  });
-
   it("isExcludedDir matches exact dir or a nested project under it", () => {
-    const ex = parseExcludes("/home/u/proj");
+    const ex = [encodeProjectPath("/home/u/proj")];
     expect(isExcludedDir("-home-u-proj", ex)).toBe(true);
     expect(isExcludedDir("-home-u-proj-sub", ex)).toBe(true);
     expect(isExcludedDir("-home-u-other", ex)).toBe(false);
   });
 
   it("isExcludedArchivePath matches the main file AND nested subagent files", () => {
-    const ex = parseExcludes("/home/u/proj");
+    const ex = [encodeProjectPath("/home/u/proj")];
     expect(isExcludedArchivePath("/d/archive/x/projects/-home-u-proj/abc.jsonl", ex)).toBe(true);
     expect(isExcludedArchivePath("/d/archive/x/projects/-home-u-proj/UUID/subagents/agent-1.jsonl", ex)).toBe(true);
     expect(isExcludedArchivePath("/d/archive/x/projects/-home-u-other/abc.jsonl", ex)).toBe(false);

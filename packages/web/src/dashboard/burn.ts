@@ -203,10 +203,8 @@ function bucketKey(dayKey: string, bucket: BurnBucket): string {
  * Sources stay separate all the way through — they have genuinely different profiles and summing
  * them into one line hides the only thing the chart is for.
  *
- * The granularity is the reader's, not ours: a token sum is a fact at any bucket size, so unlike the
- * latency tile (which is pinned to weeks because a daily percentile is often a single observation)
- * this one follows the bucket control. At `day` the two sources' profiles are legible; a week sum
- * flattens them.
+ * The granularity is the reader's, not ours: a token sum is a fact at any bucket size, so this follows
+ * the bucket control. At `day` the two sources' profiles are legible; a week sum flattens them.
  */
 export function burnBySource(
   rows: readonly BurnHour[],

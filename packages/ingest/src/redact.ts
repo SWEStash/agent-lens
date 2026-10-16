@@ -19,7 +19,7 @@
  * NOT preserved (validated separately by golden fixtures) — callers must exclude it from oracle
  * equality checks.
  *
- * HARD RULES (see memory test-corpus-redaction): never emit data from the agent-lens project
+ * HARD RULES (docs/VALIDATION.md, redaction oracle): never emit data from the agent-lens project
  * itself; scrub project names, paths, users, hosts, secrets. The CLI filters agent-lens sessions
  * and runs a final leak-scan before writing.
  */
@@ -209,20 +209,10 @@ export class Redactor {
 
 // Canonical Claude Code project-dir encoder now lives in core so collect + ingest agree exactly.
 export { encodeProjectPath } from "@agent-lens/core";
-import { encodeProjectPath } from "@agent-lens/core";
 // The fail-closed leak scan now lives in core (shared with the redacted-export sanitizer). Re-export
 // so this module's consumers (redact-cli.ts, tests) keep their `./redact.js` import unchanged.
 export { LEAK_PATTERNS, findLeak } from "@agent-lens/core";
 import { findLeak } from "@agent-lens/core";
-
-/** Parse the AGENT_LENS_REDACT_EXCLUDE CSV of real project paths into encoded-dir prefixes. */
-export function parseExcludes(csv: string | undefined | null): string[] {
-  return (csv ?? "")
-    .split(",")
-    .map((s) => s.trim())
-    .filter(Boolean)
-    .map(encodeProjectPath);
-}
 
 /** True if `encodedDir` is (or sits under) any excluded project path — used to keep data out of the corpus. */
 export function isExcludedDir(encodedDir: string, excluded: string[]): boolean {
@@ -232,7 +222,7 @@ export function isExcludedDir(encodedDir: string, excluded: string[]): boolean {
 /**
  * True if an archive file path belongs to an excluded project. Matches the `/projects/<encodedDir>/`
  * segment, so it catches both the main transcript AND its nested `<UUID>/subagents/agent-*.jsonl`.
- * `excluded` is the encoded-dir list from parseExcludes().
+ * `excluded` is the encoded-dir list (`encodeProjectPath` of each excluded path).
  */
 export function isExcludedArchivePath(filePath: string, excluded: string[]): boolean {
   return excluded.some((e) => filePath.includes(`/projects/${e}/`));

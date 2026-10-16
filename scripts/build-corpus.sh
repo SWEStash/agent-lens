@@ -4,7 +4,7 @@
 # Stages a small RAW subset of real, NON-agent-lens sessions (one per source, each with its
 # subagents) into a gitignored temp tree, redacts it into test/fixtures/corpus/, then runs the
 # oracle to prove the redaction preserved every metric. The RAW subset stays out of git; only the
-# redacted corpus is committed. See memory: test-corpus-redaction.
+# redacted corpus is committed. See docs/VALIDATION.md (redaction oracle).
 #
 # Re-runnable: regenerates the corpus from scratch. Requires the archive at data/archive.
 set -euo pipefail
@@ -16,7 +16,7 @@ CORPUS="test/fixtures/corpus"
 ARCHIVE="${AGENT_LENS_DATA:-data}/archive"
 
 # Never emit this project's own data: default the exclude list to the repo root (computed, not a
-# hardcoded name). Extend via AGENT_LENS_EXCLUDE; redact-cli enforces it. See memory test-corpus-redaction.
+# hardcoded name). Extend via AGENT_LENS_EXCLUDE or the config `exclude` list; redact-cli enforces it.
 export AGENT_LENS_EXCLUDE="${AGENT_LENS_EXCLUDE:-$REPO}"
 # Fixed salt so regenerating yields a byte-stable corpus (reviewable diffs); override to reshuffle.
 export AGENT_LENS_REDACT_SALT="${AGENT_LENS_REDACT_SALT:-agent-lens-corpus-v1}"

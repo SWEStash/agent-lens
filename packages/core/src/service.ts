@@ -50,7 +50,8 @@ const WINDOWS_COLLECTOR_PREFIX = "AgentLens\\Collect";
 const WINDOWS_SERVER_TASK = "AgentLens\\Server";
 
 export type ServiceTarget = "collector" | "server";
-export type ServiceAction = "install" | "uninstall" | "status";
+
+const UNINSTALLED_MSG = "agent-lens service: uninstalled (archive untouched)";
 
 export interface ServiceParams {
   /** Absolute path to the CLI entry (the bundled agent-lens.js). */
@@ -121,9 +122,12 @@ function reportBakedEnv(env: Record<string, string>): void {
 
 // ---- pure generators (unit-tested) --------------------------------------------------------------
 
+/** An hour as two digits, e.g. 9 → "09". */
+const hh = (h: number) => String(h).padStart(2, "0");
+
 /** systemd `OnCalendar` hour list, e.g. [9,13] → "09,13:00". */
 export function onCalendarHours(hours: number[]): string {
-  return hours.map((h) => String(h).padStart(2, "0")).join(",") + ":00";
+  return hours.map(hh).join(",") + ":00";
 }
 
 /** `Environment=` lines for a systemd unit, one per variable (empty string when there are none). */
@@ -278,12 +282,14 @@ function linuxInstall(targets: ServiceTarget[], node: string, cli: string, hours
   const dir = systemdUnitDir();
   mkdirSync(dir, { recursive: true });
   const paths = pathEnv();
+  // Read once, and only when installing the server: serverEnv() resolves (and validates) the config.
+  const serverPaths = targets.includes("server") ? { ...paths, ...serverEnv() } : paths;
   if (targets.includes("collector")) {
     writeFileSync(join(dir, SYSTEMD_COLLECTOR_SERVICE), systemdCollectorService(node, cli, paths));
     writeFileSync(join(dir, SYSTEMD_COLLECTOR_TIMER), systemdCollectorTimer(hours));
   }
   if (targets.includes("server")) {
-    writeFileSync(join(dir, SYSTEMD_SERVER_SERVICE), systemdServerService(node, cli, { ...paths, ...serverEnv() }));
+    writeFileSync(join(dir, SYSTEMD_SERVER_SERVICE), systemdServerService(node, cli, serverPaths));
   }
   sh("systemctl", ["--user", "daemon-reload"]);
   if (targets.includes("collector")) {
@@ -295,7 +301,7 @@ function linuxInstall(targets: ServiceTarget[], node: string, cli: string, hours
   if (targets.includes("server")) {
     sh("systemctl", ["--user", "enable", "--now", SYSTEMD_SERVER_SERVICE]);
     console.log("agent-lens service: installed server daemon");
-    reportBakedEnv({ ...paths, ...serverEnv() });
+    reportBakedEnv(serverPaths);
     sh("systemctl", ["--user", "status", SYSTEMD_SERVER_SERVICE, "--no-pager"]);
   }
   // Run while logged out (best-effort) — needed for both the timer and the daemon.
@@ -319,7 +325,7 @@ function linuxUninstall(targets: ServiceTarget[]): void {
     sh("systemctl", ["--user", "reset-failed", SYSTEMD_SERVER_SERVICE], true);
   }
   sh("systemctl", ["--user", "daemon-reload"]);
-  console.log("agent-lens service: uninstalled (archive untouched)");
+  console.log(UNINSTALLED_MSG);
 }
 
 function linuxStatus(targets: ServiceTarget[]): void {
@@ -330,18 +336,21 @@ function linuxStatus(targets: ServiceTarget[]): void {
 
 // ---- macOS (launchd) ----------------------------------------------------------------------------
 
+/** The launchd GUI domain's uid. `process.getuid` is POSIX-only; this is only reached on macOS. */
+const guiUid = () => (typeof process.getuid === "function" ? process.getuid() : 0);
+
 function launchdPlistPath(label: string): string {
   return join(homedir(), "Library", "LaunchAgents", `${label}.plist`);
 }
 
 function macBootstrap(plist: string): void {
-  const uid = typeof process.getuid === "function" ? process.getuid() : 0;
+  const uid = guiUid();
   // Prefer the modern bootstrap API; fall back to legacy load -w.
   if (!sh("launchctl", ["bootstrap", `gui/${uid}`, plist], true)) sh("launchctl", ["load", "-w", plist]);
 }
 
 function macBootout(label: string, plist: string): void {
-  const uid = typeof process.getuid === "function" ? process.getuid() : 0;
+  const uid = guiUid();
   if (!sh("launchctl", ["bootout", `gui/${uid}/${label}`], true)) sh("launchctl", ["unload", "-w", plist], true);
   rmSync(plist, { force: true });
 }
@@ -371,11 +380,11 @@ function macInstall(targets: ServiceTarget[], node: string, cli: string, hours: 
 function macUninstall(targets: ServiceTarget[]): void {
   if (targets.includes("collector")) macBootout(LAUNCHD_COLLECTOR_LABEL, launchdPlistPath(LAUNCHD_COLLECTOR_LABEL));
   if (targets.includes("server")) macBootout(LAUNCHD_SERVER_LABEL, launchdPlistPath(LAUNCHD_SERVER_LABEL));
-  console.log("agent-lens service: uninstalled (archive untouched)");
+  console.log(UNINSTALLED_MSG);
 }
 
 function macStatus(targets: ServiceTarget[]): void {
-  const uid = typeof process.getuid === "function" ? process.getuid() : 0;
+  const uid = guiUid();
   if (targets.includes("collector")) sh("launchctl", ["print", `gui/${uid}/${LAUNCHD_COLLECTOR_LABEL}`]);
   if (targets.includes("server")) sh("launchctl", ["print", `gui/${uid}/${LAUNCHD_SERVER_LABEL}`]);
 }
@@ -383,7 +392,7 @@ function macStatus(targets: ServiceTarget[]): void {
 // ---- Windows (schtasks) -------------------------------------------------------------------------
 
 function winCollectorTaskName(hour: number): string {
-  return `${WINDOWS_COLLECTOR_PREFIX}_${String(hour).padStart(2, "0")}`;
+  return `${WINDOWS_COLLECTOR_PREFIX}_${hh(hour)}`;
 }
 
 function windowsInstall(targets: ServiceTarget[], node: string, cli: string, hours: number[]): void {
@@ -399,7 +408,7 @@ function windowsInstall(targets: ServiceTarget[], node: string, cli: string, hou
   if (targets.includes("collector")) {
     const tr = `"${node}" "${cli}" collect --then-ingest`;
     for (const h of hours) {
-      sh("schtasks", ["/Create", "/F", "/TN", winCollectorTaskName(h), "/TR", tr, "/SC", "DAILY", "/ST", `${String(h).padStart(2, "0")}:00`]);
+      sh("schtasks", ["/Create", "/F", "/TN", winCollectorTaskName(h), "/TR", tr, "/SC", "DAILY", "/ST", `${hh(h)}:00`]);
     }
     console.log(`agent-lens service: installed ${hours.length} collector task(s) (hours ${hours.join(",")})`);
   }
@@ -418,7 +427,7 @@ function windowsUninstall(targets: ServiceTarget[]): void {
     for (let h = 0; h < 24; h++) sh("schtasks", ["/Delete", "/F", "/TN", winCollectorTaskName(h)], true);
   }
   if (targets.includes("server")) sh("schtasks", ["/Delete", "/F", "/TN", WINDOWS_SERVER_TASK], true);
-  console.log("agent-lens service: uninstalled (archive untouched)");
+  console.log(UNINSTALLED_MSG);
 }
 
 function windowsStatus(targets: ServiceTarget[]): void {

@@ -26,7 +26,7 @@ export function renderSessionExport(
     timestamp: e.timestamp,
     text: e.text,
     thinking: e.thinking,
-    toolCalls: e.toolCalls.map((t: any) => ({
+    toolCalls: e.toolCalls.map((t) => ({
       tool_name: t.tool_name,
       skill_name: t.skill_name,
       agent_type: t.agent_type,

@@ -283,7 +283,6 @@ export default function SessionView() {
         onRange={setRange}
         onJump={jumpTo}
         domain={domain}
-        onDomain={setDomain}
       />
 
       {rangeCleared && (

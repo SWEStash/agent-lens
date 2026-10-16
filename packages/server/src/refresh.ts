@@ -10,8 +10,7 @@
  * (WAL permits one writer alongside readers), so the read-only invariant of THIS handle holds.
  */
 import { existsSync, mkdirSync } from "node:fs";
-import { join } from "node:path";
-import { acquireLock, collectAll, findRepoRoot, resolveArchiveDir, resolveDataDir, type CollectStats } from "@agent-lens/core";
+import { acquireLock, collectAll, resolveArchiveDir, resolveLockPath, type CollectStats } from "@agent-lens/core";
 import { runIngest } from "@agent-lens/ingest";
 
 export interface RefreshResult {
@@ -65,8 +64,7 @@ export function writeBlocked(headers: Record<string, string | string[] | undefin
  * single-user tool (the clicking user is waiting on it anyway).
  */
 export function runRefresh(): RefreshResult | null {
-  const dataDir = resolveDataDir(findRepoRoot());
-  const lock = acquireLock(join(dataDir, ".agent-lens.lock"));
+  const lock = acquireLock(resolveLockPath());
   if (!lock) return null;
   try {
     const collected = collectAll();

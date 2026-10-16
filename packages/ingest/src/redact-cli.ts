@@ -6,7 +6,7 @@
  * line's content (Redactor) and pseudonymizing the encoded project-dir name. Filenames and the inner
  * <sessionUUID>/subagents/agent-<id>.jsonl structure are preserved so subagent linkage survives.
  *
- * HARD RULES (memory: test-corpus-redaction): never emit agent-lens's own data, and never write a
+ * HARD RULES (docs/VALIDATION.md, redaction oracle): never emit agent-lens's own data, and never write a
  * file that fails the leak scan. Both are enforced here — agent-lens inputs are refused, and any
  * post-redaction leak aborts the whole run (fail closed) so a corpus is never committed dirty.
  *

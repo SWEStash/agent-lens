@@ -79,7 +79,7 @@ export function resolvePricing(cfg: AgentLensConfigFile | null = readConfigFile(
  * diagnostics report, so they describe the table actually in force rather than a fresh resolution.
  */
 export function installPricing(cfg?: AgentLensConfigFile | null): ResolvedPricing {
-  const resolved = cfg === undefined ? resolvePricing() : resolvePricing(cfg);
+  const resolved = resolvePricing(cfg);
   usePricing(resolved.table);
   if (resolved.invalid.length) {
     console.error(

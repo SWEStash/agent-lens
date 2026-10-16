@@ -6,8 +6,9 @@
  * PID file: a run whose holder is dead or older than `staleMs` is reclaimed.
  */
 import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
-import { dirname } from "node:path";
+import { dirname, join } from "node:path";
 import { hostname } from "node:os";
+import { resolveDataDir } from "./paths.js";
 
 export interface Lock {
   /** Remove the lock file. Idempotent; also runs automatically on process exit. */
@@ -23,6 +24,11 @@ function isAlive(pid: number): boolean {
     // ESRCH → no such process (dead); EPERM → exists but not ours (alive).
     return (e as NodeJS.ErrnoException).code === "EPERM";
   }
+}
+
+/** The one lock file every collect/ingest entry point (CLI, watch, the server's refresh) contends on. */
+export function resolveLockPath(): string {
+  return join(resolveDataDir(), ".agent-lens.lock");
 }
 
 /**

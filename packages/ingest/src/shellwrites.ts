@@ -112,15 +112,11 @@ export function parseShellWrites(command: string): ShellWriteParse {
   const cwd = cdPath && cdPath.startsWith("/") && !/[$*?`~]/.test(cdPath) ? cdPath : null;
 
   const { scan, writes: found } = stripHeredocs(command);
-  for (const [re, group] of [
-    [REDIRECT, 1],
-    [TEE, 1],
-    [SED_I, 1],
-  ] as Array<[RegExp, number]>) {
+  for (const re of [REDIRECT, TEE, SED_I]) {
     re.lastIndex = 0;
     let m: RegExpExecArray | null;
     while ((m = re.exec(scan))) {
-      const p = target(m, group);
+      const p = target(m, 1);
       if (usable(p)) found.push({ at: m.index, write: { path: p, linesAdded: null } });
     }
   }
