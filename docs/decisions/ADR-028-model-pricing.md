@@ -139,6 +139,11 @@ explicitly:
 - **Introductory pricing is not modelled.** Sonnet 5 runs an introductory $2/$10 through 2026-08-31;
   we bill the $3/$15 list price. A date-dependent rate would silently change a past session's cost
   when the window closes, which is worse than being consistently approximate.
+  *Amended 2026-10-16:* the introductory rate became Sonnet 5's standard price and the rise to
+  $3/$15 was cancelled, so the table now bills $2/$10. The rule stands; the price it pointed at moved.
+- **Tiered pricing is not modelled.** Haiku 5.5 bills prompts over 100K tokens at 5× its base rate.
+  Cost is derived from per-model token sums, after the per-request prompt size is gone, so the table
+  holds the base tier and long-prompt Haiku 5.5 spend is understated.
 - **A mid-generation price change for the same model id cannot be represented.** The table comment
   already records one such event (Opus 4.5 cut the Opus tier from $15/$75 to $5/$25); it is handled
   only because the change came with new model ids.
