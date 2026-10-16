@@ -38,6 +38,8 @@ import {
 import { TimelineBand } from "./transcript/timeline/TimelineBand";
 import { fmtClock } from "./format";
 import type { TokenMetric } from "./transcript/timeline/marks";
+import { toggleIn } from "./sets";
+import { isTypingTarget } from "./transcript/searchKeys";
 
 export default function SessionView() {
   const { id } = useParams();
@@ -210,9 +212,7 @@ export default function SessionView() {
       // React's handlers are bound inside document and so have already run and, if they acted, called
       // preventDefault. Without this, a key handled by the search UI would step a second time here.
       if (e.defaultPrevented || e.metaKey || e.ctrlKey || e.altKey) return;
-      const el = e.target as HTMLElement | null;
-      const typing = !!el && (el.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName));
-      if (e.key === "/" && !typing) {
+      if (e.key === "/" && !isTypingTarget(e.target)) {
         e.preventDefault();
         searchInput.current?.focus();
         return;
@@ -257,13 +257,7 @@ export default function SessionView() {
   const collapsibleIds = groups.filter((g) => g.turn).map((g) => g.turnId as string);
   const anyOpen = collapsibleIds.some((tid) => !collapsed.has(tid));
 
-  const toggleTurn = (tid: string) =>
-    setCollapsed((prev) => {
-      const next = new Set(prev);
-      if (next.has(tid)) next.delete(tid);
-      else next.add(tid);
-      return next;
-    });
+  const toggleTurn = (tid: string) => setCollapsed((prev) => toggleIn(prev, tid));
 
   return (
     <div className="detail">

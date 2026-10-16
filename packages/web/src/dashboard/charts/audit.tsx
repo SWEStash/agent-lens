@@ -1,10 +1,11 @@
 import {
-  ResponsiveContainer, AreaChart, Area, BarChart, Bar, LineChart, Line,
+  ResponsiveContainer, Area, BarChart, Bar, LineChart, Line,
   XAxis, YAxis, CartesianGrid, Tooltip, Legend,
 } from "recharts";
 import { ChartCard, useChartTokens } from "../../charts/theme";
-import { shortModel } from "../../format";
-import { CHART_MARGIN, RankedBars, Y_AXIS_W, unitLabel, useBarsFit, type ChartProps } from "./common";
+import { fmtPct, shortModel } from "../../format";
+import { SEVERITIES } from "../../severity";
+import { CHART_MARGIN, DensityChart, RankedBars, Y_AXIS_W, unitLabel, type ChartProps } from "./common";
 
 /**
  * The four audit tiles (ADR-036) — how the work went, all fed by `/api/dashboard/audit`.
@@ -16,10 +17,9 @@ import { CHART_MARGIN, RankedBars, Y_AXIS_W, unitLabel, useBarsFit, type ChartPr
  */
 
 /** Severity stacking order, least to most severe, so the worst band sits on top of the stack. */
-const SEVERITIES = ["info", "low", "medium", "high", "critical"] as const;
+const STACK_ORDER = [...SEVERITIES].reverse();
 
 const pct = (n: number, d: number) => (d ? (n / d) * 100 : 0);
-const pct1 = (v: number) => `${v.toFixed(1)}%`;
 
 /**
  * Share of file-writing calls that came back as an error, by the model that issued them.
@@ -77,7 +77,7 @@ export function EditReliability({ hidden, audit }: ChartProps) {
         <Tooltip
           {...tooltipStyle}
           formatter={(v: number, _n: string, p: { payload?: { calls: number; errors: number } }) =>
-            [`${pct1(v)} — ${p.payload?.errors ?? 0} of ${(p.payload?.calls ?? 0).toLocaleString()} calls`, "failure rate"]
+            [`${fmtPct(v)} — ${p.payload?.errors ?? 0} of ${(p.payload?.calls ?? 0).toLocaleString()} calls`, "failure rate"]
           }
         />
         <Bar dataKey="rate" fill={C.red} />
@@ -138,7 +138,7 @@ export function PlanRejections({ hidden, audit }: ChartProps) {
           <CartesianGrid {...gridProps} />
           <XAxis dataKey="bucket" {...axisProps} minTickGap={24} />
           <YAxis {...axisProps} width={Y_AXIS_W} tickFormatter={(v: number) => `${v}%`} label={unitLabel("rejected", C.muted)} />
-          <Tooltip {...tooltipStyle} formatter={(v: number) => pct1(v)} />
+          <Tooltip {...tooltipStyle} formatter={(v: number) => fmtPct(v)} />
           <Legend wrapperStyle={{ fontSize: 12 }} />
           <Line type="monotone" dataKey="plans" name="plans" stroke={C.violet} dot={false} strokeWidth={2} connectNulls={false} />
           <Line type="monotone" dataKey="questions" name="questions" stroke={C.accent} dot={false} strokeWidth={2} connectNulls={false} />
@@ -207,18 +207,7 @@ export function FileRework({ hidden, audit }: ChartProps) {
  * that page cannot show, which is what makes a chart here worth the exception (ADR-036).
  */
 export function FindingsOverTime({ hidden, audit }: ChartProps) {
-  const { C, SEVERITY_COLORS, axisProps, gridProps, tooltipStyle } = useChartTokens();
-  const data = audit?.findings_over_time ?? [];
-  const [ref, asBars] = useBarsFit(data.length);
-  const common = (
-    <>
-      <CartesianGrid {...gridProps} />
-      <XAxis dataKey="bucket" {...axisProps} minTickGap={24} />
-      <YAxis {...axisProps} width={Y_AXIS_W} allowDecimals={false} label={unitLabel("findings", C.muted)} />
-      <Tooltip {...tooltipStyle} />
-      <Legend wrapperStyle={{ fontSize: 12 }} />
-    </>
-  );
+  const { SEVERITY_COLORS } = useChartTokens();
   return (
     <ChartCard
       title="Findings over time"
@@ -246,25 +235,18 @@ export function FindingsOverTime({ hidden, audit }: ChartProps) {
       }
       hidden={hidden}
     >
-      <div ref={ref} style={{ width: "100%", height: "100%" }}>
-        <ResponsiveContainer width="100%" height="100%">
-          {asBars ? (
-            <BarChart data={data as object[]} margin={CHART_MARGIN}>
-              {common}
-              {SEVERITIES.map((s) => (
-                <Bar key={s} dataKey={s} name={s} stackId="f" fill={SEVERITY_COLORS[s]} />
-              ))}
-            </BarChart>
-          ) : (
-            <AreaChart data={data as object[]} margin={CHART_MARGIN}>
-              {common}
-              {SEVERITIES.map((s) => (
-                <Area key={s} dataKey={s} name={s} stackId="f" stroke="none" fill={SEVERITY_COLORS[s]} fillOpacity={1} />
-              ))}
-            </AreaChart>
-          )}
-        </ResponsiveContainer>
-      </div>
+      <DensityChart
+        data={audit?.findings_over_time ?? []}
+        yLabel="findings"
+        integer
+        dense="area"
+        bars={STACK_ORDER.map((s) => (
+          <Bar key={s} dataKey={s} name={s} stackId="f" fill={SEVERITY_COLORS[s]} />
+        ))}
+        lines={STACK_ORDER.map((s) => (
+          <Area key={s} dataKey={s} name={s} stackId="f" stroke="none" fill={SEVERITY_COLORS[s]} fillOpacity={1} />
+        ))}
+      />
     </ChartCard>
   );
 }

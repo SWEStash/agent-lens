@@ -1,4 +1,5 @@
 import { useState, type ReactNode } from "react";
+import { toggleIn } from "../sets";
 
 /** Default rows shown for a ranked bar list before the user expands it ("show all"). Keeps every card
  * at the standard height so grid rows stay even; the full list is one click away. */
@@ -20,13 +21,7 @@ export interface Expanded {
  * per chart. */
 export function useExpanded(): Expanded {
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
-  const toggleExpand = (id: string) =>
-    setExpanded((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
+  const toggleExpand = (id: string) => setExpanded((prev) => toggleIn(prev, id));
 
   const topN = <T,>(arr: T[], id: string): T[] => (expanded.has(id) ? arr : arr.slice(0, TOP_N));
   const expandHeight = (id: string, total: number, rowPx = ROW_PX): number | undefined =>

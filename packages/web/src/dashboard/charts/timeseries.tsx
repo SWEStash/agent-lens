@@ -1,21 +1,16 @@
 import { useState } from "react";
-import { ResponsiveContainer, AreaChart, Area, LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend } from "recharts";
+import { ResponsiveContainer, AreaChart, Area, LineChart, Line, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend } from "recharts";
 import { ChartCard, useChartTokens } from "../../charts/theme";
 import { fmtCost, fmtTokens } from "../../format";
-import { CHART_MARGIN, Y_AXIS_W, unitLabel, useBarsFit, type ChartProps } from "./common";
+import { CHART_MARGIN, DensityChart, SessionGrainNote, unitLabel, type ChartProps } from "./common";
+import { toggleIn } from "../../sets";
 
 /** Stacked token components per bucket. The legend toggles series: hiding the dominant cache-read
  * series lets the others use the full scale, and the stack recomputes automatically. */
 export function TokensOverTime({ hidden, ts }: ChartProps) {
   const { C, TOKEN_COLORS, axisProps, gridProps, tooltipStyle } = useChartTokens();
   const [hiddenSeries, setHiddenSeries] = useState<Set<string>>(new Set());
-  const toggle = (key: string) =>
-    setHiddenSeries((prev) => {
-      const next = new Set(prev);
-      if (next.has(key)) next.delete(key);
-      else next.add(key);
-      return next;
-    });
+  const toggle = (key: string) => setHiddenSeries((prev) => toggleIn(prev, key));
 
   return (
     <ChartCard
@@ -103,18 +98,7 @@ export function CostOverTime({ hidden, ts }: ChartProps) {
 /** Sessions & turns per bucket. Bars while the buckets are wide enough to read; past that density the
  * same two series switch to lines, which stay 2px wide no matter how many buckets are in range. */
 export function Activity({ hidden, ts }: ChartProps) {
-  const { C, axisProps, gridProps, tooltipStyle } = useChartTokens();
-  const data = ts?.series ?? [];
-  const [ref, asBars] = useBarsFit(data.length);
-  const common = (
-    <>
-      <CartesianGrid {...gridProps} />
-      <XAxis dataKey="bucket" {...axisProps} minTickGap={24} />
-      <YAxis {...axisProps} width={Y_AXIS_W} label={unitLabel("count", C.muted)} />
-      <Tooltip {...tooltipStyle} />
-      <Legend wrapperStyle={{ fontSize: 12 }} />
-    </>
-  );
+  const { C } = useChartTokens();
   return (
     <ChartCard
       title="Activity over time"
@@ -128,34 +112,29 @@ export function Activity({ hidden, ts }: ChartProps) {
             <dt>y-axis</dt>
             <dd>count. <strong>sessions</strong> = sessions that started in the bucket, subagent runs included; <strong>turns</strong> = prompt-and-response exchanges within them.</dd>
           </dl>
-          <p>
-            <strong>Under a model filter this counts whole sessions, not model-attributable rows.</strong>{" "}
-            A session has no single model, so it is counted here whenever it used any model you ticked
-            — including the work it did with the others. That is why a session count and a token total
-            move by different amounts when you untick a model.
-          </p>
+          <SessionGrainNote />
           <p>Bars become lines once the range holds more buckets than can be drawn as readable bars.</p>
         </>
       }
       hidden={hidden}
     >
-      <div ref={ref} style={{ width: "100%", height: "100%" }}>
-        <ResponsiveContainer width="100%" height="100%">
-          {asBars ? (
-            <BarChart data={data} margin={CHART_MARGIN}>
-              {common}
-              <Bar dataKey="sessions" fill={C.accent} />
-              <Bar dataKey="turns" fill={C.green} />
-            </BarChart>
-          ) : (
-            <LineChart data={data} margin={CHART_MARGIN}>
-              {common}
-              <Line dataKey="sessions" stroke={C.accent} strokeWidth={2} dot={false} />
-              <Line dataKey="turns" stroke={C.green} strokeWidth={2} dot={false} />
-            </LineChart>
-          )}
-        </ResponsiveContainer>
-      </div>
+      <DensityChart
+        data={ts?.series ?? []}
+        yLabel="count"
+        dense="line"
+        bars={
+          <>
+            <Bar dataKey="sessions" fill={C.accent} />
+            <Bar dataKey="turns" fill={C.green} />
+          </>
+        }
+        lines={
+          <>
+            <Line dataKey="sessions" stroke={C.accent} strokeWidth={2} dot={false} />
+            <Line dataKey="turns" stroke={C.green} strokeWidth={2} dot={false} />
+          </>
+        }
+      />
     </ChartCard>
   );
 }
@@ -165,18 +144,7 @@ export function Activity({ hidden, ts }: ChartProps) {
  * still shows up. The bands carry no stroke — an all-zero series (the common case for rejections)
  * would otherwise trace its outline across the top of the series below it. */
 export function ToolErrors({ hidden, ts }: ChartProps) {
-  const { C, axisProps, gridProps, tooltipStyle } = useChartTokens();
-  const data = ts?.series ?? [];
-  const [ref, asBars] = useBarsFit(data.length);
-  const common = (
-    <>
-      <CartesianGrid {...gridProps} />
-      <XAxis dataKey="bucket" {...axisProps} minTickGap={24} />
-      <YAxis {...axisProps} width={Y_AXIS_W} allowDecimals={false} label={unitLabel("errored calls", C.muted)} />
-      <Tooltip {...tooltipStyle} />
-      <Legend wrapperStyle={{ fontSize: 12 }} />
-    </>
-  );
+  const { C } = useChartTokens();
   return (
     <ChartCard
       title="Tool errors over time"
@@ -200,23 +168,24 @@ export function ToolErrors({ hidden, ts }: ChartProps) {
       }
       hidden={hidden}
     >
-      <div ref={ref} style={{ width: "100%", height: "100%" }}>
-        <ResponsiveContainer width="100%" height="100%">
-          {asBars ? (
-            <BarChart data={data} margin={CHART_MARGIN}>
-              {common}
-              <Bar dataKey="failures" name="failures" stackId="e" fill={C.red} />
-              <Bar dataKey="rejections" name="rejected/blocked" stackId="e" fill={C.muted} />
-            </BarChart>
-          ) : (
-            <AreaChart data={data} margin={CHART_MARGIN}>
-              {common}
-              <Area dataKey="failures" name="failures" stackId="e" stroke="none" fill={C.red} fillOpacity={1} />
-              <Area dataKey="rejections" name="rejected/blocked" stackId="e" stroke="none" fill={C.muted} fillOpacity={1} />
-            </AreaChart>
-          )}
-        </ResponsiveContainer>
-      </div>
+      <DensityChart
+        data={ts?.series ?? []}
+        yLabel="errored calls"
+        integer
+        dense="area"
+        bars={
+          <>
+            <Bar dataKey="failures" name="failures" stackId="e" fill={C.red} />
+            <Bar dataKey="rejections" name="rejected/blocked" stackId="e" fill={C.muted} />
+          </>
+        }
+        lines={
+          <>
+            <Area dataKey="failures" name="failures" stackId="e" stroke="none" fill={C.red} fillOpacity={1} />
+            <Area dataKey="rejections" name="rejected/blocked" stackId="e" stroke="none" fill={C.muted} fillOpacity={1} />
+          </>
+        }
+      />
     </ChartCard>
   );
 }

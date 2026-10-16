@@ -1,6 +1,7 @@
-import { useEffect, useRef, useState, type ReactNode } from "react";
-import { ResponsiveContainer, BarChart, CartesianGrid, XAxis } from "recharts";
+import type { ReactNode } from "react";
+import { ResponsiveContainer, AreaChart, BarChart, CartesianGrid, Legend, LineChart, Tooltip, XAxis, YAxis } from "recharts";
 import type { DashAudit, DashBreakdowns, DashTime, DashTimeseries } from "../../api";
+import { useMeasuredWidth } from "../../useMeasuredWidth";
 import { useChartTokens } from "../../charts/theme";
 import type { Expanded } from "../useExpanded";
 import type { Drilldown } from "../useDrilldown";
@@ -84,14 +85,7 @@ export const Y_AXIS_W = 36;
  * full-size wrapper around the chart. Before the first observation lands — and in jsdom, which has no
  * ResizeObserver — width is 0 and bars are assumed to fit. */
 export function useBarsFit(count: number) {
-  const ref = useRef<HTMLDivElement>(null);
-  const [width, setWidth] = useState(0);
-  useEffect(() => {
-    if (!ref.current || typeof ResizeObserver === "undefined") return;
-    const ro = new ResizeObserver(([entry]) => setWidth(entry.contentRect.width));
-    ro.observe(ref.current);
-    return () => ro.disconnect();
-  }, []);
+  const [ref, width] = useMeasuredWidth();
   return [ref, width === 0 || count * PX_PER_BUCKET <= width - Y_AXIS_W] as const;
 }
 
@@ -152,4 +146,82 @@ export function decadeDomain(
   const ticks: number[] = [];
   for (let v = lo; v <= top; v *= 10) ticks.push(v);
   return { domain: [lo, top], ticks };
+}
+
+/** A card's two-or-more-way metric switch (the `.seg` button group in its header). */
+export function SegToggle<T extends string>({ options, value, onChange }: { options: readonly T[]; value: T; onChange: (v: T) => void }) {
+  return (
+    <span className="seg" role="group" aria-label="Metric">
+      {options.map((o) => (
+        <button key={o} type="button" className={value === o ? "on" : ""} onClick={() => onChange(o)}>
+          {o}
+        </button>
+      ))}
+    </span>
+  );
+}
+
+/** The guide paragraph every session-counting chart carries: under a model filter it counts whole
+ *  sessions, so its total moves differently from the token charts'. */
+export function SessionGrainNote() {
+  return (
+    <p>
+      <strong>Under a model filter this counts whole sessions, not model-attributable rows.</strong> A
+      session has no single model, so it is counted here whenever it used any model you ticked — including
+      the work it did with the others. That is why a session count and a token total move by different
+      amounts when you untick a model.
+    </p>
+  );
+}
+
+/**
+ * A bucketed series drawn as bars while the buckets are wide enough to read, and as `dense` (lines or
+ * areas) past that, since a line stays 2px wide however many buckets are in range. `bars` and `lines`
+ * are the series elements for each form; everything around them is shared.
+ */
+export function DensityChart({
+  data,
+  yLabel,
+  integer = false,
+  dense,
+  bars,
+  lines,
+}: {
+  data: object[];
+  yLabel: string;
+  /** Counts: keep the Y ticks on whole numbers. */
+  integer?: boolean;
+  dense: "line" | "area";
+  bars: ReactNode;
+  lines: ReactNode;
+}) {
+  const { C, axisProps, gridProps, tooltipStyle } = useChartTokens();
+  const [ref, asBars] = useBarsFit(data.length);
+  const common = (
+    <>
+      <CartesianGrid {...gridProps} />
+      <XAxis dataKey="bucket" {...axisProps} minTickGap={24} />
+      <YAxis {...axisProps} width={Y_AXIS_W} allowDecimals={!integer} label={unitLabel(yLabel, C.muted)} />
+      <Tooltip {...tooltipStyle} />
+      <Legend wrapperStyle={{ fontSize: 12 }} />
+    </>
+  );
+  const Dense = dense === "line" ? LineChart : AreaChart;
+  return (
+    <div ref={ref} style={{ width: "100%", height: "100%" }}>
+      <ResponsiveContainer width="100%" height="100%">
+        {asBars ? (
+          <BarChart data={data} margin={CHART_MARGIN}>
+            {common}
+            {bars}
+          </BarChart>
+        ) : (
+          <Dense data={data} margin={CHART_MARGIN}>
+            {common}
+            {lines}
+          </Dense>
+        )}
+      </ResponsiveContainer>
+    </div>
+  );
 }

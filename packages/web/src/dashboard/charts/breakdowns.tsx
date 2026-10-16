@@ -4,7 +4,7 @@ import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, CartesianGrid, Toolti
 import { ChartCard, useChartTokens } from "../../charts/theme";
 import { fmtCost, fmtTokens, shortModel } from "../../format";
 import { AxisLink, SkillTooltip, datumField, type AxisTickProps, type ChartDatum, type SkillVersionRow } from "../recharts-types";
-import { CHART_MARGIN, RankedBars, unitLabel, type ChartProps } from "./common";
+import { CHART_MARGIN, RankedBars, SegToggle, SessionGrainNote, unitLabel, type ChartProps } from "./common";
 
 const BAND_ORDER = ["trivial", "small", "medium", "large", "xl"];
 
@@ -86,14 +86,7 @@ export function TokensByModel({ hidden, bd, drill }: ChartProps) {
       hint="click a bar for those sessions"
       hidden={hidden}
       actions={
-        <span className="seg" role="group" aria-label="Metric">
-          <button type="button" className={metric === "tokens" ? "on" : ""} onClick={() => setMetric("tokens")}>
-            tokens
-          </button>
-          <button type="button" className={metric === "cost" ? "on" : ""} onClick={() => setMetric("cost")}>
-            cost
-          </button>
-        </span>
+        <SegToggle options={["tokens", "cost"] as const} value={metric} onChange={setMetric} />
       }
     >
       <RankedBars
@@ -144,12 +137,7 @@ export function Category({ hidden, bd }: ChartProps) {
             <dt>y-axis</dt>
             <dd>number of sessions.</dd>
           </dl>
-          <p>
-            <strong>Under a model filter this counts whole sessions, not model-attributable rows.</strong>{" "}
-            A session has no single model, so it is counted here whenever it used any model you ticked
-            — including the work it did with the others. That is why a session count and a token total
-            move by different amounts when you untick a model.
-          </p>
+          <SessionGrainNote />
           <p>
             <strong>Main sessions only</strong>: subagents inherit their parent's task and would
             multiply-count it. The label is inferred from the transcript rather than declared by you,
@@ -195,12 +183,7 @@ export function Complexity({ hidden, bd }: ChartProps) {
             <dt>y-axis</dt>
             <dd>number of sessions.</dd>
           </dl>
-          <p>
-            <strong>Under a model filter this counts whole sessions, not model-attributable rows.</strong>{" "}
-            A session has no single model, so it is counted here whenever it used any model you ticked
-            — including the work it did with the others. That is why a session count and a token total
-            move by different amounts when you untick a model.
-          </p>
+          <SessionGrainNote />
           <p>
             <strong>Main sessions only.</strong> Most sessions landing in the lower bands is the real
             shape of the corpus, not a bug. Complexity measures effort spent — not difficulty, and not
