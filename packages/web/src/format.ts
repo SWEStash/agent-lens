@@ -51,6 +51,11 @@ export function workTokens(s?: TokenSplit | null): number {
 
 /** Wall-clock time only — for labels inside a single session, where the date is the same throughout
  *  and repeating it is noise. */
+/** A percentage that is already ×100, to one decimal: 12.345 → "12.3%". */
+export function fmtPct(v: number): string {
+  return `${v.toFixed(1)}%`;
+}
+
 export function fmtClock(ms: number): string {
   return new Date(ms).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
 }

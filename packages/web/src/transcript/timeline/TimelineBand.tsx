@@ -11,6 +11,7 @@
  */
 import {
   useEffect,
+  useMemo,
   useRef,
   useState,
   type KeyboardEvent as ReactKeyboardEvent,
@@ -22,6 +23,9 @@ import { useChartTokens } from "../../charts/theme";
 import { buildScale, type TimeScale } from "./scale";
 import { buildMarks, hasUsage, type Mark, type MarkKind, type TokenMetric } from "./marks";
 import type { AxisMode } from "../viewPrefs";
+import { toggleIn } from "../../sets";
+import { useMeasuredWidth } from "../../useMeasuredWidth";
+import { isTypingTarget } from "../searchKeys";
 
 /** Band geometry. The plot is the token bars; the rail below carries the audit annotations. */
 const PLOT_H = 44;
@@ -39,21 +43,6 @@ const HANDLE_GRAB = 6;
 
 /** A mark kind as words, for the tooltip and the screen-reader announcement. */
 const kindLabel = (kind: string) => (kind === "tool-error" ? "tool error" : kind);
-
-/** Measure the band's width so the scale can be built in real pixels. Before the first observation
- *  lands — and in jsdom, which has no ResizeObserver — width is 0 and the band renders its caption
- *  only, which is also the correct pre-layout state. */
-function useMeasuredWidth() {
-  const ref = useRef<HTMLDivElement>(null);
-  const [width, setWidth] = useState(0);
-  useEffect(() => {
-    if (!ref.current || typeof ResizeObserver === "undefined") return;
-    const ro = new ResizeObserver(([entry]) => setWidth(entry.contentRect.width));
-    ro.observe(ref.current);
-    return () => ro.disconnect();
-  }, []);
-  return [ref, width] as const;
-}
 
 const LEGEND: Array<{ kind: MarkKind; label: string }> = [
   { kind: "user", label: "user" },
@@ -120,6 +109,7 @@ type Drag = { kind: "new" | "start" | "end"; anchor: number; x: number; pointerI
 export function TimelineBand(props: TimelineBandProps) {
   const { events, findings, fileChanges, userPromptUuids, turnSeqById, axisMode, onAxisMode, metric, onMetric } = props;
   const { range, onRange, onJump, domain } = props;
+  // Width 0 (pre-layout, or jsdom) renders the caption only, which is the correct pre-layout state.
   const [ref, width] = useMeasuredWidth();
   const svgRef = useRef<SVGSVGElement>(null);
   const [drag, setDrag] = useState<Drag | null>(null);
@@ -143,8 +133,7 @@ export function TimelineBand(props: TimelineBandProps) {
     if (!range) return;
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== "Escape" || e.defaultPrevented) return;
-      const el = e.target as HTMLElement | null;
-      if (el && (el.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName))) return;
+      if (isTypingTarget(e.target)) return;
       onRange(null);
     };
     document.addEventListener("keydown", onKey);
@@ -154,13 +143,16 @@ export function TimelineBand(props: TimelineBandProps) {
   // rather than the band drawing a flat row of zero-height marks.
   const effectiveMetric: TokenMetric = usagePresent ? metric : "work";
 
-  const scale = buildScale(events, {
-    width,
-    gapMs: axisMode === "literal" ? Infinity : undefined,
-    ...(domain ? { domain } : {}),
-    expandedGaps,
-  });
-  const marks = buildMarks({ events, points: scale.points, findings, fileChanges, turnSeqById, metric: effectiveMetric });
+  // Memoized: hover, the keyboard cursor and every pointer move of a drag re-render the band, and
+  // none of them changes the scale or the marks — rebuilding both meant re-sorting every message.
+  const scale = useMemo(
+    () => buildScale(events, { width, gapMs: axisMode === "literal" ? Infinity : undefined, ...(domain ? { domain } : {}), expandedGaps }),
+    [events, width, axisMode, domain, expandedGaps],
+  );
+  const marks = useMemo(
+    () => buildMarks({ events, points: scale.points, findings, fileChanges, turnSeqById, metric: effectiveMetric }),
+    [events, scale.points, findings, fileChanges, turnSeqById, effectiveMetric],
+  );
 
   const rangeX: [number, number] | null = range && !scale.degenerate ? [scale.x(range[0]), scale.x(range[1])] : null;
 
@@ -303,6 +295,34 @@ export function TimelineBand(props: TimelineBandProps) {
     onRange(orderedRange(drag.anchor, x));
   };
 
+  // Context occupancy, drawn as a line over the bars. Normalised against this session's own peak
+  // rather than a model's window size: the window differs per model and a session can mix them, and
+  // the shape over the session is the readable part either way. Descriptive only — see contextTokens.
+  const { ctxPeak, ctxLine } = useMemo(() => {
+    const peak = Math.max(0, ...marks.map((m) => m.context));
+    const line =
+      peak > 0
+        ? marks
+            .filter((m) => m.context > 0)
+            .map((m) => `${markGeom(m, scale).x.toFixed(1)},${(PLOT_H - (m.context / peak) * PLOT_H).toFixed(1)}`)
+            .join(" ")
+        : "";
+    return { ctxPeak: peak, ctxLine: line };
+  }, [marks, scale]);
+
+  // sqrt, not log: it handles the zeros log cannot, and still keeps one huge message from flattening
+  // everything else.
+  //
+  // sqrt alone is not enough, though. Real sessions run ~40x from the median message to the largest,
+  // which under max-normalisation puts the MEDIAN bar at 16% of the band — a flat line with two
+  // spikes, which is the outcome sqrt was chosen to avoid. So the reference is the 95th percentile
+  // and the top few marks clamp to full height. The exact number stays available on the mark itself,
+  // so nothing is hidden: what is given up is only "how much taller" the tallest few are.
+  const reference = useMemo(() => {
+    const graded = marks.map((k) => k.value).filter((v) => v > 0).sort((a, b) => a - b);
+    return graded.length ? graded[Math.min(Math.floor(graded.length * 0.95), graded.length - 1)] : 0;
+  }, [marks]);
+
   if (events.length === 0) return null;
   if (!scale.domain) {
     return (
@@ -320,28 +340,6 @@ export function TimelineBand(props: TimelineBandProps) {
     .filter(Boolean)
     .join(" · ");
 
-  // sqrt, not log: it handles the zeros log cannot, and still keeps one huge message from flattening
-  // everything else.
-  //
-  // sqrt alone is not enough, though. Real sessions run ~40x from the median message to the largest,
-  // which under max-normalisation puts the MEDIAN bar at 16% of the band — a flat line with two
-  // spikes, which is the outcome sqrt was chosen to avoid. So the reference is the 95th percentile
-  // and the top few marks clamp to full height. The exact number stays available on the mark itself,
-  // so nothing is hidden: what is given up is only "how much taller" the tallest few are.
-  // Context occupancy, drawn as a line over the bars. Normalised against this session's own peak
-  // rather than a model's window size: the window differs per model and a session can mix them, and
-  // the shape over the session is the readable part either way. Descriptive only — see contextTokens.
-  const ctxPeak = Math.max(0, ...marks.map((m) => m.context));
-  const ctxLine =
-    ctxPeak > 0
-      ? marks
-          .filter((m) => m.context > 0)
-          .map((m) => `${markGeom(m, scale).x.toFixed(1)},${(PLOT_H - (m.context / ctxPeak) * PLOT_H).toFixed(1)}`)
-          .join(" ")
-      : "";
-
-  const graded = marks.map((k) => k.value).filter((v) => v > 0).sort((a, b) => a - b);
-  const reference = graded.length ? graded[Math.min(Math.floor(graded.length * 0.95), graded.length - 1)] : 0;
   const barHeight = (v: number): number => {
     if (!usagePresent || reference <= 0) return PLOT_H * 0.6; // uniform fallback
     if (v <= 0) return MIN_BAR_H;
@@ -417,12 +415,7 @@ export function TimelineBand(props: TimelineBandProps) {
                 className="tl-break"
                 onDoubleClick={(ev) => {
                   ev.stopPropagation();
-                  setExpandedGaps((prev) => {
-                    const next = new Set(prev);
-                    if (next.has(b.t0)) next.delete(b.t0);
-                    else next.add(b.t0);
-                    return next;
-                  });
+                  setExpandedGaps((prev) => toggleIn(prev, b.t0));
                 }}
               >
                 <rect x={b.x0} y={0} width={b.x1 - b.x0} height={PLOT_H} />

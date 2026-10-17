@@ -10,6 +10,12 @@
  */
 import type { KeyboardEvent } from "react";
 
+/** Whether a key event's target is a text field — where a global shortcut must leave the key alone. */
+export function isTypingTarget(target: EventTarget | null): boolean {
+  const el = target as HTMLElement | null;
+  return !!el && (el.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName));
+}
+
 export function searchNavKeys(onPrev: () => void, onNext: () => void, onClear: () => void) {
   return (e: KeyboardEvent) => {
     if (e.key === "Escape") {

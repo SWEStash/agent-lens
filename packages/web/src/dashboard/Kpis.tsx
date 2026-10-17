@@ -1,7 +1,7 @@
 import { Fragment, type ReactNode } from "react";
 import { Link } from "react-router-dom";
 import type { DashBreakdowns, DashOverview, SecuritySummary, TokenSplit } from "../api";
-import { fmtCost, fmtDuration, fmtTokens, shortModel } from "../format";
+import { fmtCost, fmtDuration, fmtPct, fmtTokens, shortModel } from "../format";
 import { Kpi, useChartTokens } from "../charts/theme";
 import { arrange, type StripLayout } from "./layout";
 
@@ -98,7 +98,7 @@ export const KPI_REGISTRY: Array<{ id: string; label: string; render: (ctx: KpiC
       return (
         <Kpi
           label="Tool error rate"
-          value={toolCalls ? errRate.toFixed(1) + "%" : "—"}
+          value={toolCalls ? fmtPct(errRate) : "—"}
           tip="Genuine tool failures as a share of all tool calls (rejections/blocks excluded — see the rejection rate)."
           sub={`${failures.toLocaleString()} failed of ${toolCalls.toLocaleString()} calls`}
         />
@@ -113,7 +113,7 @@ export const KPI_REGISTRY: Array<{ id: string; label: string; render: (ctx: KpiC
       return (
         <Kpi
           label="Rejection rate"
-          value={toolCalls ? rejRate.toFixed(1) + "%" : "—"}
+          value={toolCalls ? fmtPct(rejRate) : "—"}
           tip="User-rejected + guardrail-blocked tool calls as a share of all tool calls. Not agent failures."
           sub={`${rejections.toLocaleString()} rejected/blocked`}
         />
@@ -166,7 +166,7 @@ export const KPI_REGISTRY: Array<{ id: string; label: string; render: (ctx: KpiC
     render: ({ overview }) => (
       <Kpi
         label="Cache-read ratio"
-        value={(overview.cache_read_ratio * 100).toFixed(1) + "%"}
+        value={fmtPct(overview.cache_read_ratio * 100)}
         sub="of all tokens are cached replays — excluded from “work”"
       />
     ),

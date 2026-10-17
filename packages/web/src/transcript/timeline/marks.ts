@@ -9,6 +9,7 @@
  */
 import type { EventNode, Finding, FileChangeRow, Severity } from "../../api";
 import { workTokens } from "../../format";
+import { SEVERITIES } from "../../severity";
 import type { TimelinePoint } from "./scale";
 
 /** The five categorical types, plus `meta` for system/command events. `meta` is not in the legend and
@@ -78,8 +79,6 @@ export function contextTokens(e: EventNode): number {
   return e.usage ? e.usage.input + e.usage.cache_creation + e.usage.cache_read : 0;
 }
 
-/** Most-severe-first, so an event carrying several findings shows its worst one. */
-const SEVERITY_ORDER: Severity[] = ["critical", "high", "medium", "low", "info"];
 
 export interface BuildMarksInput {
   events: readonly EventNode[];
@@ -102,7 +101,7 @@ export function buildMarks({ events, points, findings, fileChanges, turnSeqById,
   for (const f of findings ?? []) {
     if (!f.event_uuid) continue;
     const prev = worstFinding.get(f.event_uuid);
-    if (!prev || SEVERITY_ORDER.indexOf(f.severity) < SEVERITY_ORDER.indexOf(prev)) {
+    if (!prev || SEVERITIES.indexOf(f.severity) < SEVERITIES.indexOf(prev)) {
       worstFinding.set(f.event_uuid, f.severity);
     }
   }

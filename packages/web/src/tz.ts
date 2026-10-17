@@ -32,7 +32,8 @@ export interface LocalParts {
   dayKey: string;
 }
 
-const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+/** Short weekday names, Sunday first — `localParts` matches Intl's en-US `weekday: "short"` against these. */
+export const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
 // One formatter per zone. Constructing an Intl.DateTimeFormat costs enough that doing it per row —
 // and a wide range is thousands of rows — is the difference between instant and visibly slow.

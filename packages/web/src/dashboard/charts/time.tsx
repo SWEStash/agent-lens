@@ -2,11 +2,10 @@ import { useMemo, useState } from "react";
 import { ResponsiveContainer, LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend } from "recharts";
 import { ChartCard, useChartTokens } from "../../charts/theme";
 import { fmtDuration, fmtTokens, shortModel } from "../../format";
-import { resolveZone, zoneLabel } from "../../tz";
+import { resolveZone, WEEKDAYS, zoneLabel } from "../../tz";
 import { burnBySource, heatCells, heatRows, rampColor, rampPosition, rampTicks, type HeatCell, type HeatMetric } from "../burn";
-import { CHART_MARGIN, decadeDomain, unitLabel, type ChartProps } from "./common";
+import { CHART_MARGIN, decadeDomain, SegToggle, unitLabel, type ChartProps } from "./common";
 
-const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 /** Spelled out where the word takes a plural: "13 Thus" is not a word. */
 const WEEKDAYS_LONG = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 
@@ -111,14 +110,7 @@ export function BurnHeatmap({ hidden, time, range }: ChartProps) {
       }
       hidden={hidden}
       actions={
-        <span className="seg" role="group" aria-label="Metric">
-          <button type="button" className={metric === "turns" ? "on" : ""} onClick={() => setMetric("turns")}>
-            turns
-          </button>
-          <button type="button" className={isTokens ? "on" : ""} onClick={() => setMetric("tokens")}>
-            tokens
-          </button>
-        </span>
+        <SegToggle options={["turns", "tokens"] as const} value={metric} onChange={setMetric} />
       }
     >
       {/* Enlarged, the cells grow and the hour axis labels every other hour instead of every sixth:
@@ -385,7 +377,8 @@ export function ModelLatency({ hidden, time }: ChartProps) {
 
   const colorFor = (m: string) => PALETTE[Math.max(0, models.indexOf(m)) % PALETTE.length];
   const shows = (m: string) => picked.get(m) ?? !offByDefault.has(m);
-  const visible = models.filter(shows);
+  // Memoized on what `shows` reads, so the axis memo below can depend on it directly.
+  const visible = useMemo(() => models.filter(shows), [models, picked, offByDefault]);
 
   /**
    * A log axis, with the domain taken from the VISIBLE series only.
@@ -417,7 +410,7 @@ export function ModelLatency({ hidden, time }: ChartProps) {
     // With every series hidden decadeDomain falls back, so the axis stays plausible rather than
     // collapsing to nothing.
     return { logScale: true, ...decadeDomain(vals) };
-  }, [data, visible.join("|")]);
+  }, [data, visible]);
 
   return (
     <ChartCard
