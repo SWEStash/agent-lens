@@ -44,7 +44,7 @@ export function TokensOverTime({ hidden, ts }: ChartProps) {
             wrapperStyle={{ fontSize: 12, cursor: "pointer" }}
             onClick={(o: { dataKey?: unknown }) => o?.dataKey && toggle(String(o.dataKey))}
             formatter={(value: React.ReactNode, entry: { dataKey?: unknown }) => (
-              <span style={{ opacity: hiddenSeries.has(String(entry?.dataKey)) ? 0.4 : 1 }}>{value}</span>
+              <span style={{ color: C.muted, opacity: hiddenSeries.has(String(entry?.dataKey)) ? 0.4 : 1 }}>{value}</span>
             )}
           />
           <Area type="monotone" dataKey="input" hide={hiddenSeries.has("input")} stackId="1" stroke={TOKEN_COLORS.input} fill={TOKEN_COLORS.input} fillOpacity={0.5} />

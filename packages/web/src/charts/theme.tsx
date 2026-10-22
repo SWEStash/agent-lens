@@ -63,14 +63,14 @@ export function useChartTokens() {
     const PALETTE = [C.accent, C.green, C.gold, C.violet, C.teal, C.red, C.muted, "#d98c5f", "#5f9ed9"];
     const axisProps = { stroke: C.muted, tick: { fill: C.muted, fontSize: 11 }, tickLine: false };
     const gridProps = { stroke: C.border, strokeDasharray: "3 3", vertical: false };
-    // Recharts draws its own tooltip DOM, so this mirrors `.app-tip` in styles.css (the hover hints
-    // everywhere else) by hand — same surface, same 12px type, same shadow. Change one, change both.
+    // Recharts draws its own tooltip DOM, so it gets the shared tooltip surface from styles.css
+    // (`.app-tip` and friends) as inline style; the shadow is the same --tip-shadow token.
     const tooltipStyle = {
       contentStyle: {
         background: C.panel2,
         border: `1px solid ${C.border}`,
         borderRadius: 6,
-        boxShadow: "0 6px 18px rgb(0 0 0 / 35%)",
+        boxShadow: "var(--tip-shadow)",
         padding: "5px 8px",
         fontSize: 12,
         lineHeight: 1.45,
@@ -78,7 +78,11 @@ export function useChartTokens() {
       labelStyle: { color: C.text },
       itemStyle: { color: C.text },
     };
-    return { C, TOKEN_COLORS, TIMELINE_COLORS, SEVERITY_COLORS, BURN_RAMP, PALETTE, axisProps, gridProps, tooltipStyle };
+    // Legend labels are muted on every chart, never the series colour: the swatch beside them carries
+    // the identity, and coloured text reads as emphasis the data does not mean.
+    const legendText = (value: ReactNode) => <span style={{ color: C.muted }}>{value}</span>;
+    const legendProps = { wrapperStyle: { fontSize: 12 }, formatter: legendText };
+    return { C, TOKEN_COLORS, TIMELINE_COLORS, SEVERITY_COLORS, BURN_RAMP, PALETTE, axisProps, gridProps, tooltipStyle, legendProps };
   }, [theme]);
 }
 

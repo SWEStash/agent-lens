@@ -1,11 +1,10 @@
-import { useState } from "react";
 import { Link } from "react-router-dom";
 import { type FileSummary, type Project, type Source } from "./api";
 import { useFetch, useLookup } from "./useFetch";
 import { useQueryState } from "./useQueryState";
 import { ErrorAlert, Loading } from "./AsyncBoundary";
-import { fmtDate } from "./format";
-import { FilterSelect } from "./FilterSelect";
+import { fmtDate, projectLabel } from "./format";
+import { SearchBox, SourceSelect, ProjectSelect } from "./ListFilters";
 import { Pager } from "./Pager";
 import { SortHeader, type SortDir } from "./sort";
 
@@ -45,7 +44,6 @@ export default function FilesView() {
   const { get, set: setParam, pick } = useQueryState(["offset"]);
   const sources = useLookup<Source[]>("/sources", []);
   const projects = useLookup<Project[]>("/projects", []);
-  const [qInput, setQInput] = useState(get("q"));
   const offset = Number(get("offset", "0"));
 
   const qs = pick(["source", "project", "q", "sort", "dir"]);
@@ -54,10 +52,6 @@ export default function FilesView() {
   const { data, loading, error } = useFetch<{ total: number; files: FileSummary[] }>("/files?" + qs.toString());
   const { total, files } = data ?? EMPTY_PAGE;
 
-  function submitSearch(e: React.FormEvent) {
-    e.preventDefault();
-    setParam({ q: qInput.trim() });
-  }
 
   // Sort is server-side (whole list, not just the page) and lives in the URL, like the sessions list.
   const sortKey = get("sort", "last_ts") as FileSortKey;
@@ -74,39 +68,9 @@ export default function FilesView() {
     <div>
       <h1 className="sr-only">Files</h1>
       <div className="filters">
-        <form onSubmit={submitSearch} className="search" role="search">
-          <input
-            type="search"
-            aria-label="Search files by path"
-            placeholder="Search file paths…"
-            value={qInput}
-            onChange={(e) => setQInput(e.target.value)}
-          />
-          <button type="submit">Search</button>
-          {get("q") && (
-            <button type="button" className="ghost" onClick={() => (setQInput(""), setParam({ q: "" }))}>
-              clear
-            </button>
-          )}
-        </form>
-        <select aria-label="Filter by source" value={get("source")} onChange={(e) => setParam({ source: e.target.value })}>
-          <option value="">all sources</option>
-          {sources.map((s) => (
-            <option key={s.id} value={s.id}>
-              {s.label}
-            </option>
-          ))}
-        </select>
-        <FilterSelect
-          ariaLabel="Filter by project"
-          searchPlaceholder="Find project…"
-          value={get("project")}
-          onChange={(v) => setParam({ project: v })}
-          options={[
-            { value: "", label: "all projects" },
-            ...projects.map((p) => ({ value: p.id, label: p.path.replace(/^.*\//, "") })),
-          ]}
-        />
+        <SearchBox q={get("q")} onSearch={(q) => setParam({ q })} label="Search files by path" placeholder="Search file paths…" />
+        <SourceSelect value={get("source")} sources={sources} onChange={(v) => setParam({ source: v })} />
+        <ProjectSelect value={get("project")} projects={projects} onChange={(v) => setParam({ project: v })} />
       </div>
 
       <ErrorAlert error={error} />
@@ -140,7 +104,7 @@ export default function FilesView() {
                     {relPath(f.file_path, f.project_path)}
                   </Link>
                 </td>
-                <td>{f.project_path ? <span className="tag" data-tip={f.project_path}>{f.project_path.replace(/^.*\//, "")}</span> : <span className="muted">—</span>}</td>
+                <td>{f.project_path ? <span className="tag" data-tip={f.project_path}>{projectLabel(f.project_path)}</span> : <span className="muted">—</span>}</td>
                 <td className="num">{f.sessions.toLocaleString()}</td>
                 <td className="num">{f.changes.toLocaleString()}</td>
                 <td className="num"><LinesDelta added={f.lines_added} removed={f.lines_removed} /></td>

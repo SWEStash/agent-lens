@@ -31,6 +31,19 @@ If you run the services, restart the server after upgrading so the new code is l
 (`systemctl --user restart agent-lens-server.service` on Linux, or restart the launchd or Task
 Scheduler entry). The collector picks up the new binary on its next run.
 
+### After an upgrade, check the About page
+
+The About page (the version badge in the header) flags anything the upgrade left behind and names
+the fix:
+
+| About says | Meaning | Fix |
+|---|---|---|
+| Web build *differs from the server* | The page and the server come from different builds, usually a server still running the old install | Restart the server (the page shows this platform's command) |
+| Schema *stale* | The store was written by an older schema | `agent-lens ingest --full` |
+| Detector or Classifier *data is older* | Findings or categories were made by older rules | `agent-lens metrics` (it reruns both over the existing store, without rereading the archive) |
+
+None of these fixes touch triage (`triage.db`): finding statuses and notes survive.
+
 ## Configuration
 
 Agent Lens works without a config file and collects `~/.claude`. Run `agent-lens config` to print
@@ -326,13 +339,13 @@ The same export is in the UI and at `GET /api/sessions/:id/export.md`
 ## Retention
 
 The archive and the database are kept indefinitely. The only growth you can safely discard is
-`.versions/`, which holds older copies of transcripts and is usually empty. From a source checkout,
-`scripts/prune.sh` removes snapshots older than 90 days. It's a dry run unless you pass `--apply`:
+`.versions/`, which holds older copies of transcripts and is usually empty. `agent-lens prune`
+removes snapshots older than 90 days. It's a dry run unless you pass `--apply`:
 
 ```bash
-scripts/prune.sh                     # list what would be removed
-scripts/prune.sh --apply             # remove it
-scripts/prune.sh --days 30 --apply   # use a shorter window
+agent-lens prune                     # list what would be removed
+agent-lens prune --apply             # remove it
+agent-lens prune --days 30 --apply   # use a shorter window
 ```
 
 The store isn't encrypted; see [Privacy](../README.md#privacy).
@@ -353,7 +366,7 @@ beats the config file. The others are read from the environment only.
 | `AGENT_LENS_PORT` | config `server.port`, else `4477` | Server port (`--port` overrides) |
 | `AGENT_LENS_HOST` | config `server.host`, else `127.0.0.1` | Bind address (`--host` overrides) |
 | `AGENT_LENS_ALLOW_NONLOCAL` | unset | Set to `1` to allow a non-loopback bind address |
-| `AGENT_LENS_VERSIONS_KEEP_DAYS` | `90` | Retention window for `scripts/prune.sh` |
+| `AGENT_LENS_VERSIONS_KEEP_DAYS` | `90` | Retention window for `agent-lens prune` |
 | `CLAUDE_DIR` | unset | Legacy: collect a single source from this directory |
 | `AGENT_LENS_LABEL` | `default` | Legacy: the label for `CLAUDE_DIR` |
 

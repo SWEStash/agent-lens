@@ -32,7 +32,7 @@ export async function startServer(overrides: StartServerOverrides = {}): Promise
   const repoRoot = findRepoRoot(here);
   // db/port/host all resolve with precedence flag > env > file > default (bad port fails fast).
   const { path: dbPath, origin: dbOrigin } = resolveDbPath(overrides.db);
-  const { host, port } = resolveServerConfig({ port: overrides.port, host: overrides.host });
+  const { host, port, hostOrigin } = resolveServerConfig({ port: overrides.port, host: overrides.host });
   // Install the effective price table before anything derives a cost (ADR-028). Malformed overrides
   // warn here and fall back to the built-in rate; the resolved facts go to /api/about.
   const pricing = installPricing();
@@ -64,7 +64,7 @@ export async function startServer(overrides: StartServerOverrides = {}): Promise
     webDist,
     triageDbPath,
     enforceLoopbackHost,
-    about: { db: { path: dbPath, origin: dbOrigin }, host, port, loopbackOnly: enforceLoopbackHost, repoRoot, pricing },
+    about: { db: { path: dbPath, origin: dbOrigin }, host, hostOrigin, port, loopbackOnly: enforceLoopbackHost, repoRoot, pricing },
   });
 
   try {

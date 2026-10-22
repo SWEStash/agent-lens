@@ -95,14 +95,20 @@ function assertForeignKeys(db: DB): void {
 
 /** Tally the final table counts, close the DB, and print the one-block run summary. */
 function printIngestReport(db: DB, dbPath: string, r: IngestReport): void {
-  const count = (sql: string) => (db.prepare(sql).get() as any).n as number;
+  const count = (sql: string) => (db.prepare(sql).get() as { n: number }).n;
   const sessions = count("SELECT COUNT(*) n FROM sessions");
   const turns = count("SELECT COUNT(*) n FROM turns");
   const events = count("SELECT COUNT(*) n FROM events");
   const tools = count("SELECT COUNT(*) n FROM tool_calls");
   const usageRows = db
     .prepare("SELECT model, input_tokens, output_tokens, cache_creation_input_tokens, cache_read_input_tokens FROM token_usage")
-    .all() as any[];
+    .all() as Array<{
+    model: string | null;
+    input_tokens: number;
+    output_tokens: number;
+    cache_creation_input_tokens: number;
+    cache_read_input_tokens: number;
+  }>;
   let cost = 0;
   let totalTokens = 0;
   // A model with no rate contributes $0 silently (ADR-028) — that is how a whole week of sessions

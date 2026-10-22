@@ -56,9 +56,12 @@ export default function SessionView() {
   const [metric, setMetric] = useState<TokenMetric>(loadTimelineMetric);
 
   // Painted from the localStorage cache above; reconcile with the server's stored value (source of
-  // truth when a writable store is configured), like the dashboard/sessions prefs do.
+  // truth when a writable store is configured), like the dashboard/sessions prefs do. A choice made
+  // before the server answers wins: the late response must not undo it.
+  const prefsTouched = useRef(false);
   useEffect(() => {
     void fetchViewPrefs().then((p) => {
+      if (prefsTouched.current) return;
       if (p.format !== undefined) setFormat(p.format);
       if (p.hideTools !== undefined) setHideTools(p.hideTools);
       if (p.axisMode !== undefined) setAxisMode(p.axisMode);
@@ -67,25 +70,30 @@ export default function SessionView() {
   }, []);
 
   const chooseFormat = (f: MsgFormat) => {
+    prefsTouched.current = true;
     setFormat(f);
     saveFormat(f);
   };
 
   const chooseAxisMode = (m: AxisMode) => {
+    prefsTouched.current = true;
     setAxisMode(m);
     saveAxisMode(m);
   };
 
   const chooseMetric = (m: TokenMetric) => {
+    prefsTouched.current = true;
     setMetric(m);
     saveTimelineMetric(m);
   };
 
-  const toggleHideTools = () =>
+  const toggleHideTools = () => {
+    prefsTouched.current = true;
     setHideTools((h) => {
       saveHideTools(!h);
       return !h;
     });
+  };
 
   // Events that actually render something (mirrors EventBlock's body check). A session with none
   // (e.g. a zero-turn session whose only line was a meta/command with no text) gets an empty-state

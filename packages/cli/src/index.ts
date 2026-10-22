@@ -14,6 +14,7 @@ import {
   loadSources,
   parseHours,
   parseTargets,
+  pruneVersions,
   resolveArchiveDir,
   resolveConfigFile,
   resolveDataDir,
@@ -113,7 +114,7 @@ cli
   });
 
 cli
-  .command("metrics", "Re-run classification over an already-ingested DB")
+  .command("metrics", "Re-run classification, security detection, error typing and file changes over an already-ingested DB")
   .option("--db <path>", "SQLite DB path (overrides AGENT_LENS_DB / config db)")
   .action((opts: { db?: string }) => {
     runMetrics(opts.db ? ["--db", opts.db] : []);
@@ -157,6 +158,30 @@ cli
     const hours = action === "install" ? parseHours(opts.times) : undefined;
     // The bundled CLI file is this module; bake its absolute path + node into every unit/plist/task.
     runService(action, { cliEntry: fileURLToPath(import.meta.url), hours, targets });
+  });
+
+cli
+  .command("prune", "Delete .versions/ snapshots older than the retention window (dry run unless --apply)")
+  .option("--apply", "Actually delete; without it, only list what would go")
+  .option("--days <n>", "Retention window in days (default: AGENT_LENS_VERSIONS_KEEP_DAYS or 90)")
+  .action((opts: { apply?: boolean; days?: string }) => {
+    const keepDays = opts.days !== undefined ? Number(opts.days) : resolveRetention().keepDays;
+    const apply = !!opts.apply;
+    // Under the collect/ingest lock, so a snapshot is never deleted while an ingest is reading it.
+    withLock(() => {
+      const r = pruneVersions({ archiveBase: resolveArchiveDir(findRepoRoot()), keepDays, apply });
+      const mb = (b: number) => Math.round(b / 1024 / 1024);
+      for (const c of r.candidates) {
+        console.log(`agent-lens: ${apply ? "removed" : "would remove"} ${c.path} (age ${c.ageDays}d, ${mb(c.bytes)} MB)`);
+      }
+      if (!r.candidates.length) {
+        console.log(`agent-lens: nothing to prune (${r.scanned} snapshot dir(s) scanned, all within ${keepDays}d window)`);
+      } else {
+        const verb = apply ? "pruned" : "would prune";
+        console.log(`agent-lens: ${verb} ${r.candidates.length}/${r.scanned} snapshot dir(s), ~${mb(r.bytes)} MB (window ${keepDays}d)`);
+        if (!apply) console.log("agent-lens: dry run — pass --apply to delete");
+      }
+    });
   });
 
 cli

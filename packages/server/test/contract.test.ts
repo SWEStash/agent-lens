@@ -92,7 +92,7 @@ const ENGINE_VERSION_KEYS = ["expected", "in_data", "stale"];
 const ABOUT_RETENTION_KEYS = ["versions_keep_days", "origin"];
 const ABOUT_PRICING_KEYS = ["origin", "models", "applied", "invalid", "unpriced"];
 const ABOUT_PATHS_KEYS = ["config_file", "data_dir", "archive", "db", "triage_db"];
-const ABOUT_SERVER_KEYS = ["host", "port", "loopback_only"];
+const ABOUT_SERVER_KEYS = ["host", "host_origin", "port", "loopback_only", "restart_command"];
 const ABOUT_STORAGE_KEYS = ["db_bytes", "archive_bytes", "archive_files", "last_ingested"];
 const PATH_INFO_KEYS = ["path", "origin"];
 const SESSION_LOCATION_KEYS = ["session_id", "path", "exists", "source_id"];
@@ -109,6 +109,7 @@ describe("response contracts — populated DB", () => {
       about: {
         db: { path: "/tmp/x/agent-lens.db", origin: "default" },
         host: "127.0.0.1",
+        hostOrigin: "default",
         port: 4477,
         loopbackOnly: true,
         repoRoot: null,

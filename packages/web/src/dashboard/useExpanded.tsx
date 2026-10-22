@@ -3,9 +3,9 @@ import { toggleIn } from "../sets";
 
 /** Default rows shown for a ranked bar list before the user expands it ("show all"). Keeps every card
  * at the standard height so grid rows stay even; the full list is one click away. */
-export const TOP_N = 8;
+const TOP_N = 8;
 /** Approx px per horizontal bar row, used to size a card when it is expanded to show its full list. */
-export const ROW_PX = 26;
+const ROW_PX = 26;
 
 export interface Expanded {
   /** Slice a ranked list to the top N unless the card `id` is expanded. */

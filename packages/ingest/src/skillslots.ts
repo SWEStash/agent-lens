@@ -11,7 +11,7 @@
 /** Claude Code's formats for appending a skill's arguments to its body; add new ones here as the harness grows them. */
 export const ARG_TRAILERS = ["\nARGUMENTS:", "\n## User Request\n"];
 
-export const EMPTY_OUTPUT = "(Bash completed with no output)";
+const EMPTY_OUTPUT = "(Bash completed with no output)";
 export const DYNAMIC_PLACEHOLDER = "(dynamic context: command output omitted)";
 
 export interface Slot {

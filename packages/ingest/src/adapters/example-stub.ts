@@ -10,7 +10,7 @@ import type {
 /**
  * Example second-agent adapter — a COMPILE-TIME PROOF of the extensibility seam (ADR-008).
  *
- * This is intentionally NOT registered in `adapterList` (packages/ingest/src/index.ts) and is never
+ * This is intentionally NOT registered in `adapterList` (`runIngest` in packages/ingest/src/run.ts) and is never
  * run. Its only job is to demonstrate that a *genuinely different* agent — different on-disk layout,
  * different transcript envelope, different tool-call shape — maps onto the same agent-agnostic
  * normalized rows (`EventRow`, `TokenUsageRow`, `ToolCallRow`) and the same `SourceAdapter` contract

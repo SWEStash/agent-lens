@@ -11,20 +11,37 @@
 import { useFetch } from "./useFetch";
 import { AsyncBoundary } from "./AsyncBoundary";
 import { BUILD_VERSION } from "./buildInfo";
+import { fmtBytes } from "./format";
 import type { AboutResponse, EngineVersion, PathInfo } from "./api";
 
-/** 1.2 GB / 903 MB / 12 kB — SI units, matching how disk sizes are reported elsewhere. */
 function bytes(n: number | null): string {
-  if (n == null) return "unknown";
-  if (n < 1000) return `${n} B`;
-  const units = ["kB", "MB", "GB", "TB"];
-  let v = n / 1000;
-  let i = 0;
-  while (v >= 1000 && i < units.length - 1) {
-    v /= 1000;
-    i++;
+  return n == null ? "unknown" : fmtBytes(n);
+}
+
+/** What to remove to undo a non-loopback bind, by where the host came from. */
+function bindFix(origin: AboutResponse["server"]["host_origin"]): React.ReactNode {
+  switch (origin) {
+    case "flag":
+      return (
+        <>
+          drop <code>--host</code> from the <code>agent-lens serve</code> command
+        </>
+      );
+    case "env":
+      return (
+        <>
+          unset <code>AGENT_LENS_HOST</code>
+        </>
+      );
+    case "file":
+      return (
+        <>
+          remove <code>server.host</code> from the config file
+        </>
+      );
+    default:
+      return <>remove the host setting</>;
   }
-  return `${v < 10 ? v.toFixed(1) : Math.round(v)} ${units[i]}`;
 }
 
 function Row({ label, children }: { label: string; children: React.ReactNode }) {
@@ -106,7 +123,7 @@ export default function AboutView() {
         {(a) => (
           <>
             <section>
-              <h2>Versions</h2>
+              <h2 className="section-label">Versions</h2>
               <table className="kv">
                 <tbody>
                   <Row label="Agent Lens">
@@ -126,8 +143,15 @@ export default function AboutView() {
                       </span>
                       <div className="muted">
                         The page you are looking at was built from a different revision than the server
-                        serving it — usually a service still running an older install. Restart it, or
-                        rebuild the UI.
+                        serving it — usually a service still running an older install. Restart the server
+                        {a.server.restart_command ? (
+                          <>
+                            {" "}
+                            service with <code>{a.server.restart_command}</code>
+                          </>
+                        ) : null}{" "}
+                        (or stop and rerun <code>agent-lens serve</code> if you started it by hand). In a
+                        source checkout, run <code>pnpm build</code> first.
                       </div>
                     </Row>
                   )}
@@ -148,7 +172,7 @@ export default function AboutView() {
                     label="Detector"
                     v={a.versions.detector}
                     what="security findings"
-                    rerun="agent-lens ingest --full"
+                    rerun="agent-lens metrics"
                   />
                   <Engine
                     label="Classifier"
@@ -161,7 +185,7 @@ export default function AboutView() {
             </section>
 
             <section>
-              <h2>Paths</h2>
+              <h2 className="section-label">Paths</h2>
               <table className="kv">
                 <tbody>
                   <Row label="Config file">
@@ -176,7 +200,7 @@ export default function AboutView() {
             </section>
 
             <section>
-              <h2>Server</h2>
+              <h2 className="section-label">Server</h2>
               <table className="kv">
                 <tbody>
                   <Row label="Bound to">
@@ -191,7 +215,9 @@ export default function AboutView() {
                       <>
                         <span className="warn-tag">non-loopback bind</span>
                         <div className="muted">
-                          Reachable from other machines on this network. The API is unauthenticated.
+                          Reachable from other machines on this network. The API is unauthenticated. To
+                          go back to loopback only, {bindFix(a.server.host_origin)} and unset{" "}
+                          <code>AGENT_LENS_ALLOW_NONLOCAL</code>, then restart the server.
                         </div>
                       </>
                     )}
@@ -201,7 +227,7 @@ export default function AboutView() {
             </section>
 
             <section>
-              <h2>Retention</h2>
+              <h2 className="section-label">Retention</h2>
               <table className="kv">
                 <tbody>
                   <Row label="Keep .versions">
@@ -210,7 +236,7 @@ export default function AboutView() {
                       {a.retention.origin}
                     </span>
                     <div className="muted">
-                      How long superseded transcript snapshots are kept before <code>scripts/prune.sh</code>{" "}
+                      How long superseded transcript snapshots are kept before <code>agent-lens prune</code>{" "}
                       removes them. Does not affect the database.
                     </div>
                   </Row>
@@ -219,7 +245,7 @@ export default function AboutView() {
             </section>
 
             <section>
-              <h2>Pricing</h2>
+              <h2 className="section-label">Pricing</h2>
               <table className="kv">
                 <tbody>
                   <Row label="Models priced">
@@ -252,7 +278,8 @@ export default function AboutView() {
                       ))}
                       <div className="muted">
                         Each entry needs numeric <code>input</code> and <code>output</code> rates. These
-                        kept their built-in rate.
+                        kept their built-in rate. Fix them in the <code>pricing</code> block of the config
+                        file listed under Paths.
                       </div>
                     </Row>
                   )}
@@ -282,7 +309,7 @@ export default function AboutView() {
             </section>
 
             <section>
-              <h2>Sources</h2>
+              <h2 className="section-label">Sources</h2>
               {a.sources.length === 0 ? (
                 <p className="muted">No sources configured.</p>
               ) : (
@@ -299,7 +326,7 @@ export default function AboutView() {
             </section>
 
             <section>
-              <h2>Storage</h2>
+              <h2 className="section-label">Storage</h2>
               <table className="kv">
                 <tbody>
                   <Row label="Database">{bytes(a.storage.db_bytes)}</Row>

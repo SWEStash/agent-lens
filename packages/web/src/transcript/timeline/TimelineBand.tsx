@@ -9,19 +9,14 @@
  * the whole band is a single tab stop with a roving cursor announced through an aria-live region.
  * Filtering the transcript from the selection is the caller's job — see SessionView.
  */
-import {
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-  type KeyboardEvent as ReactKeyboardEvent,
-  type PointerEvent as ReactPointerEvent,
-} from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { EventNode, Finding, FileChangeRow } from "../../api";
 import { fmtDuration, fmtTokens } from "../../format";
 import { useChartTokens } from "../../charts/theme";
 import { buildScale, type TimeScale } from "./scale";
-import { buildMarks, hasUsage, type Mark, type MarkKind, type TokenMetric } from "./marks";
+import { barHeight, buildMarks, contextLine, hasUsage, heightReference, type Mark, type MarkKind, type TokenMetric } from "./marks";
+import { useBandBrush, type NearMark } from "./useBandBrush";
+import { useBandCursor } from "./useBandCursor";
 import type { AxisMode } from "../viewPrefs";
 import { toggleIn } from "../../sets";
 import { useMeasuredWidth } from "../../useMeasuredWidth";
@@ -38,8 +33,6 @@ const MIN_MARK_W = 2;
 const TICK_W = 3;
 /** Shortest bar that still reads as a bar, so a small-but-nonzero message isn't invisible. */
 const MIN_BAR_H = 3;
-/** A pointer within this many px of a selection edge grabs that handle instead of starting anew. */
-const HANDLE_GRAB = 6;
 
 /** A mark kind as words, for the tooltip and the screen-reader announcement. */
 const kindLabel = (kind: string) => (kind === "tool-error" ? "tool error" : kind);
@@ -98,29 +91,14 @@ function markGeom(m: Mark, scale: TimeScale): { x: number; w: number } {
   return { x, w: isTick ? TICK_W : Math.max(MIN_MARK_W, scale.x(m.t + m.durationMs) - x - 1) };
 }
 
-/** Below this many pixels a pointer gesture is a click, not a drag. */
-const DRAG_THRESHOLD = 3;
-/** How far the pointer may sit from a mark and still be hovering it. Marks are 2–3px wide, which is
- *  far too small a target on its own — the hit area is deliberately much larger than the ink. */
-const HOVER_RADIUS_PX = 12;
-
-type Drag = { kind: "new" | "start" | "end"; anchor: number; x: number; pointerId: number; captured: boolean };
-
 export function TimelineBand(props: TimelineBandProps) {
   const { events, findings, fileChanges, userPromptUuids, turnSeqById, axisMode, onAxisMode, metric, onMetric } = props;
   const { range, onRange, onJump, domain } = props;
   // Width 0 (pre-layout, or jsdom) renders the caption only, which is the correct pre-layout state.
   const [ref, width] = useMeasuredWidth();
   const svgRef = useRef<SVGSVGElement>(null);
-  const [drag, setDrag] = useState<Drag | null>(null);
   // Idle gaps the reader has opened in place, keyed by the timestamp before them.
   const [expandedGaps, setExpandedGaps] = useState<ReadonlySet<number>>(() => new Set());
-  // Keyboard cursor: an index into `marks`. The band is a single tab stop, and this is the roving
-  // position within it — there is no native element that does this, so it is built by hand.
-  const [cursor, setCursor] = useState(0);
-  // Where a Shift+arrow extension started, so the selection grows from the anchor rather than from
-  // wherever the cursor happens to be now.
-  const [keyAnchor, setKeyAnchor] = useState<number | null>(null);
   // The mark under the pointer. Without it, clicking or brushing is a guess: the marks are only a few
   // pixels wide, and colour plus height say nothing about which message they are.
   const [hover, setHover] = useState<{ uuid: string; x: number; w: number } | null>(null);
@@ -154,42 +132,35 @@ export function TimelineBand(props: TimelineBandProps) {
     [events, scale.points, findings, fileChanges, turnSeqById, effectiveMetric],
   );
 
-  const rangeX: [number, number] | null = range && !scale.degenerate ? [scale.x(range[0]), scale.x(range[1])] : null;
-
-  const handleHit = (x: number): "start" | "end" | null => {
-    if (!rangeX) return null;
-    if (Math.abs(x - rangeX[0]) <= HANDLE_GRAB) return "start";
-    if (Math.abs(x - rangeX[1]) <= HANDLE_GRAB) return "end";
-    return null;
-  };
-  /** Resizing pivots on the edge you did NOT grab. */
-  const handleAnchor = (h: "start" | "end"): number => (h === "start" ? rangeX![1] : rangeX![0]);
-
-  const orderedRange = (a: number, b: number): [number, number] => {
-    const [lo, hi] = a <= b ? [a, b] : [b, a];
-    return [scale.t(lo), scale.t(hi)];
-  };
-
   /** Distance from `px` to a mark, measured to its whole SPAN rather than its start: a long assistant
    *  or tool message can be tens of pixels wide, and measuring from its leading edge left most of the
    *  bar unhoverable and unclickable. Zero when the pointer is on the mark. */
-  const nearestMark = (px: number) => {
-    let best: { uuid: string; d: number; i: number; x: number; w: number } | null = null;
-    for (const [i, m] of marks.entries()) {
+  const nearestMark = (px: number): NearMark | null => {
+    let best: NearMark | null = null;
+    for (const m of marks) {
       const { x, w } = markGeom(m, scale);
       const d = px < x ? x - px : px > x + w ? px - (x + w) : 0;
-      if (!best || d < best.d) best = { uuid: m.uuid, d, i, x, w };
+      if (!best || d < best.d) best = { uuid: m.uuid, d, x, w };
     }
     return best;
   };
 
-  const cursorMark = marks[Math.min(cursor, marks.length - 1)] ?? null;
+  const { cursorIndex, cursorMark, onKeyDown, onFocus } = useBandCursor({ marks, onRange, onJump });
+  const { dragging, rangeX, onPointerDown, onPointerMove, onPointerUp } = useBandBrush({
+    scale,
+    svgRef,
+    range,
+    onRange,
+    onJump,
+    nearestMark,
+    onHover: setHover,
+  });
 
   /** What a screen reader hears as the cursor moves. Identity, position, size and time — the same
    *  four things the mark encodes visually, since none of them survive as colour and height alone. */
   const announcement = cursorMark
     ? [
-        `message ${Math.min(cursor, marks.length - 1) + 1} of ${marks.length}`,
+        `message ${cursorIndex + 1} of ${marks.length}`,
         kindLabel(cursorMark.kind),
         usagePresent && cursorMark.value > 0 ? `${fmtTokens(cursorMark.value)} tokens` : null,
         new Date(cursorMark.t).toLocaleTimeString(),
@@ -200,128 +171,10 @@ export function TimelineBand(props: TimelineBandProps) {
         .join(", ")
     : "";
 
-  const moveCursor = (next: number, extend: boolean) => {
-    const clamped = Math.max(0, Math.min(next, marks.length - 1));
-    setCursor(clamped);
-    if (!extend) {
-      setKeyAnchor(null);
-      return;
-    }
-    const anchor = keyAnchor ?? Math.min(cursor, marks.length - 1);
-    setKeyAnchor(anchor);
-    const [lo, hi] = anchor <= clamped ? [anchor, clamped] : [clamped, anchor];
-    onRange([marks[lo].t, marks[hi].t]);
-  };
-
-  const onKeyDown = (e: ReactKeyboardEvent<SVGSVGElement>) => {
-    if (!marks.length) return;
-    switch (e.key) {
-      case "ArrowLeft":
-        e.preventDefault();
-        moveCursor(cursor - 1, e.shiftKey);
-        break;
-      case "ArrowRight":
-        e.preventDefault();
-        moveCursor(cursor + 1, e.shiftKey);
-        break;
-      case "Home":
-        e.preventDefault();
-        moveCursor(0, e.shiftKey);
-        break;
-      case "End":
-        e.preventDefault();
-        moveCursor(marks.length - 1, e.shiftKey);
-        break;
-      case "Enter":
-      case " ":
-        e.preventDefault();
-        if (cursorMark) onJump(cursorMark.uuid);
-        break;
-      default:
-    }
-  };
-
-  /** Pointer x within the svg. */
-  const localX = (e: { clientX: number }): number => {
-    const box = svgRef.current?.getBoundingClientRect();
-    return box ? e.clientX - box.left : 0;
-  };
-
-  const onPointerDown = (e: ReactPointerEvent<SVGSVGElement>) => {
-    if (e.button !== 0 || scale.degenerate) return;
-    const x = localX(e);
-    const handle = handleHit(x);
-    // Capture is taken LAZILY, once a drag really starts (below). Capturing here would retarget the
-    // compatibility mouse events to this element, and the break markers' double-click — which opens a
-    // single idle gap in place — would never reach them.
-    const common = { x, pointerId: e.pointerId, captured: false };
-    setDrag(handle ? { kind: handle, anchor: handleAnchor(handle), ...common } : { kind: "new", anchor: x, ...common });
-  };
-
-  const onPointerMove = (e: ReactPointerEvent<SVGSVGElement>) => {
-    const px = localX(e);
-    if (!drag) {
-      const near = nearestMark(px);
-      setHover(near && near.d <= HOVER_RADIUS_PX ? { uuid: near.uuid, x: near.x, w: near.w } : null);
-      return;
-    }
-    const dragging = Math.abs(px - drag.anchor) >= DRAG_THRESHOLD;
-    // Capture keeps a drag alive when the pointer leaves the band; it is an enhancement, so where it
-    // is unavailable the drag must still work rather than throwing out of the handler.
-    if (dragging && !drag.captured) e.currentTarget.setPointerCapture?.(drag.pointerId);
-    setDrag({ ...drag, x: px, captured: drag.captured || dragging });
-    // Live filtering while dragging: the point of a brush is watching the transcript narrow.
-    if (dragging) onRange(orderedRange(drag.anchor, px));
-  };
-
-  const onPointerUp = (e: ReactPointerEvent<SVGSVGElement>) => {
-    if (!drag) return;
-    const x = localX(e);
-    if (drag.captured && e.currentTarget.hasPointerCapture?.(drag.pointerId)) {
-      e.currentTarget.releasePointerCapture?.(drag.pointerId);
-    }
-    setDrag(null);
-    if (Math.abs(x - drag.anchor) < DRAG_THRESHOLD) {
-      // A click, not a drag: jump to the nearest mark — unless the click was on a break marker, whose
-      // own gesture is a double-click to open the gap. Without this the first click of that
-      // double-click also jumps, which scrolls the page and moves the band out from under the second.
-      const onGap = (e.target as Element | null)?.closest?.(".tl-break, .tl-expanded");
-      if (drag.kind === "new" && !onGap) {
-        const hit = nearestMark(x);
-        if (hit) onJump(hit.uuid);
-      }
-      return;
-    }
-    onRange(orderedRange(drag.anchor, x));
-  };
-
-  // Context occupancy, drawn as a line over the bars. Normalised against this session's own peak
-  // rather than a model's window size: the window differs per model and a session can mix them, and
-  // the shape over the session is the readable part either way. Descriptive only — see contextTokens.
-  const { ctxPeak, ctxLine } = useMemo(() => {
-    const peak = Math.max(0, ...marks.map((m) => m.context));
-    const line =
-      peak > 0
-        ? marks
-            .filter((m) => m.context > 0)
-            .map((m) => `${markGeom(m, scale).x.toFixed(1)},${(PLOT_H - (m.context / peak) * PLOT_H).toFixed(1)}`)
-            .join(" ")
-        : "";
-    return { ctxPeak: peak, ctxLine: line };
-  }, [marks, scale]);
-
-  // sqrt, not log: it handles the zeros log cannot, and still keeps one huge message from flattening
-  // everything else.
-  //
-  // sqrt alone is not enough, though. Real sessions run ~40x from the median message to the largest,
-  // which under max-normalisation puts the MEDIAN bar at 16% of the band — a flat line with two
-  // spikes, which is the outcome sqrt was chosen to avoid. So the reference is the 95th percentile
-  // and the top few marks clamp to full height. The exact number stays available on the mark itself,
-  // so nothing is hidden: what is given up is only "how much taller" the tallest few are.
-  const reference = useMemo(() => {
-    const graded = marks.map((k) => k.value).filter((v) => v > 0).sort((a, b) => a - b);
-    return graded.length ? graded[Math.min(Math.floor(graded.length * 0.95), graded.length - 1)] : 0;
-  }, [marks]);
+  // Context occupancy, drawn as a line over the bars (see contextLine).
+  const { peak: ctxPeak, points: ctxLine } = useMemo(() => contextLine(marks, (m) => markGeom(m, scale).x, PLOT_H), [marks, scale]);
+  // The value a full-height bar stands for (see heightReference for why it is not the max).
+  const reference = useMemo(() => heightReference(marks), [marks]);
 
   if (events.length === 0) return null;
   if (!scale.domain) {
@@ -340,11 +193,7 @@ export function TimelineBand(props: TimelineBandProps) {
     .filter(Boolean)
     .join(" · ");
 
-  const barHeight = (v: number): number => {
-    if (!usagePresent || reference <= 0) return PLOT_H * 0.6; // uniform fallback
-    if (v <= 0) return MIN_BAR_H;
-    return Math.max(MIN_BAR_H, Math.min(1, Math.sqrt(v) / Math.sqrt(reference)) * PLOT_H);
-  };
+  const heightOpts = { reference, usagePresent, plotH: PLOT_H, minH: MIN_BAR_H };
 
   const present = new Set<MarkKind>(marks.map((m) => m.kind));
   const hoveredMark = hover ? marks.find((m) => m.uuid === hover.uuid) : undefined;
@@ -390,14 +239,14 @@ export function TimelineBand(props: TimelineBandProps) {
       {width > 0 && (
         <svg
           ref={svgRef}
-          className={"tl-svg" + (drag ? " is-dragging" : "")}
+          className={"tl-svg" + (dragging ? " is-dragging" : "")}
           width={width}
           height={SVG_H}
           role="group"
           aria-label={`Session timeline: ${caption}. Use the arrow keys to move between messages, Enter to open one, Shift with the arrows to select a range.`}
           tabIndex={0}
           onKeyDown={onKeyDown}
-          onFocus={() => setCursor((c) => Math.min(c, Math.max(marks.length - 1, 0)))}
+          onFocus={onFocus}
           onPointerDown={onPointerDown}
           onPointerMove={onPointerMove}
           onPointerUp={onPointerUp}
@@ -443,7 +292,7 @@ export function TimelineBand(props: TimelineBandProps) {
             </g>
           ))}
           {marks.map((m) => (
-            <MarkRect key={m.uuid} m={m} scale={scale} h={barHeight(m.value)} fill={fillFor(m.kind)} />
+            <MarkRect key={m.uuid} m={m} scale={scale} h={barHeight(m.value, heightOpts)} fill={fillFor(m.kind)} />
           ))}
           {/* Over the bars, not under them: at 44px the bars would hide most of it. `pointer-events`
               is off in CSS so it never steals a click meant for a mark. */}

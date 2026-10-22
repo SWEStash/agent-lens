@@ -17,3 +17,4 @@ export * from "./projects.js";
 export * from "./collect.js";
 export * from "./lock.js";
 export * from "./service.js";
+export * from "./prune.js";

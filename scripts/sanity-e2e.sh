@@ -209,6 +209,15 @@ else
 fi
 check "full rebuild reports a session count" "sessions=" <<< "$("$AL" ingest --full 2>&1 | tail -8)"
 check "metrics re-runs the derived layers" "classifier_version=" <<< "$("$AL" metrics 2>&1)"
+# Retention prune from the installed package: it has to find the per-user data dir, which is what
+# the old repo-only scripts/prune.sh got wrong. A plant aged past the window must be listed, and the
+# dry run must leave it in place.
+PLANT="$ROOT/data/archive/personal/.versions/20200101T000000000"
+mkdir -p "$PLANT" && echo x > "$PLANT/marker"
+check "prune dry run finds the aged snapshot" "would remove $PLANT" <<< "$("$AL" prune 2>&1)"
+[ -f "$PLANT/marker" ] && ok "prune dry run deleted nothing" || bad "prune dry run deleted the snapshot"
+check "prune --apply removes it" "removed $PLANT" <<< "$("$AL" prune --apply 2>&1)"
+[ ! -e "$PLANT" ] && ok "aged snapshot is gone after --apply" || bad "aged snapshot survived --apply"
 
 # The source is read-only: agent-lens copies out of it and never writes back. Claude Code itself is
 # usually running while this test does, so mtimes under the source churn for reasons that are not

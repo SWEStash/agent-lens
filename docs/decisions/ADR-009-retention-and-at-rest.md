@@ -62,9 +62,19 @@ We need a policy before the store grows large, without compromising the local-on
 - **No retention (unbounded).** Simplest, but defers an unbounded-growth problem indefinitely. Rejected
   for at least the cheap `.versions/` prune.
 
+## Amendment (2026-10): `agent-lens prune`
+
+`scripts/prune.sh` worked only from a source checkout: it derived the data dir as `<repo>/data`
+without core's per-user fallback, and it was not in the npm package, yet the docs sent npm users to
+it. It is replaced by `agent-lens prune` (`pruneVersions` in `packages/core/src/prune.ts`), which
+resolves the archive with `resolveArchiveDir` and the window with `resolveRetention`. The rules above
+are unchanged: dry run by default, `--apply` deletes, `--days N`, only `<archive>/<label>/.versions/<TS>/`
+dirs, and one line per run in `<archive>/.prune.log`. It also runs under the collect/ingest lock, so
+it never deletes a snapshot an ingest is reading.
+
 ## Revisit triggers
 
-- `.versions/` starts accumulating materially → wire `prune.sh` into a systemd user timer alongside
+- `.versions/` starts accumulating materially → wire `agent-lens prune` into a systemd user timer alongside
   the collector.
 - The store outgrows comfort even after `.versions/` pruning → reconsider mirror compaction/archival
   or a stricter window.

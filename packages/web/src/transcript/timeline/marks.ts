@@ -45,7 +45,7 @@ export interface Mark {
  * Classify an event. Order matters: a failed tool call outranks a successful one, and any tool call
  * outranks the prose around it, because the tool is what the reader is scanning for.
  */
-export function markKind(e: EventNode): MarkKind {
+function markKind(e: EventNode): MarkKind {
   if (e.toolCalls.some((t) => t.status === "error")) return "tool-error";
   if (e.toolCalls.length) return "tool";
   if (e.thinking && !e.text) return "thinking";
@@ -136,4 +136,50 @@ export function buildMarks({ events, points, findings, fileChanges, turnSeqById,
  *  hides the metric toggle — which is the case a newer SPA hits against a server that predates per-event usage. */
 export function hasUsage(events: readonly EventNode[]): boolean {
   return events.some((e) => e.usage);
+}
+
+/**
+ * The value that maps to a full-height bar.
+ *
+ * Heights are sqrt-scaled, not log-scaled: sqrt handles the zeros log cannot, and still keeps one huge
+ * message from flattening everything else. sqrt alone is not enough, though. Real sessions run ~40x
+ * from the median message to the largest, which under max-normalisation puts the MEDIAN bar at 16% of
+ * the band — a flat line with two spikes, which is the outcome sqrt was chosen to avoid. So the
+ * reference is the 95th percentile and the top few marks clamp to full height. The exact number stays
+ * available on the mark itself, so nothing is hidden: what is given up is only "how much taller" the
+ * tallest few are. 0 when no mark has a value.
+ */
+export function heightReference(marks: readonly Mark[]): number {
+  const graded = marks
+    .map((k) => k.value)
+    .filter((v) => v > 0)
+    .sort((a, b) => a - b);
+  return graded.length ? graded[Math.min(Math.floor(graded.length * 0.95), graded.length - 1)] : 0;
+}
+
+/** A mark's bar height in px. With no usage in the session every bar is the same 60% height; a zero
+ *  value still gets the minimum so the message stays visible. */
+export function barHeight(
+  value: number,
+  { reference, usagePresent, plotH, minH }: { reference: number; usagePresent: boolean; plotH: number; minH: number },
+): number {
+  if (!usagePresent || reference <= 0) return plotH * 0.6;
+  if (value <= 0) return minH;
+  return Math.max(minH, Math.min(1, Math.sqrt(value) / Math.sqrt(reference)) * plotH);
+}
+
+/**
+ * The context-occupancy line as SVG polyline points, normalised against this session's own peak rather
+ * than a model's window size: the window differs per model and a session can mix them, and the shape
+ * over the session is the readable part either way. Marks without usage are skipped. Descriptive only —
+ * see contextTokens.
+ */
+export function contextLine(marks: readonly Mark[], xOf: (m: Mark) => number, plotH: number): { peak: number; points: string } {
+  const peak = Math.max(0, ...marks.map((m) => m.context));
+  if (peak <= 0) return { peak, points: "" };
+  const points = marks
+    .filter((m) => m.context > 0)
+    .map((m) => `${xOf(m).toFixed(1)},${(plotH - (m.context / peak) * plotH).toFixed(1)}`)
+    .join(" ");
+  return { peak, points };
 }

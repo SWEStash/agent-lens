@@ -180,3 +180,13 @@ describe("currentUser", () => {
     expect(currentUser()).toBe(userInfo().username);
   });
 });
+
+describe("serverRestartCommand", () => {
+  it("restarts the unit/agent/task service install creates on each platform", async () => {
+    const { serverRestartCommand } = await import("../dist/index.js");
+    expect(serverRestartCommand("linux")).toBe("systemctl --user restart agent-lens-server.service");
+    expect(serverRestartCommand("darwin")).toBe("launchctl kickstart -k gui/$(id -u)/org.agent-lens.server");
+    expect(serverRestartCommand("win32")).toBe('schtasks /End /TN "AgentLens\\Server" & schtasks /Run /TN "AgentLens\\Server"');
+    expect(serverRestartCommand("aix")).toBeNull();
+  });
+});

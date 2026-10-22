@@ -6,7 +6,7 @@
 import { describe, it, expect } from "vitest";
 import { buildFileTree, type FileTreeNode } from "../src/transcript/tree";
 import { groupByTurn } from "../src/transcript/group";
-import type { EventNode, FileChangeRow } from "../src/api";
+import type { EventNode, FileChangeRow, TurnRow } from "../src/api";
 
 const change = (over: Partial<FileChangeRow> = {}): FileChangeRow => ({
   id: "c1",
@@ -100,13 +100,25 @@ const ev = (uuid: string, turn_id: string | null): EventNode => ({
   toolCalls: [],
 });
 
+const turn = (id: string, seq = 0): TurnRow => ({
+  id,
+  session_id: "s",
+  seq,
+  user_event_uuid: null,
+  prompt_preview: null,
+  model: null,
+  started_at: null,
+  ended_at: null,
+  duration_ms: null,
+});
+
 describe("groupByTurn", () => {
   it("returns no groups for no events", () => {
-    expect(groupByTurn([], [{ id: "t1" }])).toEqual([]);
+    expect(groupByTurn([], [turn("t1")])).toEqual([]);
   });
 
   it("groups consecutive events of the same turn and attaches the turn row", () => {
-    const turns = [{ id: "t1", seq: 0 }];
+    const turns = [turn("t1")];
     const groups = groupByTurn([ev("a", "t1"), ev("b", "t1")], turns);
     expect(groups).toHaveLength(1);
     expect(groups[0].turnId).toBe("t1");
@@ -115,12 +127,12 @@ describe("groupByTurn", () => {
   });
 
   it("starts a new group at every turn boundary, preserving transcript order", () => {
-    const groups = groupByTurn([ev("a", "t1"), ev("b", "t2"), ev("c", "t1")], [{ id: "t1" }, { id: "t2" }]);
+    const groups = groupByTurn([ev("a", "t1"), ev("b", "t2"), ev("c", "t1")], [turn("t1"), turn("t2", 1)]);
     expect(groups.map((g) => g.turnId)).toEqual(["t1", "t2", "t1"]);
   });
 
   it("gives turn-less events a header-less group so they still render", () => {
-    const groups = groupByTurn([ev("a", null), ev("b", "t1")], [{ id: "t1" }]);
+    const groups = groupByTurn([ev("a", null), ev("b", "t1")], [turn("t1")]);
     expect(groups[0]).toMatchObject({ turnId: null, turn: null });
     expect(groups[1].turnId).toBe("t1");
   });
@@ -130,7 +142,7 @@ describe("groupByTurn", () => {
   });
 
   it("leaves turn null when the event references a turn that was not loaded", () => {
-    const groups = groupByTurn([ev("a", "missing")], [{ id: "t1" }]);
+    const groups = groupByTurn([ev("a", "missing")], [turn("t1")]);
     expect(groups[0]).toMatchObject({ turnId: "missing", turn: null });
   });
 });

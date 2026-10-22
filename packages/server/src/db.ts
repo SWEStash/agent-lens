@@ -228,7 +228,7 @@ const COST_SORT_SQL = `(SELECT COALESCE(SUM((tu.input_tokens * mr.i_rate + tu.ou
  * config overrides) as bound parameters. Built per query, never cached at module scope — `usePricing`
  * can swap the table at startup and tests install their own.
  */
-export function ratesCte(): { sql: string; params: unknown[] } {
+function ratesCte(): { sql: string; params: unknown[] } {
   const entries = Object.entries(activePricing());
   return {
     // `model_rate` resolves the prefix match ONCE per distinct model id, not once per token_usage row.

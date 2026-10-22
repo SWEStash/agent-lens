@@ -6,12 +6,10 @@ import { type SkillDetail } from "./api";
 import { AsyncBoundary } from "./AsyncBoundary";
 import { useFetch } from "./useFetch";
 import { useQueryState } from "./useQueryState";
-import { fmtDate } from "./format";
+import { fmtBytes, fmtDate, projectLabel } from "./format";
 
-function fmtBytes(n: number | null): string {
-  if (!n || n < 0) return "—";
-  if (n >= 1024) return (n / 1024).toFixed(1) + " KB";
-  return n + " B";
+function sizeLabel(n: number | null): string {
+  return !n || n < 0 ? "—" : fmtBytes(n);
 }
 
 /** Short, stable label for a version: its hash prefix + last-seen date. */
@@ -91,7 +89,7 @@ function SkillDetailView({ data }: { data: SkillDetail }) {
             {selected && (
               <span className="muted small">
                 first seen {fmtDate(selected.first_seen)} · last seen {fmtDate(selected.last_seen)} ·{" "}
-                {fmtBytes(selected.body_bytes)}
+                {sizeLabel(selected.body_bytes)}
               </span>
             )}
           </div>
@@ -135,7 +133,7 @@ function SkillDetailView({ data }: { data: SkillDetail }) {
                             </Link>
                           </td>
                           <td>{s.source_id}</td>
-                          <td className="path">{s.project_path?.replace(/^.*\//, "") ?? "—"}</td>
+                          <td className="path">{s.project_path ? projectLabel(s.project_path) : "—"}</td>
                           <td className="num">{s.fire_count}</td>
                           <td>{fmtDate(s.fired_at)}</td>
                         </tr>

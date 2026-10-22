@@ -13,12 +13,18 @@ export function WorkflowLaunchBlock({ t }: { t: ToolCall }) {
         <span className="tool-name">🔀 {label}</span>
         {t.status && <span className="tool-status">{t.status}</span>}
       </div>
-      {t.workflow_run_id && (
-        <Link className="subagent-link small" to={`/workflow/${t.workflow_run_id}`}>
-          🔀 launched {t.workflow_agent_count ?? 0} agent{t.workflow_agent_count === 1 ? "" : "s"} · <code>{t.workflow_run_id}</code> →
-        </Link>
-      )}
+      <WorkflowRunLink t={t} />
       {t.result_summary && <div className="result">{t.result_summary}</div>}
     </div>
+  );
+}
+
+/** "launched N agents · <run id> →", linking a Workflow tool call to its run page. */
+export function WorkflowRunLink({ t }: { t: ToolCall }) {
+  if (!t.workflow_run_id) return null;
+  return (
+    <Link className="subagent-link small" to={`/workflow/${t.workflow_run_id}`}>
+      🔀 launched {t.workflow_agent_count ?? 0} agent{t.workflow_agent_count === 1 ? "" : "s"} · <code>{t.workflow_run_id}</code> →
+    </Link>
   );
 }

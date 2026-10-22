@@ -18,6 +18,15 @@ function relativeTime(iso: string): string {
   return `${Math.round(hrs / 24)}d ago`;
 }
 
+/** Top-level pages, in nav order. "/" matches exactly, so Sessions isn't active on every page. */
+const NAV: ReadonlyArray<readonly [string, string]> = [
+  ["/", "Sessions"],
+  ["/files", "Files"],
+  ["/skills", "Skills"],
+  ["/security", "Security"],
+  ["/dashboard", "Dashboard"],
+];
+
 export default function App() {
   const { theme, toggle } = useTheme();
 
@@ -88,21 +97,11 @@ export default function App() {
             </Link>
           ))}
         <nav className="nav">
-          <NavLink to="/" end className={({ isActive }) => (isActive ? "nav-link active" : "nav-link")}>
-            Sessions
-          </NavLink>
-          <NavLink to="/files" className={({ isActive }) => (isActive ? "nav-link active" : "nav-link")}>
-            Files
-          </NavLink>
-          <NavLink to="/skills" className={({ isActive }) => (isActive ? "nav-link active" : "nav-link")}>
-            Skills
-          </NavLink>
-          <NavLink to="/security" className={({ isActive }) => (isActive ? "nav-link active" : "nav-link")}>
-            Security
-          </NavLink>
-          <NavLink to="/dashboard" className={({ isActive }) => (isActive ? "nav-link active" : "nav-link")}>
-            Dashboard
-          </NavLink>
+          {NAV.map(([to, label]) => (
+            <NavLink key={to} to={to} end={to === "/"} className={({ isActive }) => (isActive ? "nav-link active" : "nav-link")}>
+              {label}
+            </NavLink>
+          ))}
         </nav>
         {lastIngested ? (
           <span className="tagline" data-tip={`Data last ingested ${new Date(lastIngested).toLocaleString()}`}>

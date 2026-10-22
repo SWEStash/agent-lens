@@ -7,8 +7,8 @@ import { useResetOn } from "./useResetOn";
 import { ErrorAlert, Loading } from "./AsyncBoundary";
 import { SortHeader, useSort } from "./sort";
 import { Pager } from "./Pager";
-import { FilterSelect } from "./FilterSelect";
-import { fmtDate } from "./format";
+import { SourceSelect, ProjectSelect } from "./ListFilters";
+import { fmtDate, projectLabel } from "./format";
 import { SeverityTag, SEVERITIES } from "./severity";
 
 const PAGE = 50;
@@ -189,19 +189,8 @@ export default function SecurityView() {
             <option key={r.rule_id} value={r.rule_id}>{r.rule_id} ({r.n})</option>
           ))}
         </select>
-        <select aria-label="Filter by source" value={source} onChange={(e) => setParam({ source: e.target.value })}>
-          <option value="">all sources</option>
-          {sources.map((s) => (
-            <option key={s.id} value={s.id}>{s.label}</option>
-          ))}
-        </select>
-        <FilterSelect
-          ariaLabel="Filter by project"
-          searchPlaceholder="Find project…"
-          value={project}
-          onChange={(v) => setParam({ project: v })}
-          options={[{ value: "", label: "all projects" }, ...projects.map((p) => ({ value: p.id, label: p.path.replace(/^.*\//, "") }))]}
-        />
+        <SourceSelect value={source} sources={sources} onChange={(v) => setParam({ source: v })} />
+        <ProjectSelect value={project} projects={projects} onChange={(v) => setParam({ project: v })} />
         <label className="ctl">from <input type="date" value={from} onChange={(e) => setParam({ from: e.target.value })} /></label>
         <label className="ctl">to <input type="date" value={to} onChange={(e) => setParam({ to: e.target.value })} /></label>
         {session && (
@@ -342,7 +331,7 @@ function FindingRow({
       <td className="small">
         <Link to={to} className="title">{f.session_title || f.session_id.slice(0, 12)}</Link>
         {f.is_sidechain ? <span className="tag subagent">subagent</span> : null}
-        {f.project_path && <div className="muted path">{f.project_path.replace(/^.*\//, "")}</div>}
+        {f.project_path && <div className="muted path">{projectLabel(f.project_path)}</div>}
       </td>
       {!SNAPSHOT && (
         <td className="finding-actions small">

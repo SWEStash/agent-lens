@@ -75,7 +75,15 @@ export interface AboutResponse {
     db: PathInfo;
     triage_db: PathInfo;
   };
-  server: { host: string; port: number; loopback_only: boolean };
+  server: {
+    host: string;
+    /** Where the host came from, so a non-loopback bind can say which setting to remove. */
+    host_origin: "flag" | "env" | "file" | "default";
+    port: number;
+    loopback_only: boolean;
+    /** Restarts the installed server service on this platform; null where there is no service. */
+    restart_command: string | null;
+  };
   /** `.versions/` snapshot retention, mirroring the Retention block of `agent-lens config`. */
   retention: { versions_keep_days: number; origin: "env" | "default" };
   /**

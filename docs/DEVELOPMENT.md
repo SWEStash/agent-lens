@@ -47,7 +47,8 @@ CI runs `build`, `typecheck`, `test`, and `sandbox`.
 - **Classifier change**: bump `CLASSIFIER_VERSION` in `packages/ingest/src/classify.ts` and run
   `agent-lens metrics`. No re-ingest is needed.
 - **Detector change**: bump `DETECTOR_VERSION` in `packages/ingest/src/detect.ts` and add an entry
-  to [DETECTOR-CHANGELOG.md](DETECTOR-CHANGELOG.md).
+  to [DETECTOR-CHANGELOG.md](DETECTOR-CHANGELOG.md). Users relabel with `agent-lens metrics`; the
+  About page tells them so once their stored findings are older.
 - **Dashboard query change**: run `pnpm bench`; the query-plan guard in CI checks index use
   ([PERFORMANCE.md](PERFORMANCE.md)).
 - **Metric or ingest change**: run the end-to-end checks in [VALIDATION.md](VALIDATION.md).

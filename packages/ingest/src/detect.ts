@@ -16,13 +16,14 @@ import { posix as path } from "node:path";
 import { transaction, bumpSeverity, type Severity, type SecurityCategoryKey } from "@agent-lens/core";
 import type { DB } from "./db.js";
 import { createDirtySet } from "./dirtyset.js";
+import { parseShellWrites } from "./shellwrites.js";
 import { parseStored } from "./storedjson.js";
 
 // Bump on any rule/severity change so a re-run is attributable to an engine version (mirrors
 // CLASSIFIER_VERSION). Recorded on every row + in signals_json. Finding ids are independent of this
 // version, so a bump doesn't invalidate user triage state. The per-version rationale (what each bump
 // fixed/added and why) lives in docs/DETECTOR-CHANGELOG.md — keep the history there, not inline.
-export const DETECTOR_VERSION = 8;
+export const DETECTOR_VERSION = 9;
 
 // Severity model + category taxonomy are shared from core (packages/core/src/security.ts) so the
 // server and web agree on ordering and keys. Re-exported for tests that drive this module directly.
@@ -152,7 +153,7 @@ export const codeOf = (c: string): string => neutralizeEcho(stripComments(blankH
 export const bareOf = (c: string): string => blankQuoted(codeOf(c));
 
 /** The two derived views of one command, built together — the single place the pipeline is assembled. */
-export function commandViews(raw: string): { code: string; bare: string } {
+function commandViews(raw: string): { code: string; bare: string } {
   const code = codeOf(raw);
   return { code, bare: blankQuoted(code) };
 }
@@ -160,11 +161,10 @@ export function commandViews(raw: string): { code: string; bare: string } {
 // A file is "executed" when passed to an interpreter (sh/bash/…), sourced (`source`/`.`), or invoked
 // as a path (`./f`, `/abs/f`). Detects the write-a-script-then-run-it pattern (`echo … > f.sh; sh f.sh`)
 // that turns otherwise-inert printed text into live code. Returns the offending file, or null.
+// Write targets come from the same parser file provenance uses (shellwrites.ts), so quoting, `~` and
+// `/dev/` sinks are read one way everywhere.
 function execGeneratedScript(cmd: string): string | null {
-  const targets = new Set<string>();
-  for (const m of cmd.matchAll(/(?:>>?|\btee\b\s+(?:-a\s+)?)\s*["']?([A-Za-z0-9._/~-]+)/g)) {
-    if (m[1] && !m[1].startsWith("/dev/")) targets.add(m[1]);
-  }
+  const targets = parseShellWrites(cmd, { keepHome: true, sed: false }).writes.map((w) => w.path);
   for (const t of targets) {
     const e = t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
     // Interpreter/source invocation: `sh FILE`, `bash FILE`, `source FILE`, `. FILE` (the interpreter is

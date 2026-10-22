@@ -16,7 +16,7 @@
  *               is the release gate; it needs network access.
  */
 import { execFileSync, spawn } from "node:child_process";
-import { mkdtempSync, mkdirSync, writeFileSync, readdirSync, rmSync, symlinkSync } from "node:fs";
+import { existsSync, mkdtempSync, mkdirSync, writeFileSync, readdirSync, rmSync, symlinkSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import { REPO, waitForHealth } from "./lib/sandbox.mjs";
@@ -76,6 +76,19 @@ const collectOut = runCli(["collect", "--then-ingest"], { env });
 console.log(collectOut.trim().split("\n").map((l) => "    " + l).join("\n"));
 /scanned=\d/.test(collectOut) ? ok("collect ran from installed CLI (no repo present)") : fail("collect produced no output");
 /sessions=\d/.test(collectOut) ? ok("ingest ran after collect (--then-ingest)") : fail("ingest did not run");
+
+// Retention prune from the installed CLI: it must find the archive under AGENT_LENS_DATA with no repo
+// around (the old scripts/prune.sh only knew <repo>/data). A planted aged snapshot is listed by the
+// dry run, survives it, and is removed by --apply.
+const plant = join(DATA, "archive", "t", ".versions", "20200101T000000000");
+mkdirSync(plant, { recursive: true });
+writeFileSync(join(plant, "marker"), "x");
+runCli(["prune"], { env }).includes(`would remove ${plant}`) && existsSync(plant)
+  ? ok("prune dry run lists the aged snapshot and keeps it")
+  : fail("prune dry run did not list or did not keep the aged snapshot");
+runCli(["prune", "--apply"], { env }).includes(`removed ${plant}`) && !existsSync(plant)
+  ? ok("prune --apply removes the aged snapshot")
+  : fail("prune --apply did not remove the aged snapshot");
 
 // 5) Serve + fetch health and the web index (proves fastify + bundled web/ resolution)
 if (GLOBAL) {

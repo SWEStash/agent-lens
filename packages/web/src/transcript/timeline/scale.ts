@@ -24,7 +24,7 @@ export const BREAK_PX = 14;
 
 /** Half-width of the synthetic domain given to a session whose events all share one timestamp, so a
  *  degenerate scale still has a well-defined, monotonic mapping instead of dividing by zero. */
-export const DEGENERATE_PAD_MS = 30_000;
+const DEGENERATE_PAD_MS = 30_000;
 
 /** Room every active run gets before any time-proportional width is handed out, so that a run whose
  *  events are seconds apart can still draw them side by side instead of stacking them on one pixel.
