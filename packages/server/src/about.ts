@@ -25,6 +25,7 @@ import {
   resolveDataDir,
   resolveRetention,
   resolveVersion,
+  serverRestartCommand,
   triageDbFor,
   unpricedModels,
   type ConfigOrigin,
@@ -38,6 +39,7 @@ import { queryAll, queryGet, tableExists } from "./sql-util.js";
 export interface AboutContext {
   db: { path: string; origin: ConfigOrigin };
   host: string;
+  hostOrigin: ConfigOrigin;
   port: number;
   loopbackOnly: boolean;
   repoRoot: string | null;
@@ -148,7 +150,13 @@ export function about(db: DB, ctx: AboutContext): AboutResponse {
       db: { path: ctx.db.path, origin: ctx.db.origin },
       triage_db: { path: triageDbFor(ctx.db.path), origin: "fixed" },
     },
-    server: { host: ctx.host, port: ctx.port, loopback_only: ctx.loopbackOnly },
+    server: {
+      host: ctx.host,
+      host_origin: ctx.hostOrigin,
+      port: ctx.port,
+      loopback_only: ctx.loopbackOnly,
+      restart_command: serverRestartCommand(),
+    },
     retention: { versions_keep_days: retention.keepDays, origin: retention.origin },
     pricing: {
       origin: ctx.pricing.origin,

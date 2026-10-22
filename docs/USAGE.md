@@ -31,6 +31,19 @@ If you run the services, restart the server after upgrading so the new code is l
 (`systemctl --user restart agent-lens-server.service` on Linux, or restart the launchd or Task
 Scheduler entry). The collector picks up the new binary on its next run.
 
+### After an upgrade, check the About page
+
+The About page (the version badge in the header) flags anything the upgrade left behind and names
+the fix:
+
+| About says | Meaning | Fix |
+|---|---|---|
+| Web build *differs from the server* | The page and the server come from different builds, usually a server still running the old install | Restart the server (the page shows this platform's command) |
+| Schema *stale* | The store was written by an older schema | `agent-lens ingest --full` |
+| Detector or Classifier *data is older* | Findings or categories were made by older rules | `agent-lens metrics` (it reruns both over the existing store, without rereading the archive) |
+
+None of these fixes touch triage (`triage.db`): finding statuses and notes survive.
+
 ## Configuration
 
 Agent Lens works without a config file and collects `~/.claude`. Run `agent-lens config` to print

@@ -49,6 +49,15 @@ const LAUNCHD_SERVER_LABEL = "org.agent-lens.server";
 const WINDOWS_COLLECTOR_PREFIX = "AgentLens\\Collect";
 const WINDOWS_SERVER_TASK = "AgentLens\\Server";
 
+/** The command that restarts the server service `service install` sets up on this platform, or null
+ *  where there is none. Shown by the About page when the UI and server builds disagree. */
+export function serverRestartCommand(platform: NodeJS.Platform = process.platform): string | null {
+  if (platform === "linux") return `systemctl --user restart ${SYSTEMD_SERVER_SERVICE}`;
+  if (platform === "darwin") return `launchctl kickstart -k gui/$(id -u)/${LAUNCHD_SERVER_LABEL}`;
+  if (platform === "win32") return `schtasks /End /TN "${WINDOWS_SERVER_TASK}" & schtasks /Run /TN "${WINDOWS_SERVER_TASK}"`;
+  return null;
+}
+
 export type ServiceTarget = "collector" | "server";
 
 const UNINSTALLED_MSG = "agent-lens service: uninstalled (archive untouched)";

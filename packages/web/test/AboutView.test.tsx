@@ -35,7 +35,7 @@ const base: AboutResponse = {
     db: { path: "/home/u/.local/share/agent-lens/agent-lens.db", origin: "env" },
     triage_db: { path: "/home/u/.local/share/agent-lens/triage.db", origin: "fixed" },
   },
-  server: { host: "127.0.0.1", port: 4477, loopback_only: true },
+  server: { host: "127.0.0.1", host_origin: "default", port: 4477, loopback_only: true, restart_command: "systemctl --user restart agent-lens-server.service" },
   retention: { versions_keep_days: 90, origin: "default" },
   pricing: { origin: "default", models: 12, applied: [], invalid: [], unpriced: [] },
   sources: [{ label: "personal", agent: "claude-code", config_dir: "/home/u/.claude" }],
@@ -44,12 +44,13 @@ const base: AboutResponse = {
 
 async function renderAbout(patch: Partial<AboutResponse> = {}) {
   api.mockResolvedValue({ ...base, ...patch });
-  render(
+  const view = render(
     <MemoryRouter>
       <AboutView />
     </MemoryRouter>,
   );
   await waitFor(() => expect(screen.getByText("Versions")).toBeTruthy());
+  return view;
 }
 
 beforeEach(() => {
@@ -86,6 +87,13 @@ describe("AboutView", () => {
   it("warns when the UI build differs from the server", async () => {
     await renderAbout({ versions: { ...base.versions, app: "v1.0.0-other" } });
     expect(screen.getByText(/differs from the server/i)).toBeTruthy();
+    // The fix, not just the diagnosis: this platform's restart command.
+    expect(screen.getByText("systemctl --user restart agent-lens-server.service")).toBeTruthy();
+  });
+
+  it("still says how to restart where there is no installed service", async () => {
+    await renderAbout({ versions: { ...base.versions, app: "v1.0.0-other" }, server: { ...base.server, restart_command: null } });
+    expect(screen.getByText("agent-lens serve")).toBeTruthy();
   });
 
   it("flags a stale schema and names the fix", async () => {
@@ -95,9 +103,30 @@ describe("AboutView", () => {
   });
 
   it("flags a non-loopback bind as the exposure it is", async () => {
-    await renderAbout({ server: { host: "0.0.0.0", port: 4477, loopback_only: false } });
+    await renderAbout({ server: { ...base.server, host: "0.0.0.0", host_origin: "env", loopback_only: false } });
     expect(screen.getByText(/non-loopback bind/i)).toBeTruthy();
     expect(screen.getByText(/unauthenticated/i)).toBeTruthy();
+  });
+
+  it("names the setting to remove to undo a non-loopback bind, by where it came from", async () => {
+    for (const [origin, fix] of [["env", "AGENT_LENS_HOST"], ["flag", "--host"], ["file", "server.host"]] as const) {
+      const { unmount } = await renderAbout({ server: { ...base.server, host: "0.0.0.0", host_origin: origin, loopback_only: false } });
+      expect(screen.getByText(fix)).toBeTruthy();
+      expect(screen.getByText("AGENT_LENS_ALLOW_NONLOCAL")).toBeTruthy();
+      unmount();
+    }
+  });
+
+  it("points a stale detector at agent-lens metrics, not a full rebuild", async () => {
+    await renderAbout({ versions: { ...base.versions, detector: { expected: 9, in_data: [8], stale: true } } });
+    expect(screen.getByText(/Stored security findings came from v8/)).toBeTruthy();
+    expect(screen.getByText("agent-lens metrics")).toBeTruthy();
+    expect(screen.queryByText("agent-lens ingest --full")).toBeNull();
+  });
+
+  it("says where to fix a malformed price override", async () => {
+    await renderAbout({ pricing: { ...base.pricing, invalid: ["claude-x"] } });
+    expect(screen.getByText(/config\s+file listed under Paths/)).toBeTruthy();
   });
 
   it("says so when no config file is in use, rather than showing a blank", async () => {

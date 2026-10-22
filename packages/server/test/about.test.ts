@@ -13,12 +13,13 @@
  */
 import { describe, it, expect } from "vitest";
 import { DatabaseSync } from "node:sqlite";
-import { PRICE_TABLE, resolvePricing, SCHEMA_SQL, usePricing } from "@agent-lens/core";
+import { PRICE_TABLE, resolvePricing, SCHEMA_SQL, serverRestartCommand, usePricing, type ConfigOrigin } from "@agent-lens/core";
 import { addEvent, addTokens, appFor, freshDb, seedBasic } from "./helpers/seed.js";
 
 const CTX = {
   db: { path: "/tmp/nowhere/custom.db", origin: "flag" as const },
   host: "127.0.0.1",
+  hostOrigin: "default" as ConfigOrigin,
   port: 4477,
   loopbackOnly: true,
   repoRoot: null,
@@ -61,12 +62,19 @@ describe("about: reports the startup facts, not a re-resolution", () => {
 
   it("echoes the server binding", async () => {
     const body = (await getAbout(seedBasic())).json();
-    expect(body.server).toEqual({ host: "127.0.0.1", port: 4477, loopback_only: true });
+    expect(body.server).toEqual({
+      host: "127.0.0.1",
+      host_origin: "default",
+      port: 4477,
+      loopback_only: true,
+      restart_command: serverRestartCommand(),
+    });
   });
 
   it("reports a non-loopback bind honestly", async () => {
-    const body = (await getAbout(seedBasic(), { ...CTX, host: "0.0.0.0", loopbackOnly: false })).json();
-    expect(body.server).toMatchObject({ host: "0.0.0.0", loopback_only: false });
+    const body = (await getAbout(seedBasic(), { ...CTX, host: "0.0.0.0", hostOrigin: "env", loopbackOnly: false })).json();
+    // The origin is what lets the page name the setting to remove.
+    expect(body.server).toMatchObject({ host: "0.0.0.0", host_origin: "env", loopback_only: false });
   });
 });
 

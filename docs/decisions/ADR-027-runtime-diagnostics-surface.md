@@ -150,6 +150,15 @@ web mirrors that. Changing configuration remains a CLI/env/file operation.
   tolerate that, which is why provenance is a sibling field rather than something to infer from the
   string's shape.
 
+## Amendment (2026-10): every warning names its fix
+
+Each About warning now says what to run or change, not only what is wrong. That needed two
+additive fields on `server` in `/api/about`: `host_origin` (so a non-loopback bind can name the
+setting to remove) and `restart_command` (the platform's restart for the service `service install`
+creates, from `serverRestartCommand` in core; null where there is none). A stale detector now points
+at `agent-lens metrics` instead of `ingest --full`: metrics reruns detection over every session and
+replaces the findings, without rereading the archive. `/api/about` is still not snapshotted.
+
 ## Alternatives considered
 
 - **Stamp the version at build time** (tsup/Vite `define`). Rejected: `release.yml` builds before

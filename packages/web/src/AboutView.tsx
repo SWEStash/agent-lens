@@ -18,6 +18,32 @@ function bytes(n: number | null): string {
   return n == null ? "unknown" : fmtBytes(n);
 }
 
+/** What to remove to undo a non-loopback bind, by where the host came from. */
+function bindFix(origin: AboutResponse["server"]["host_origin"]): React.ReactNode {
+  switch (origin) {
+    case "flag":
+      return (
+        <>
+          drop <code>--host</code> from the <code>agent-lens serve</code> command
+        </>
+      );
+    case "env":
+      return (
+        <>
+          unset <code>AGENT_LENS_HOST</code>
+        </>
+      );
+    case "file":
+      return (
+        <>
+          remove <code>server.host</code> from the config file
+        </>
+      );
+    default:
+      return <>remove the host setting</>;
+  }
+}
+
 function Row({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <tr>
@@ -117,8 +143,15 @@ export default function AboutView() {
                       </span>
                       <div className="muted">
                         The page you are looking at was built from a different revision than the server
-                        serving it — usually a service still running an older install. Restart it, or
-                        rebuild the UI.
+                        serving it — usually a service still running an older install. Restart the server
+                        {a.server.restart_command ? (
+                          <>
+                            {" "}
+                            service with <code>{a.server.restart_command}</code>
+                          </>
+                        ) : null}{" "}
+                        (or stop and rerun <code>agent-lens serve</code> if you started it by hand). In a
+                        source checkout, run <code>pnpm build</code> first.
                       </div>
                     </Row>
                   )}
@@ -139,7 +172,7 @@ export default function AboutView() {
                     label="Detector"
                     v={a.versions.detector}
                     what="security findings"
-                    rerun="agent-lens ingest --full"
+                    rerun="agent-lens metrics"
                   />
                   <Engine
                     label="Classifier"
@@ -182,7 +215,9 @@ export default function AboutView() {
                       <>
                         <span className="warn-tag">non-loopback bind</span>
                         <div className="muted">
-                          Reachable from other machines on this network. The API is unauthenticated.
+                          Reachable from other machines on this network. The API is unauthenticated. To
+                          go back to loopback only, {bindFix(a.server.host_origin)} and unset{" "}
+                          <code>AGENT_LENS_ALLOW_NONLOCAL</code>, then restart the server.
                         </div>
                       </>
                     )}
@@ -243,7 +278,8 @@ export default function AboutView() {
                       ))}
                       <div className="muted">
                         Each entry needs numeric <code>input</code> and <code>output</code> rates. These
-                        kept their built-in rate.
+                        kept their built-in rate. Fix them in the <code>pricing</code> block of the config
+                        file listed under Paths.
                       </div>
                     </Row>
                   )}

@@ -114,7 +114,7 @@ cli
   });
 
 cli
-  .command("metrics", "Re-run classification over an already-ingested DB")
+  .command("metrics", "Re-run classification, security detection, error typing and file changes over an already-ingested DB")
   .option("--db <path>", "SQLite DB path (overrides AGENT_LENS_DB / config db)")
   .action((opts: { db?: string }) => {
     runMetrics(opts.db ? ["--db", opts.db] : []);
