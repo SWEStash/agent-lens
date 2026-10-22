@@ -214,7 +214,7 @@ function WorkflowRunDetail({ d }: { d: WorkflowDetail }) {
       ) : null}
 
       <div className="subagents">
-        <h2>Agents ({d.agents.length})</h2>
+        <h2 className="section-label">Agents ({d.agents.length})</h2>
         {d.agents.length === 0 ? (
           <div className="muted pad" role="status">No agent transcripts ingested for this run yet.</div>
         ) : (

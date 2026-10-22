@@ -78,7 +78,11 @@ export function useChartTokens() {
       labelStyle: { color: C.text },
       itemStyle: { color: C.text },
     };
-    return { C, TOKEN_COLORS, TIMELINE_COLORS, SEVERITY_COLORS, BURN_RAMP, PALETTE, axisProps, gridProps, tooltipStyle };
+    // Legend labels are muted on every chart, never the series colour: the swatch beside them carries
+    // the identity, and coloured text reads as emphasis the data does not mean.
+    const legendText = (value: ReactNode) => <span style={{ color: C.muted }}>{value}</span>;
+    const legendProps = { wrapperStyle: { fontSize: 12 }, formatter: legendText };
+    return { C, TOKEN_COLORS, TIMELINE_COLORS, SEVERITY_COLORS, BURN_RAMP, PALETTE, axisProps, gridProps, tooltipStyle, legendProps };
   }, [theme]);
 }
 

@@ -11,20 +11,11 @@
 import { useFetch } from "./useFetch";
 import { AsyncBoundary } from "./AsyncBoundary";
 import { BUILD_VERSION } from "./buildInfo";
+import { fmtBytes } from "./format";
 import type { AboutResponse, EngineVersion, PathInfo } from "./api";
 
-/** 1.2 GB / 903 MB / 12 kB — SI units, matching how disk sizes are reported elsewhere. */
 function bytes(n: number | null): string {
-  if (n == null) return "unknown";
-  if (n < 1000) return `${n} B`;
-  const units = ["kB", "MB", "GB", "TB"];
-  let v = n / 1000;
-  let i = 0;
-  while (v >= 1000 && i < units.length - 1) {
-    v /= 1000;
-    i++;
-  }
-  return `${v < 10 ? v.toFixed(1) : Math.round(v)} ${units[i]}`;
+  return n == null ? "unknown" : fmtBytes(n);
 }
 
 function Row({ label, children }: { label: string; children: React.ReactNode }) {
@@ -106,7 +97,7 @@ export default function AboutView() {
         {(a) => (
           <>
             <section>
-              <h2>Versions</h2>
+              <h2 className="section-label">Versions</h2>
               <table className="kv">
                 <tbody>
                   <Row label="Agent Lens">
@@ -161,7 +152,7 @@ export default function AboutView() {
             </section>
 
             <section>
-              <h2>Paths</h2>
+              <h2 className="section-label">Paths</h2>
               <table className="kv">
                 <tbody>
                   <Row label="Config file">
@@ -176,7 +167,7 @@ export default function AboutView() {
             </section>
 
             <section>
-              <h2>Server</h2>
+              <h2 className="section-label">Server</h2>
               <table className="kv">
                 <tbody>
                   <Row label="Bound to">
@@ -201,7 +192,7 @@ export default function AboutView() {
             </section>
 
             <section>
-              <h2>Retention</h2>
+              <h2 className="section-label">Retention</h2>
               <table className="kv">
                 <tbody>
                   <Row label="Keep .versions">
@@ -219,7 +210,7 @@ export default function AboutView() {
             </section>
 
             <section>
-              <h2>Pricing</h2>
+              <h2 className="section-label">Pricing</h2>
               <table className="kv">
                 <tbody>
                   <Row label="Models priced">
@@ -282,7 +273,7 @@ export default function AboutView() {
             </section>
 
             <section>
-              <h2>Sources</h2>
+              <h2 className="section-label">Sources</h2>
               {a.sources.length === 0 ? (
                 <p className="muted">No sources configured.</p>
               ) : (
@@ -299,7 +290,7 @@ export default function AboutView() {
             </section>
 
             <section>
-              <h2>Storage</h2>
+              <h2 className="section-label">Storage</h2>
               <table className="kv">
                 <tbody>
                   <Row label="Database">{bytes(a.storage.db_bytes)}</Row>

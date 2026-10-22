@@ -312,7 +312,9 @@ table.sessions { width: 100%; border-collapse: collapse; }
 .subagent-link { display: inline-block; font-size: 12px; margin: 0 0 4px 10px; }
 
 .subagents { margin: 0 0 18px; padding: 12px 14px; border: 1px solid var(--border); border-radius: 8px; }
-.subagents h2 { font-size: 13px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); margin: 0 0 8px; }
+/* The small uppercase muted heading over a section (subagents, dashboard strips, About). */
+.section-label { font-size: 13px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); }
+.subagents h2 { margin: 0 0 8px; }
 .subagents ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
 .subagents li { font-size: 13px; }
 
@@ -786,7 +788,7 @@ table.sessions { width: 100%; border-collapse: collapse; }
 .lat-chip {
   display: inline-flex; align-items: center; gap: 5px;
   background: none; border: 1px solid transparent; border-radius: 5px;
-  padding: 1px 5px; cursor: pointer; font: inherit; line-height: 1.4;
+  padding: 1px 5px; cursor: pointer; font: inherit; line-height: 1.4; color: var(--muted);
 }
 .lat-chip:hover { border-color: var(--border); }
 .lat-chip:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
@@ -812,7 +814,7 @@ table.sessions { width: 100%; border-collapse: collapse; }
    each gear sits next to what it customizes rather than in one ambiguous toolbar. */
 .dash-strip { margin-bottom: 18px; }
 .strip-head { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
-.strip-head h2 { font-size: 13px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); margin: 0; }
+.strip-head h2 { margin: 0; }
 .strip-actions { margin-left: auto; display: flex; align-items: center; gap: 8px; }
 /* Strip customizer menu: a visibility checkbox plus ↑↓ move buttons per row. */
 .strip-menu { min-width: 210px; }
@@ -1366,7 +1368,7 @@ tr.is-dismissed { opacity: 0.6; }
 .about h1 { margin-bottom: 4px; }
 .about > p.muted { margin-top: 0; }
 .about section { margin-top: 28px; }
-.about h2 { font-size: 14px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); margin-bottom: 8px; }
+.about h2 { margin-bottom: 8px; }
 table.kv { width: 100%; border-collapse: collapse; }
 table.kv th[scope="row"] {
   text-align: left;
@@ -1398,6 +1400,8 @@ table.kv .muted { font-size: 12px; margin-top: 4px; }
   padding: 1px 6px;
   white-space: nowrap;
 }
+/* Same amber pairing as the light .schema-banner. */
+:root[data-theme="light"] .warn-tag { color: #8a5a0f; background: #fbe9c8; }
 
 
 /* ---- Session timeline band (minimap under the classification row) -----------

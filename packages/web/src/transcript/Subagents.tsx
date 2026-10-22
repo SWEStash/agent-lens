@@ -11,7 +11,7 @@ export function SubagentPanel({ d }: { d: SessionDetail }) {
   const grouped = runs.length > 0;
   return (
     <div className="subagents">
-      <h2>Spawned subagents ({d.children.length})</h2>
+      <h2 className="section-label">Spawned subagents ({d.children.length})</h2>
       {runs.map((run) => {
         const kids = d.children.filter((c) => c.workflow_run_id === run.run_id);
         return (

@@ -195,7 +195,7 @@ export function DensityChart({
   bars: ReactNode;
   lines: ReactNode;
 }) {
-  const { C, axisProps, gridProps, tooltipStyle } = useChartTokens();
+  const { C, axisProps, gridProps, tooltipStyle, legendProps } = useChartTokens();
   const [ref, asBars] = useBarsFit(data.length);
   const common = (
     <>
@@ -203,7 +203,7 @@ export function DensityChart({
       <XAxis dataKey="bucket" {...axisProps} minTickGap={24} />
       <YAxis {...axisProps} width={Y_AXIS_W} allowDecimals={!integer} label={unitLabel(yLabel, C.muted)} />
       <Tooltip {...tooltipStyle} />
-      <Legend wrapperStyle={{ fontSize: 12 }} />
+      <Legend {...legendProps} />
     </>
   );
   const Dense = dense === "line" ? LineChart : AreaChart;

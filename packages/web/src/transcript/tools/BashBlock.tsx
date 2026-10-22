@@ -1,6 +1,6 @@
 import { useId, useState } from "react";
 import type { ToolCall } from "../../api";
-import { fmtDuration } from "../../format";
+import { fmtBytes, fmtDuration } from "../../format";
 import { prettyJson } from "../../jsonish";
 import CopyButton from "../../CopyButton";
 import { splitShellCommand } from "../shell";
@@ -64,7 +64,7 @@ export function BashBlock({ t, bash }: { t: ToolCall; bash: BashInput }) {
                 aria-expanded={showFull}
                 onClick={() => setShowFull((s) => !s)}
               >
-                {showFull ? "Hide" : "Show"} full result ({(t.full_result.bytes / 1024).toFixed(1)} KB)
+                {showFull ? "Hide" : "Show"} full result ({fmtBytes(t.full_result.bytes)})
               </button>
               {showFull && (
                 <div className="code-block">

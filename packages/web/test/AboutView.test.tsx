@@ -70,9 +70,9 @@ describe("AboutView", () => {
     expect(screen.getByText("env")).toBeTruthy(); // the db path came from an env var
   });
 
-  it("reports ingested bytes in SI units, not the archive's size on disk", async () => {
+  it("reports ingested bytes in binary units, not the archive's size on disk", async () => {
     await renderAbout();
-    expect(screen.getByText(/903 MB/)).toBeTruthy();
+    expect(screen.getByText(/861 MB/)).toBeTruthy(); // 903,337,568 B / 1024²
     expect(screen.getByText(/7,522 files/)).toBeTruthy();
     // The distinction is the whole reason the number is trustworthy — it must be stated, not implied.
     expect(screen.getByText(/not the archive folder/i)).toBeTruthy();

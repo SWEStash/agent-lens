@@ -120,7 +120,7 @@ export default function Dashboard() {
 
           <section className="dash-strip">
             <div className="strip-head">
-              <h2>Metrics</h2>
+              <h2 className="section-label">Metrics</h2>
               <div className="strip-actions">
                 <button
                   type="button"
@@ -145,7 +145,7 @@ export default function Dashboard() {
 
           <section className="dash-strip">
             <div className="strip-head">
-              <h2>Charts</h2>
+              <h2 className="section-label">Charts</h2>
               <div className="strip-actions">
                 <StripCustomizer
                   label="Charts"

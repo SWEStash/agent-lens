@@ -24,10 +24,6 @@ const TOP_MODELS = 4;
  */
 const LOG_SCALE_RATIO = 100;
 
-/** Legend labels wear the text token, never the series colour — the swatch beside them carries the
- *  identity, and coloured text reads as emphasis the data does not mean. */
-const mutedLegend = (color: string) => (value: React.ReactNode) => <span style={{ color }}>{value}</span>;
-
 /**
  * Weekday × hour activity. Recharts has no heatmap, so this is a plain CSS grid of cells — 168 of
  * them, well inside what the DOM handles, and far simpler than bending a scatter into shape.
@@ -199,7 +195,7 @@ export function BurnHeatmap({ hidden, time, range }: ChartProps) {
  *  summed: they have genuinely different profiles, and a combined line hides the only thing worth
  *  seeing. */
 export function BurnBySource({ hidden, ts, time }: ChartProps) {
-  const { C, PALETTE, axisProps, gridProps, tooltipStyle } = useChartTokens();
+  const { C, PALETTE, axisProps, gridProps, tooltipStyle, legendProps } = useChartTokens();
   const zone = resolveZone();
   // Follow the bucket the dashboard actually resolved, so this card and "Tokens over time" always
   // agree on granularity. Before `ts` lands there is nothing to follow, so fall back to weeks.
@@ -252,7 +248,7 @@ export function BurnBySource({ hidden, ts, time }: ChartProps) {
             <XAxis dataKey="bucket" {...axisProps} minTickGap={24} />
             <YAxis {...axisProps} tickFormatter={(v) => fmtTokens(v as number)} width={48} label={unitLabel("work tokens", C.muted)} />
             <Tooltip {...tooltipStyle} formatter={(v: number | string, n: string) => [`${fmtTokens(Number(v))} tokens`, n]} />
-            {sources.length > 1 && <Legend wrapperStyle={{ fontSize: 12 }} formatter={mutedLegend(C.muted)} />}
+            {sources.length > 1 && <Legend {...legendProps} />}
             {sources.map((src, i) => (
               <Line key={src} type="monotone" dataKey={src} stroke={PALETTE[i % PALETTE.length]} strokeWidth={2} dot={false} />
             ))}
@@ -346,7 +342,7 @@ function LatencyLegend({
  * story, and a mean hides it behind the median.
  */
 export function ModelLatency({ hidden, time }: ChartProps) {
-  const { C, PALETTE, axisProps, gridProps, tooltipStyle } = useChartTokens();
+  const { C, PALETTE, axisProps, gridProps, tooltipStyle, legendProps } = useChartTokens();
   const bucket = time?.latency.bucket ?? "week";
   // Explicit choices only. The default (top N by volume) depends on data that arrives after mount, so
   // seeding a hidden-set from it would either race the fetch or freeze whatever the first payload
@@ -550,7 +546,7 @@ export function ModelLatency({ hidden, time }: ChartProps) {
  * imply that it was.
  */
 export function ReviewLatency({ hidden, time }: ChartProps) {
-  const { C, axisProps, gridProps, tooltipStyle } = useChartTokens();
+  const { C, axisProps, gridProps, tooltipStyle, legendProps } = useChartTokens();
   const r = time?.review;
   const pct = (part: number, n: number) => (n ? Math.round((part / n) * 1000) / 10 : 0);
   const data = r
@@ -600,7 +596,7 @@ export function ReviewLatency({ hidden, time }: ChartProps) {
             <XAxis dataKey="band" {...axisProps} />
             <YAxis {...axisProps} width={40} tickFormatter={(v) => `${v}%`} label={unitLabel("% of turns", C.muted)} />
             <Tooltip {...tooltipStyle} formatter={(v: number | string, n: string) => [`${v}%`, n]} />
-            <Legend wrapperStyle={{ fontSize: 12 }} formatter={mutedLegend(C.muted)} />
+            <Legend {...legendProps} />
             <Bar dataKey="wrote" name="turn wrote files" fill={C.accent} radius={[4, 4, 0, 0]} />
             <Bar dataKey="none" name="turn wrote nothing" fill={C.muted} radius={[4, 4, 0, 0]} />
           </BarChart>

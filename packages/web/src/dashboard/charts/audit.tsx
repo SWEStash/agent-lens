@@ -93,7 +93,7 @@ export function EditReliability({ hidden, audit }: ChartProps) {
  * perfect week that simply had no plans in it.
  */
 export function PlanRejections({ hidden, audit }: ChartProps) {
-  const { C, axisProps, gridProps, tooltipStyle } = useChartTokens();
+  const { C, axisProps, gridProps, tooltipStyle, legendProps } = useChartTokens();
   const data = (audit?.plan_rejections ?? []).map((r) => ({
     bucket: r.bucket,
     plans: r.plan_calls ? pct(r.plan_rejected, r.plan_calls) : null,
@@ -139,7 +139,7 @@ export function PlanRejections({ hidden, audit }: ChartProps) {
           <XAxis dataKey="bucket" {...axisProps} minTickGap={24} />
           <YAxis {...axisProps} width={Y_AXIS_W} tickFormatter={(v: number) => `${v}%`} label={unitLabel("rejected", C.muted)} />
           <Tooltip {...tooltipStyle} formatter={(v: number) => fmtPct(v)} />
-          <Legend wrapperStyle={{ fontSize: 12 }} />
+          <Legend {...legendProps} />
           <Line type="monotone" dataKey="plans" name="plans" stroke={C.violet} dot={false} strokeWidth={2} connectNulls={false} />
           <Line type="monotone" dataKey="questions" name="questions" stroke={C.accent} dot={false} strokeWidth={2} connectNulls={false} />
         </LineChart>
@@ -155,7 +155,7 @@ export function PlanRejections({ hidden, audit }: ChartProps) {
  * once, while a large share of all edits land on files that were already edited many times.
  */
 export function FileRework({ hidden, audit }: ChartProps) {
-  const { C, axisProps, gridProps, tooltipStyle } = useChartTokens();
+  const { C, axisProps, gridProps, tooltipStyle, legendProps } = useChartTokens();
   const data = audit?.file_rework ?? [];
   return (
     <ChartCard
@@ -191,7 +191,7 @@ export function FileRework({ hidden, audit }: ChartProps) {
           <XAxis dataKey="band" {...axisProps} />
           <YAxis {...axisProps} width={44} allowDecimals={false} label={unitLabel("count", C.muted)} />
           <Tooltip {...tooltipStyle} />
-          <Legend wrapperStyle={{ fontSize: 12 }} />
+          <Legend {...legendProps} />
           <Bar dataKey="pairs" name="file/session pairs" fill={C.teal} />
           <Bar dataKey="changes" name="edits they account for" fill={C.gold} />
         </BarChart>
