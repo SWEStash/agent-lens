@@ -1,5 +1,5 @@
 import { Link } from "react-router-dom";
-import { type FileSummary, type Project, type Source } from "./api";
+import { type FileSort, type FileSummary, type Project, type Source } from "./api";
 import { useFetch, useLookup } from "./useFetch";
 import { useQueryState } from "./useQueryState";
 import { ErrorAlert, Loading } from "./AsyncBoundary";
@@ -11,9 +11,6 @@ import { SortHeader, type SortDir } from "./sort";
 const PAGE = 50;
 /** Identity-stable placeholder so the table renders empty (not crashing) before the first load. */
 const EMPTY_PAGE = { total: 0, files: [] as FileSummary[] };
-
-type FileSortKey = "path" | "sessions" | "changes" | "last_ts";
-
 
 /** A file's display path: project-relative when it lives under the project root, absolute otherwise
  * (out-of-project writes are real and must stay visibly absolute). Full path goes in the title attr. */
@@ -52,11 +49,10 @@ export default function FilesView() {
   const { data, loading, error } = useFetch<{ total: number; files: FileSummary[] }>("/files?" + qs.toString());
   const { total, files } = data ?? EMPTY_PAGE;
 
-
   // Sort is server-side (whole list, not just the page) and lives in the URL, like the sessions list.
-  const sortKey = get("sort", "last_ts") as FileSortKey;
+  const sortKey = get("sort", "last_ts") as FileSort;
   const sortDir = (get("dir") === "asc" ? "asc" : "desc") as SortDir;
-  function onSort(key: FileSortKey, defaultDir: SortDir) {
+  function onSort(key: FileSort, defaultDir: SortDir) {
     setParam({ sort: key, dir: sortKey === key ? (sortDir === "asc" ? "desc" : "asc") : defaultDir });
   }
 

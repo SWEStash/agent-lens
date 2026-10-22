@@ -37,8 +37,12 @@ import type {
   WorkflowRun,
   WorkflowRunResult,
   FindingsPage,
+  SessionSort,
+  FileSort,
+  FindingSort,
+  FindingStatus,
 } from "@agent-lens/contracts";
-import { tableExists, canonModelSql, queryAll, queryGet, orderBy, pushGrouped, pushDateRange, metaJoin, metaProjection, placeholders, whereClause, type SortDir } from "./sql-util.js";
+import { tableExists, canonModelSql, queryAll, queryGet, orderBy, pushGrouped, pushDateRange, metaJoin, metaProjection, placeholders, whereClause, enumValues, type SortDir } from "./sql-util.js";
 import type {
   CategoryRow,
   ToolCallProjection,
@@ -63,12 +67,15 @@ import { sessionUsage, usageBySession, splitOf, tokensOf, costOf, unpricedOf } f
 
 export type DB = DatabaseSync;
 
-// The values each list endpoint accepts, declared once: app.ts parses the query against these, and
-// the filter types below are derived from them, so a new key cannot be accepted by one and not the other.
-export const SESSION_SORTS = ["started", "title", "turns", "tokens", "cost", "duration", "errors", "security"] as const;
-export const FILE_SORTS = ["last_ts", "first_ts", "changes", "sessions", "path"] as const;
-export const FINDING_SORTS = ["severity", "session", "rule", "category", "time"] as const;
-export const FINDING_STATUSES = ["open", "dismissed", "muted", "all"] as const;
+// The values each list endpoint accepts. The unions live in @agent-lens/contracts so the web views
+// share them; these are the runtime allowlists app.ts parses the query against, checked against the
+// unions in both directions by enumValues.
+export const SESSION_SORTS = enumValues<SessionSort>({
+  started: true, title: true, turns: true, tokens: true, cost: true, duration: true, errors: true, security: true,
+});
+export const FILE_SORTS = enumValues<FileSort>({ last_ts: true, first_ts: true, changes: true, sessions: true, path: true });
+export const FINDING_SORTS = enumValues<FindingSort>({ severity: true, session: true, rule: true, category: true, time: true });
+export const FINDING_STATUSES = enumValues<FindingStatus>({ open: true, dismissed: true, muted: true, all: true });
 
 /** A session's display title: its AI title, else its slug. `||`, not `??` — an empty ai_title falls
  *  through too, matching the SQL sort key `COALESCE(NULLIF(s.ai_title, ''), s.slug)`. */
@@ -126,7 +133,7 @@ export interface SessionFilters {
   /** Keep only sessions that have ≥1 errored tool call of one of these error types. */
   errorType?: string[];
   /** Column to sort the whole filtered list by (before pagination). Defaults to "started". */
-  sort?: (typeof SESSION_SORTS)[number];
+  sort?: SessionSort;
   dir?: SortDir;
   limit: number;
   offset: number;
@@ -932,7 +939,7 @@ export interface FileFilters {
   q?: string; // path substring
   source?: string;
   project?: string;
-  sort?: (typeof FILE_SORTS)[number];
+  sort?: FileSort;
   dir?: SortDir;
   limit?: number;
   offset?: number;
@@ -1111,9 +1118,9 @@ export interface FindingFilters {
   from?: string;
   to?: string;
   /** open (default; excludes dismissed + muted) | dismissed | muted | all. */
-  status?: (typeof FINDING_STATUSES)[number];
+  status?: FindingStatus;
   /** Sort the whole filtered list before pagination. Defaults to "severity" (most-severe first). */
-  sort?: (typeof FINDING_SORTS)[number];
+  sort?: FindingSort;
   dir?: SortDir;
   limit: number;
   offset: number;

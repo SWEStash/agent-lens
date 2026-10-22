@@ -1,5 +1,6 @@
 /** Shared read-only SQL helpers for the server. */
 import type { SQLInputValue } from "node:sqlite";
+import type { SortDir } from "@agent-lens/contracts";
 import type { DB } from "./db.js";
 
 /** Bound parameters, as `node:sqlite` wants them. Call sites pass `unknown` and cast through here. */
@@ -82,9 +83,18 @@ export function metaProjection(hasMeta: boolean): string {
     : ", NULL AS agent_type, NULL AS agent_description, NULL AS spawn_depth";
 }
 
+/**
+ * The runtime allowlist for a request enum declared in `@agent-lens/contracts`. Taking a record keyed
+ * by the union, rather than an array, makes the compiler check both directions: a value missing from
+ * the record and a value the union does not have are each a type error.
+ */
+export function enumValues<U extends string>(all: Record<U, true>): readonly U[] {
+  return Object.keys(all) as U[];
+}
+
+export type { SortDir };
 /** The two sort directions a list endpoint accepts. */
-export const SORT_DIRS = ["asc", "desc"] as const;
-export type SortDir = (typeof SORT_DIRS)[number];
+export const SORT_DIRS = enumValues<SortDir>({ asc: true, desc: true });
 
 /** `raw` when it is one of `values`, else undefined — parsing a query-string enum against its allowlist. */
 export function pickEnum<T extends string>(values: readonly T[], raw: unknown): T | undefined {

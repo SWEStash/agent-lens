@@ -1,6 +1,6 @@
 import { Fragment, useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
-import { type Project, type SessionSummary, type Source } from "./api";
+import { type Project, type SessionSort, type SessionSummary, type Source } from "./api";
 import { useFetch, useLookup } from "./useFetch";
 import { useQueryState } from "./useQueryState";
 import { ErrorAlert, Loading } from "./AsyncBoundary";
@@ -12,9 +12,6 @@ import { Pager } from "./Pager";
 import { SortHeader, type SortDir } from "./sort";
 import { loadPrefLocal, fetchPref, savePref } from "./prefs";
 
-type SessionSortKey = "title" | "turns" | "tokens" | "cost" | "duration" | "started" | "errors" | "security";
-
-
 /** A sessions-table column. `toggleable` columns can be hidden via the "Columns" customizer and their
  * visibility persists in localStorage; non-toggleable ones (Session) always render. `sortKey` (when
  * set) makes the header a server-side sort control. Defined once, module-level, so the registry is the
@@ -24,7 +21,7 @@ interface ColumnDef {
   label: string;
   toggleable: boolean;
   defaultVisible: boolean;
-  sortKey?: SessionSortKey;
+  sortKey?: SessionSort;
   sortDefaultDir?: SortDir;
   thClassName?: string;
   /** `q` is the list's active search term, so a cell can hand it on to the page it links to. */
@@ -180,7 +177,6 @@ const ERROR_TYPE_OPTIONS: Array<{ value: string; label: string }> = [
   { value: "guardrail-blocked", label: "guardrail blocked" },
 ];
 
-
 /** Compact gear control that lives in the last header cell of the table; opens a checkbox menu to
  * show/hide the toggleable columns. Uses a native <details> so open/close and keyboard/focus behaviour
  * come for free. */
@@ -230,7 +226,6 @@ export default function SessionsView() {
   const { data, loading, error } = useFetch<{ total: number; sessions: SessionSummary[] }>("/sessions?" + qs.toString());
   const { total, sessions } = data ?? EMPTY_PAGE;
 
-
   function toggleColumn(id: string, on: boolean) {
     colsTouched.current = true;
     setVisibleCols((prev) => {
@@ -244,9 +239,9 @@ export default function SessionsView() {
 
   // Sort is server-side (whole list, not just the page) and lives in the URL. Clicking the active
   // column flips direction; a new column adopts its default direction. Changing sort resets to page 1.
-  const sortKey = get("sort", "started") as SessionSortKey;
+  const sortKey = get("sort", "started") as SessionSort;
   const sortDir = (get("dir") === "asc" ? "asc" : "desc") as SortDir;
-  function onSort(key: SessionSortKey, defaultDir: SortDir) {
+  function onSort(key: SessionSort, defaultDir: SortDir) {
     setParam({ sort: key, dir: sortKey === key ? (sortDir === "asc" ? "desc" : "asc") : defaultDir });
   }
 

@@ -1,7 +1,8 @@
 import { useState } from "react";
+import type { SortDir } from "./api";
 
-/** Sort direction for a table column. */
-export type SortDir = "asc" | "desc";
+/** Sort direction for a table column (shared with the server's `?dir=`). */
+export type { SortDir };
 
 /** A comparable value pulled from a row. `null`/`undefined` always sort last, regardless of dir. */
 export type SortValue = string | number | null | undefined;

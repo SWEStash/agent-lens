@@ -1,7 +1,8 @@
 /**
  * The HTTP **response** shapes: what `@agent-lens/server` returns and what the `web` SPA consumes
- * (ADR-026). Shared so a renamed field is a compile error on both sides instead of a runtime
- * `undefined` on one.
+ * (ADR-026), plus the enum values the list endpoints accept in their query strings. Shared so a
+ * renamed field or sort key is a compile error on both sides instead of a runtime `undefined` (or a
+ * silently ignored `?sort=`) on one.
  *
  * These restate rows rather than wrap them — endpoints join, roll up and nest, so a response is
  * rarely just `Row[]`. `SessionDetailData` is the one exception: `getSession` does `SELECT s.*`, so
@@ -157,6 +158,23 @@ export interface TokenSplit {
 
 // Severity comes from the row half of this package (node-free) so web and server can't drift.
 export type { Severity };
+
+// ---- Request enums -------------------------------------------------------
+// The values a list endpoint accepts for an enum query parameter. Types only: the server keeps the
+// runtime allowlists and checks them against these unions (`enumValues` in server/sql-util.ts), so a
+// key added here and not there, or there and not here, fails typecheck.
+
+export type SortDir = "asc" | "desc";
+/** GET /api/sessions `?sort=`. */
+export type SessionSort = "started" | "title" | "turns" | "tokens" | "cost" | "duration" | "errors" | "security";
+/** GET /api/files `?sort=`. */
+export type FileSort = "last_ts" | "first_ts" | "changes" | "sessions" | "path";
+/** GET /api/security/findings `?sort=`. */
+export type FindingSort = "severity" | "session" | "rule" | "category" | "time";
+/** GET /api/security/findings `?status=`: open (excludes dismissed and muted) | dismissed | muted | all. */
+export type FindingStatus = "open" | "dismissed" | "muted" | "all";
+/** POST /api/security/mute and /unmute `scope`. */
+export type MuteScope = "global" | "project" | "source";
 
 // ---- Filter dropdowns ---------------------------------------------------
 
