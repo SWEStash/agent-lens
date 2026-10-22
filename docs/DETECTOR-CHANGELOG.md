@@ -6,6 +6,17 @@ version (mirrors `CLASSIFIER_VERSION`); the value is recorded on every row and i
 `signals_json`. Finding ids are independent of this version, so a bump does not
 invalidate user triage state.
 
+## v9 — one shell-write parser
+
+- **`exec_generated_script`** now reads its write targets with `parseShellWrites`
+  (`shellwrites.ts`), the parser file provenance uses, instead of its own redirect/tee
+  regex. A `>` inside a heredoc body is document text, not a write, so prose and code
+  samples no longer name fake script files. A quoted target is read whole (`"my
+  script.sh"`, not `my`). `~/` targets still count (the parser's `keepHome` option), and
+  `sed -i` edits are left out (`sed: false`), as before.
+- Measured on a real archive of ~63k Bash commands: the 28 true detections are unchanged,
+  20 false positives are gone, and nothing new is flagged.
+
 ## v8 — obfuscation & traversal coverage
 
 Closes two coverage gaps (SA10 obfuscated content, SA08 path traversal) from the

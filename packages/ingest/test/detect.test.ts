@@ -346,6 +346,23 @@ describe("privilege / guardrail-bypass rules (OWASP LLM06)", () => {
     expect(hasRule(`echo "sudo rm -rf /" > notes.txt; cat notes.txt`, "privilege.exec_generated_script")).toBe(false);
   });
 
+  it("reads exec_generated_script targets with the shared shell-write parser (v9)", () => {
+    const file = (cmd: string) => {
+      const f = bashFindings(cmd).find((x) => x.rule_id === "privilege.exec_generated_script");
+      return f ? (JSON.parse(f.signals_json).modifiers.script_file as string) : null;
+    };
+    // `~/` targets still count: the match is textual, no home dir needed.
+    expect(file(`echo "x" > ~/run.sh; bash ~/run.sh`)).toBe("~/run.sh");
+    // A quoted target is read whole, not cut at the first space.
+    expect(file(`echo "x" > "my script.sh"; bash "my script.sh"`)).toBe("my script.sh");
+    // A `>` inside a heredoc body is document text, not a write.
+    expect(file("cat > notes.md <<'EOF'\nrun: echo x > build.sh\nEOF\nsh build.sh")).toBeNull();
+    // Editing an existing script in place and running it is everyday work, not a generated script.
+    expect(file(`sed -i 's/a/b/' build.sh && ./build.sh`)).toBeNull();
+    // Device sinks are never targets.
+    expect(file(`echo x > /dev/stdout; sh /dev/stdout`)).toBeNull();
+  });
+
   const decodeExec = (cmd: string) => bashFindings(cmd).find((f) => f.rule_id === "obfuscated.decode_exec");
 
   it("flags decode-then-execute pipelines (SA10 obfuscated content, v8)", () => {

@@ -96,3 +96,17 @@ describe("parseShellWrites — cwd", () => {
     expect(paths("cd /home/me/proj && echo x > out.txt")).toEqual(["out.txt"]);
   });
 });
+
+describe("parseShellWrites — options", () => {
+  it("drops ~/ targets by default and keeps them with keepHome", () => {
+    expect(paths("echo x > ~/a.sh")).toEqual([]);
+    expect(parseShellWrites("echo x > ~/a.sh", { keepHome: true }).writes.map((w) => w.path)).toEqual(["~/a.sh"]);
+    // Only a leading ~/ is a plain home path; anything else still needs the shell to expand it.
+    expect(parseShellWrites("echo x > ~bob/a.sh", { keepHome: true }).writes).toEqual([]);
+  });
+
+  it("leaves out sed -i edits with sed: false", () => {
+    expect(paths("sed -i 's/a/b/' /proj/x.ts")).toEqual(["/proj/x.ts"]);
+    expect(parseShellWrites("sed -i 's/a/b/' /proj/x.ts", { sed: false }).writes).toEqual([]);
+  });
+});

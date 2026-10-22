@@ -25,6 +25,15 @@ export interface ShellWrite {
   linesAdded: number | null;
 }
 
+export interface ShellWriteOptions {
+  /** Keep `~/…` targets. File provenance can't resolve the home dir, so it drops them; the detector
+   * only matches the target text against a later run of the same file, so it keeps them. */
+  keepHome?: boolean;
+  /** Count `sed -i` edits as writes (default true). The detector leaves them out: editing an existing
+   * script and running it is everyday work, not a generated script. */
+  sed?: boolean;
+}
+
 export interface ShellWriteParse {
   /** Absolute directory from a leading `cd`, when the command starts by changing into one. */
   cwd: string | null;
@@ -57,9 +66,10 @@ function target(m: RegExpMatchArray, first: number): string | null {
  * (variables, globs, substitutions, `~`) or that is not a real file (device sinks, bare fd dups)
  * is dropped rather than guessed at.
  */
-function usable(path: string | null): path is string {
+function usable(path: string | null, keepHome = false): path is string {
   if (!path) return false;
-  if (/[$*?`~]/.test(path)) return false;
+  if (/[$*?`]/.test(path)) return false;
+  if (path.includes("~") && !(keepHome && /^~\/[^~]*$/.test(path))) return false;
   if (path.startsWith("&")) return false;
   if (path === "/dev/null" || path.startsWith("/dev/")) return false;
   return true;
@@ -76,7 +86,7 @@ function bodyLines(body: string): number {
  * writes those heredocs performed. Bodies are documents, not shell — a `>` inside one is prose,
  * and scanning it would invent file changes out of example commands.
  */
-function stripHeredocs(command: string): { scan: string; writes: Array<{ at: number; write: ShellWrite }> } {
+function stripHeredocs(command: string, keepHome: boolean): { scan: string; writes: Array<{ at: number; write: ShellWrite }> } {
   const writes: Array<{ at: number; write: ShellWrite }> = [];
   let scan = command;
   HEREDOC.lastIndex = 0;
@@ -93,7 +103,7 @@ function stripHeredocs(command: string): { scan: string; writes: Array<{ at: num
     const red = before.match(REDIRECT_BEFORE_HEREDOC);
     if (red) {
       const p = target(red, 1);
-      if (usable(p)) writes.push({ at: red.index ?? m.index, write: { path: p, linesAdded: bodyLines(rest.slice(0, bodyEnd)) } });
+      if (usable(p, keepHome)) writes.push({ at: red.index ?? m.index, write: { path: p, linesAdded: bodyLines(rest.slice(0, bodyEnd)) } });
     }
     // Blank the opener + body + terminator so later passes never see document text as shell.
     const stripEnd = end === -1 ? scan.length : openerEnd + 1 + bodyEnd + delim.length;
@@ -104,20 +114,21 @@ function stripHeredocs(command: string): { scan: string; writes: Array<{ at: num
 }
 
 /** Every write the command performs, in the order the targets appear. */
-export function parseShellWrites(command: string): ShellWriteParse {
+export function parseShellWrites(command: string, opts: ShellWriteOptions = {}): ShellWriteParse {
+  const keepHome = opts.keepHome ?? false;
   if (typeof command !== "string" || !command) return { cwd: null, writes: [] };
 
   const cdMatch = command.match(CD);
   const cdPath = cdMatch ? target(cdMatch, 1) : null;
   const cwd = cdPath && cdPath.startsWith("/") && !/[$*?`~]/.test(cdPath) ? cdPath : null;
 
-  const { scan, writes: found } = stripHeredocs(command);
-  for (const re of [REDIRECT, TEE, SED_I]) {
+  const { scan, writes: found } = stripHeredocs(command, keepHome);
+  for (const re of opts.sed === false ? [REDIRECT, TEE] : [REDIRECT, TEE, SED_I]) {
     re.lastIndex = 0;
     let m: RegExpExecArray | null;
     while ((m = re.exec(scan))) {
       const p = target(m, 1);
-      if (usable(p)) found.push({ at: m.index, write: { path: p, linesAdded: null } });
+      if (usable(p, keepHome)) found.push({ at: m.index, write: { path: p, linesAdded: null } });
     }
   }
 
