@@ -2,7 +2,7 @@
  *
  * The whole session is already client-side (one `/sessions/:id` fetch), so finding a term inside it
  * needs no server round-trip. Matching is a case-insensitive literal substring, deliberately unlike
- * the sessions list's token-AND FTS (packages/server/src/db.ts:toFtsQuery): in-page find is expected
+ * the sessions list's token-AND FTS (packages/server/src/db/sessions.ts:toFtsQuery): in-page find is expected
  * to behave like the browser's, hitting mid-word so `AWS_SECRET` is found inside `export AWS_SECRET=`.
  */
 import type { EventNode, ToolCall } from "../api";
