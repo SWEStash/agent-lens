@@ -54,7 +54,7 @@ There is no performance case either: the aggregate is a `GROUP BY model` over ~3
 
 > **Amended (2026-08).** Deriving cost at read time means the session list cannot `ORDER BY` a stored
 > column, so sorting by cost now happens in SQL against a **rates CTE** built from
-> `activePricing()` — `COST_SORT_SQL` / `ratesCte()` in `packages/server/src/db.ts`. Two consequences
+> `activePricing()` — `COST_SORT_SQL` / `ratesCte()` in `packages/server/src/db/sessions.ts`. Two consequences
 > for anyone changing pricing:
 >
 > 1. The cost formula now has **two implementations** — `costForUsage()` and its SQL transcription.

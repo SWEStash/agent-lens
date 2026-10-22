@@ -42,7 +42,7 @@ describe a quarter of reality (measured: 136 of 157 marks pinned to the minimum 
 ## Decision
 
 **`EventNode.usage` is the usage of the assistant RESPONSE the event belongs to, not the raw
-`token_usage` row keyed by its uuid.** `foldUsage` (`packages/server/src/db.ts`) walks each turn in
+`token_usage` row keyed by its uuid.** `foldUsage` (`packages/server/src/db/session-detail.ts`) walks each turn in
 `seq` order, carries usage from non-rendering events forward, and attaches the accumulated total to
 the next event that renders something. Usage still pending at the end of a turn folds back onto that
 turn's last rendering event.
