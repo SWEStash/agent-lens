@@ -12,8 +12,8 @@
  */
 import { DatabaseSync } from "node:sqlite";
 import { transaction } from "@agent-lens/core";
-import type { MuteRow } from "@agent-lens/contracts";
-import { queryAll } from "./sql-util.js";
+import type { MuteRow, MuteScope } from "@agent-lens/contracts";
+import { enumValues, queryAll } from "./sql-util.js";
 
 export type TriageDB = DatabaseSync;
 
@@ -76,8 +76,8 @@ export function reopen(db: TriageDB, ids: string[]): number {
   return n;
 }
 
-export const MUTE_SCOPES = ["global", "project", "source"] as const;
-export type MuteScope = (typeof MUTE_SCOPES)[number];
+export type { MuteScope };
+export const MUTE_SCOPES = enumValues<MuteScope>({ global: true, project: true, source: true });
 
 /** Mute a rule (optionally scoped). Idempotent. */
 export function muteRule(db: TriageDB, ruleId: string, scope: MuteScope = "global", scopeId = "", note?: string | null): void {

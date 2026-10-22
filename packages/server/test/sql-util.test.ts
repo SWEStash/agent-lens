@@ -4,7 +4,7 @@
  * rather than only through the endpoints that use it. Imports the BUILT dist.
  */
 import { describe, it, expect } from "vitest";
-import { orderBy, pageLimit, pageOffset, pushGrouped } from "../dist/sql-util.js";
+import { enumValues, orderBy, pageLimit, pageOffset, pickEnum, pushGrouped, SORT_DIRS } from "../dist/sql-util.js";
 
 const COLUMNS = { started: "s.started_at", title: "COALESCE(s.ai_title, s.slug)", turns: "s.turn_count" };
 
@@ -87,5 +87,20 @@ describe("pageOffset", () => {
     for (const raw of [undefined, null, "", "abc", "-1", "-0.5", NaN, Infinity, -Infinity]) {
       expect(pageOffset(raw), String(raw)).toBe(0);
     }
+  });
+});
+
+describe("enumValues / pickEnum", () => {
+  // The two-way check against the contract union is a compile-time one; this pins the runtime half.
+  it("lists the record's keys as the allowlist", () => {
+    expect(enumValues<"a" | "b">({ a: true, b: true })).toEqual(["a", "b"]);
+    expect(SORT_DIRS).toEqual(["asc", "desc"]);
+  });
+
+  it("accepts only an allowlisted value", () => {
+    expect(pickEnum(SORT_DIRS, "asc")).toBe("asc");
+    expect(pickEnum(SORT_DIRS, "ASC")).toBeUndefined();
+    expect(pickEnum(SORT_DIRS, undefined)).toBeUndefined();
+    expect(pickEnum(SORT_DIRS, ["asc"])).toBeUndefined();
   });
 });

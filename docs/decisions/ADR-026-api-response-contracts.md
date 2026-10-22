@@ -159,3 +159,22 @@ the unread fields visible.
   Heavier than a few dozen hand-kept shapes with tests behind them.
 - **Leave the responses in `web` and share nothing.** The status quo, and the thing that produced the
   drift this ADR documents.
+
+## Amendment (2026-10): request enums join the contract
+
+The response side was shared, but the values a list endpoint accepts in its query string were not.
+Each sort key was written three times: the `*Filters` type in `server/src/db.ts`, the runtime allowlist
+in `app.ts`, and a local `type …SortKey` in the web view. Typecheck linked none of them, so a key
+renamed on the server left the web sending a value the server then silently ignored, falling back to
+its default sort.
+
+`contracts/src/api.ts` now declares those enums as unions: `SortDir`, `SessionSort`, `FileSort`,
+`FindingSort`, `FindingStatus` and `MuteScope`. The server builds its runtime allowlists with
+`enumValues<U>(record)` (`server/src/sql-util.ts`), which takes a `Record<U, true>`, so a value missing
+from the allowlist and a value the union lacks are each a compile error. The web views import the same
+unions.
+
+`contracts` stays a pure-types leaf (ADR-024): only the unions move, and the runtime arrays stay in the
+server. Moving `as const` arrays into `contracts` was rejected because it would make the package
+export values. The web casts its URL `?sort=` to the union without checking it at runtime, which is
+fine because the server's allowlist is still the only gate.

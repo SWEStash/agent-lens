@@ -1,6 +1,6 @@
 import { useCallback, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
-import { apiPost, SNAPSHOT, type FindingListRow, type FindingsPage, type MuteRow, type Project, type SecuritySummary, type Source } from "./api";
+import { apiPost, SNAPSHOT, type FindingListRow, type FindingSort, type FindingsPage, type MuteRow, type Project, type SecuritySummary, type Source } from "./api";
 import { useFetch, useLookup } from "./useFetch";
 import { useQueryState } from "./useQueryState";
 import { useResetOn } from "./useResetOn";
@@ -16,7 +16,6 @@ const PAGE = 50;
 const EMPTY_PAGE: FindingsPage = { total: 0, findings: [] };
 /** Identity-stable empty selection, so useResetOn does not hand out a fresh Set every render. */
 const EMPTY_SELECTION: Set<string> = new Set();
-type SortKey = "severity" | "session" | "rule" | "category" | "time";
 
 /**
  * Security page (ADR-017/018) — a browsable, filterable, triageable list of the findings the detector
@@ -31,7 +30,7 @@ export default function SecurityView() {
   const projects = useLookup<Project[]>("/projects", []);
   const [busy, setBusy] = useState(false);
   const [reloadKey, setReloadKey] = useState(0);
-  const { sort, toggle } = useSort<SortKey>("severity", "desc");
+  const { sort, toggle } = useSort<FindingSort>("severity", "desc");
 
   const severity = get("severity");
   const category = get("category");
