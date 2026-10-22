@@ -64,7 +64,9 @@ export function unitLabel(value: string, fill: string) {
     dy: -19,
     dx: 2,
     fill,
-    fontSize: 9.5,
+    // Its size is `.chart-unit` in styles.css (the type scale's smallest step); CSS outranks the
+    // SVG font-size attribute Recharts would otherwise write.
+    className: "chart-unit",
     letterSpacing: 0.7,
     fillOpacity: 0.75,
   };
@@ -208,7 +210,7 @@ export function DensityChart({
   );
   const Dense = dense === "line" ? LineChart : AreaChart;
   return (
-    <div ref={ref} style={{ width: "100%", height: "100%" }}>
+    <div ref={ref} className="chart-fill">
       <ResponsiveContainer width="100%" height="100%">
         {asBars ? (
           <BarChart data={data} margin={CHART_MARGIN}>

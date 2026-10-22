@@ -5,7 +5,6 @@
  * reads off `payload` must stay OPTIONAL, or the function is no longer assignable to Recharts'
  * `Formatter` and the chart stops compiling. */
 import type { DashBreakdowns } from "../api";
-import { useChartTokens } from "../charts/theme";
 
 /** A charted row, as Recharts hands it back — either the datum itself or wrapped in `payload`. */
 export type ChartDatum = Record<string, unknown> & { payload?: Record<string, unknown> };
@@ -35,22 +34,21 @@ export function datumField(d: ChartDatum | undefined, field: string): string | n
  * (Recharts tooltips aren't interactive, so the per-version links live on the skill page; click the
  * bar to go there.) */
 export function SkillTooltip({ active, payload, versionsByName }: TooltipProps & { versionsByName: Map<string, SkillVersionRow[]> }) {
-  const { C, tooltipStyle } = useChartTokens();
   if (!active || !payload?.length) return null;
   const name = String(payload[0]?.payload?.name ?? "");
   const total = Number(payload[0]?.payload?.n ?? 0);
   const versions = versionsByName.get(name) ?? [];
   return (
-    <div style={{ ...tooltipStyle.contentStyle, padding: "8px 10px", maxWidth: 280 }}>
-      <div style={{ color: C.text, fontWeight: 600, marginBottom: 4 }}>{name}</div>
-      <div style={{ color: C.muted, marginBottom: versions.length ? 6 : 0 }}>{total} firing{total === 1 ? "" : "s"} total</div>
+    <div className="skill-tip">
+      <div className="skill-tip-name">{name}</div>
+      <div className="skill-tip-total">{total} firing{total === 1 ? "" : "s"} total</div>
       {versions.map((v) => (
-        <div key={v.version_id} style={{ color: C.text, display: "flex", justifyContent: "space-between", gap: 12 }}>
-          <span style={{ color: C.muted }}>{v.version_id.slice(0, 8)}</span>
+        <div key={v.version_id} className="skill-tip-row">
+          <span>{v.version_id.slice(0, 8)}</span>
           <span>{v.n}</span>
         </div>
       ))}
-      {versions.length > 0 && <div style={{ color: C.muted, marginTop: 6, fontSize: 11 }}>click to open skill →</div>}
+      {versions.length > 0 && <div className="skill-tip-hint">click to open skill →</div>}
     </div>
   );
 }
@@ -66,7 +64,6 @@ export function AxisLink({ x, y, payload, onSelect, title }: AxisTickProps & { o
       dy={4}
       textAnchor="end"
       className="axis-link"
-      fontSize={11}
       onClick={() => payload?.value && onSelect(payload.value)}
       // `data-tip`, not an SVG <title>: that one is drawn by the browser, and these hints share the
       // app's tooltip (Tooltip.tsx) like every other one.

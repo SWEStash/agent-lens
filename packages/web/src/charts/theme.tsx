@@ -1,5 +1,6 @@
-/** Shared chart theming. Colors are read from the app's CSS custom properties (styles.css :root)
- * so Recharts follows the active light/dark theme — CSS stays the single source of truth. */
+/** Shared chart theming. Colors and font sizes are read from the app's CSS custom properties
+ * (styles.css :root) so Recharts follows the active theme and the app's type scale — CSS stays the
+ * single source of truth. */
 import { useId, useMemo, useState, type ReactNode } from "react";
 import { ChartModal } from "./ChartModal";
 import { useTheme } from "../theme";
@@ -28,6 +29,9 @@ export function useChartTokens() {
       violet: v("--violet"),
       teal: v("--teal"),
     };
+    // The app's type scale (styles.css), as numbers: Recharts takes font sizes as props, not CSS.
+    const px = (name: string) => parseFloat(v(name));
+    const FS = { axis: px("--fs-xs"), label: px("--fs-sm") };
     // Timeline band message-type steps — a validated categorical set of their own (see styles.css).
     // tool-error is NOT a fifth entry: it is the status red, and always pairs with the rail tick.
     const TIMELINE_COLORS = {
@@ -61,7 +65,7 @@ export function useChartTokens() {
     };
     // Categorical palette for bar/pie slices.
     const PALETTE = [C.accent, C.green, C.gold, C.violet, C.teal, C.red, C.muted, "#d98c5f", "#5f9ed9"];
-    const axisProps = { stroke: C.muted, tick: { fill: C.muted, fontSize: 11 }, tickLine: false };
+    const axisProps = { stroke: C.muted, tick: { fill: C.muted, fontSize: FS.axis }, tickLine: false };
     const gridProps = { stroke: C.border, strokeDasharray: "3 3", vertical: false };
     // Recharts draws its own tooltip DOM, so it gets the shared tooltip surface from styles.css
     // (`.app-tip` and friends) as inline style; the shadow is the same --tip-shadow token.
@@ -72,7 +76,7 @@ export function useChartTokens() {
         borderRadius: 6,
         boxShadow: "var(--tip-shadow)",
         padding: "5px 8px",
-        fontSize: 12,
+        fontSize: FS.label,
         lineHeight: 1.45,
       },
       labelStyle: { color: C.text },
@@ -80,9 +84,9 @@ export function useChartTokens() {
     };
     // Legend labels are muted on every chart, never the series colour: the swatch beside them carries
     // the identity, and coloured text reads as emphasis the data does not mean.
-    const legendText = (value: ReactNode) => <span style={{ color: C.muted }}>{value}</span>;
-    const legendProps = { wrapperStyle: { fontSize: 12 }, formatter: legendText };
-    return { C, TOKEN_COLORS, TIMELINE_COLORS, SEVERITY_COLORS, BURN_RAMP, PALETTE, axisProps, gridProps, tooltipStyle, legendProps };
+    const legendText = (value: ReactNode) => <span className="chart-legend-text">{value}</span>;
+    const legendProps = { wrapperStyle: { fontSize: FS.label }, formatter: legendText };
+    return { C, FS, TOKEN_COLORS, TIMELINE_COLORS, SEVERITY_COLORS, BURN_RAMP, PALETTE, axisProps, gridProps, tooltipStyle, legendProps };
   }, [theme]);
 }
 
