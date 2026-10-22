@@ -2,6 +2,8 @@
   --bg: #0f1115;
   --panel: #171a21;
   --panel2: #1e222b;
+  /* Floating-surface shadow for every tooltip, including the recharts one (charts/theme.tsx). */
+  --tip-shadow: 0 6px 18px rgb(0 0 0 / 35%);
   --border: #2a2f3a;
   --text: #e6e8ec;
   --muted: #8b93a3;
@@ -1228,11 +1230,13 @@ summary.export:hover,
    so contrast holds in both themes.
    --------------------------------------------------------------------------- */
 .tag.sev { font-weight: 600; text-transform: capitalize; }
-.sev-critical { background: #3a1a1a; color: #ff8f8f; }
-.sev-high { background: #3a2a12; color: #f0a860; }
-.sev-medium { background: #2f2a16; color: #e0b85a; }
-.sev-low { background: #23303f; color: #79c0ff; }
-.sev-info { background: var(--tag); color: var(--muted); }
+/* Each severity class sets --sev once (the vivid colour, theme-aware via --sev-c-* below); every
+   consumer reads it: pill text, sessions-list dot, timeline rail, timeline tooltip flag, KPI value. */
+.sev-critical { --sev: var(--sev-c-critical); background: #3a1a1a; color: var(--sev); }
+.sev-high { --sev: var(--sev-c-high); background: #3a2a12; color: var(--sev); }
+.sev-medium { --sev: var(--sev-c-medium); background: #2f2a16; color: var(--sev); }
+.sev-low { --sev: var(--sev-c-low); background: #23303f; color: var(--sev); }
+.sev-info { --sev: var(--muted); background: var(--tag); color: var(--sev); }
 
 /* Sessions-list Security cell: worst-severity dot + total finding count (kept visually distinct so
  * "critical 40" can't be misread as 40 criticals). Dot uses the vivid per-severity color. */
@@ -1250,12 +1254,8 @@ summary.export:hover,
   --sev-c-medium: #8a6d1f;
   --sev-c-low: #1a5fa8;
 }
-.sev-dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; background: var(--muted); flex: none; }
-.sev-dot.sev-critical { background: var(--sev-c-critical); }
-.sev-dot.sev-high { background: var(--sev-c-high); }
-.sev-dot.sev-medium { background: var(--sev-c-medium); }
-.sev-dot.sev-low { background: var(--sev-c-low); }
-.sev-dot.sev-info { background: var(--muted); }
+/* Declared after the pills, so its background beats theirs at equal specificity. */
+.sev-dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; background: var(--sev, var(--muted)); flex: none; }
 /* Framework anchor chip (OWASP/MITRE) — a subtle outlined variant. */
 .tag.framework { background: transparent; border: 1px solid var(--border); color: var(--muted); }
 
@@ -1297,10 +1297,7 @@ summary.export:hover,
 }
 .kpi-btn:hover { border-color: var(--accent); text-decoration: none; }
 .kpi-btn.is-active { border-color: var(--accent); outline: 2px solid var(--accent); }
-.sev-kpi.sev-critical .kpi-value { color: #ff8f8f; }
-.sev-kpi.sev-high .kpi-value { color: #f0a860; }
-.sev-kpi.sev-medium .kpi-value { color: #e0b85a; }
-.sev-kpi.sev-low .kpi-value { color: #79c0ff; }
+.sev-kpi:is(.sev-critical, .sev-high, .sev-medium, .sev-low) .kpi-value { color: var(--sev); }
 .finding-evidence-cell code { white-space: pre-wrap; word-break: break-word; font-size: 12px; color: var(--muted); }
 .findings-table td { vertical-align: top; }
 .linkish { background: none; border: none; color: var(--accent); cursor: pointer; padding: 0 2px; font: inherit; }
@@ -1345,16 +1342,13 @@ tr.is-dismissed { opacity: 0.6; }
 .muted-rules-list li { display: flex; align-items: center; gap: 4px; font-size: 13px; flex-wrap: wrap; }
 
 /* Light-theme severity overrides. */
-/* :not(.sev-dot) — this selector outranks `.sev-dot.sev-*`, so without it the sessions-list dots took
-   the pale pill background and all but vanished in the light theme. */
-:root[data-theme="light"] .sev-critical:not(.sev-dot) { background: #fbe0e0; color: #b12626; }
-:root[data-theme="light"] .sev-high:not(.sev-dot) { background: #f7e2c8; color: #b5651d; }
-:root[data-theme="light"] .sev-medium:not(.sev-dot) { background: #f6ecd0; color: #8a6d1f; }
-:root[data-theme="light"] .sev-low:not(.sev-dot) { background: #dceaf8; color: #1a5fa8; }
-:root[data-theme="light"] .sev-kpi.sev-critical .kpi-value { color: #b12626; }
-:root[data-theme="light"] .sev-kpi.sev-high .kpi-value { color: #b5651d; }
-:root[data-theme="light"] .sev-kpi.sev-medium .kpi-value { color: #8a6d1f; }
-:root[data-theme="light"] .sev-kpi.sev-low .kpi-value { color: #1a5fa8; }
+/* :not(.sev-dot) — this selector outranks `.sev-dot`, so without it the sessions-list dots took the
+   pale pill background and all but vanished in the light theme. The colour is restated here because
+   this specificity is what lets pill text win over component text colours (the dashboard KPI). */
+:root[data-theme="light"] .sev-critical:not(.sev-dot) { background: #fbe0e0; color: var(--sev); }
+:root[data-theme="light"] .sev-high:not(.sev-dot) { background: #f7e2c8; color: var(--sev); }
+:root[data-theme="light"] .sev-medium:not(.sev-dot) { background: #f6ecd0; color: var(--sev); }
+:root[data-theme="light"] .sev-low:not(.sev-dot) { background: #dceaf8; color: var(--sev); }
 
 /* Security page one-offs */
 .page-intro { margin: 4px 0 0; }
@@ -1410,6 +1404,7 @@ table.kv .muted { font-size: 12px; margin-top: 4px; }
    Marks are drawn in SVG; everything positional comes from the piecewise scale in
    transcript/timeline/scale.ts, so this file owns only colour, chrome and spacing. */
 .timeline {
+  position: relative;
   border: 1px solid var(--border);
   border-radius: 8px;
   background: var(--panel);
@@ -1420,7 +1415,7 @@ table.kv .muted { font-size: 12px; margin-top: 4px; }
 .tl-caption { margin-left: auto; }
 .tl-ctl select { font: inherit; background: var(--panel2); color: var(--text); border: 1px solid var(--border); border-radius: 5px; padding: 1px 4px; }
 .tl-axis { font-variant-numeric: tabular-nums; }
-.tl-svg { display: block; width: 100%; }
+.tl-svg { display: block; width: 100%; cursor: crosshair; }
 /* A break is a hole in the axis, not data: recessive fill plus a hatch so it never reads as a mark. */
 .tl-break rect { fill: var(--panel2); stroke: var(--border); stroke-dasharray: 2 2; }
 .tl-mark { shape-rendering: crispEdges; }
@@ -1435,14 +1430,9 @@ table.kv .muted { font-size: 12px; margin-top: 4px; }
 .tl-err { fill: var(--err); }
 .tl-file { fill: var(--muted); }
 .tl-spawn { fill: var(--muted); }
-.tl-find.sev-critical { fill: var(--sev-c-critical); }
-.tl-find.sev-high { fill: var(--sev-c-high); }
-.tl-find.sev-medium { fill: var(--sev-c-medium); }
-.tl-find.sev-low { fill: var(--sev-c-low); }
-.tl-find.sev-info { fill: var(--muted); }
+.tl-find { fill: var(--sev, var(--muted)); }
 /* Selection: everything OUTSIDE the range is shaded back, so the selected span reads as the
    subject rather than as a highlight laid over it. */
-.tl-svg { cursor: crosshair; }
 .tl-svg.is-dragging { cursor: ew-resize; }
 .tl-break { cursor: zoom-in; }
 /* The keyboard cursor. Only shown while the band has keyboard focus — a permanently visible marker
@@ -1471,7 +1461,6 @@ table.kv .muted { font-size: 12px; margin-top: 4px; }
    than the pointer so it stays still enough to read, and flips to the right edge past the midpoint so
    it never runs off the band. */
 .tl-hover { fill: var(--text); opacity: 0.28; pointer-events: none; }
-.timeline { position: relative; }
 .tl-tip {
   position: absolute;
   bottom: 52px;
@@ -1483,7 +1472,7 @@ table.kv .muted { font-size: 12px; margin-top: 4px; }
   border: 1px solid var(--border);
   border-radius: 7px;
   background: var(--panel2);
-  box-shadow: 0 6px 18px rgb(0 0 0 / 35%);
+  box-shadow: var(--tip-shadow);
   font-size: 12px;
   line-height: 1.45;
 }
@@ -1495,21 +1484,21 @@ table.kv .muted { font-size: 12px; margin-top: 4px; }
 .tl-tip.is-right .tl-tip-row { justify-content: flex-end; }
 .tl-tip-flag { border-radius: 4px; background: var(--tag); padding: 0 5px; font-size: 11px; }
 .tl-tip-flag.is-err { background: color-mix(in srgb, var(--err) 22%, transparent); color: var(--err); }
-.tl-tip-flag.sev-critical { background: color-mix(in srgb, var(--sev-c-critical) 22%, transparent); color: var(--sev-c-critical); }
-.tl-tip-flag.sev-high { background: color-mix(in srgb, var(--sev-c-high) 22%, transparent); color: var(--sev-c-high); }
-.tl-tip-flag.sev-medium { background: color-mix(in srgb, var(--sev-c-medium) 22%, transparent); color: var(--sev-c-medium); }
-.tl-tip-flag.sev-low { background: color-mix(in srgb, var(--sev-c-low) 22%, transparent); color: var(--sev-c-low); }
+/* sev-info keeps the plain pill look from .sev-info. In the light theme the pale pill backgrounds
+   outrank this rule, as they always have. */
+.tl-tip-flag:is(.sev-critical, .sev-high, .sev-medium, .sev-low) { background: color-mix(in srgb, var(--sev) 22%, transparent); }
 .tl-legend { display: flex; flex-wrap: wrap; gap: 10px; font-size: 11px; color: var(--muted); margin-top: 4px; }
 .tl-key { display: inline-flex; align-items: center; gap: 4px; }
 .tl-swatch { width: 8px; height: 8px; border-radius: 2px; display: inline-block; }
 
 /* Burn heatmap — a plain CSS grid rather than a charting library: 7x24 fixed cells, no scales to
    compute, and the cell colours come straight from the validated --burn-* ramp. */
-.burn { display: flex; flex-direction: column; gap: 8px; height: 100%; justify-content: center; }
+.burn { position: relative; display: flex; flex-direction: column; gap: 8px; height: 100%; justify-content: center; }
 .burn-grid { display: flex; flex-direction: column; gap: 2px; }
 .burn-row { display: flex; align-items: center; gap: 2px; }
 .burn-day { width: 30px; flex: none; font-size: 11px; color: var(--muted); }
-.burn-cell { flex: 1 1 0; height: 14px; border-radius: 2px; }
+.burn-cell { flex: 1 1 0; height: 14px; border-radius: 2px; cursor: default; }
+.burn-cell:hover { outline: 2px solid var(--text); outline-offset: -1px; }
 .burn-tick { flex: 1 1 0; font-size: 10px; color: var(--muted); font-style: normal; text-align: left; }
 .burn-hours { margin-top: 2px; }
 /* Enlarged: bigger cells, but a fixed size rather than "fill the body". Stretching seven rows over
@@ -1575,7 +1564,7 @@ table.kv .muted { font-size: 12px; margin-top: 4px; }
 .card-guide-body {
   position: absolute; z-index: 6; top: 40px; left: 10px; right: 10px;
   padding: 10px 12px; border: 1px solid var(--border); border-radius: 7px;
-  background: var(--panel2); box-shadow: 0 6px 18px rgb(0 0 0 / 35%);
+  background: var(--panel2); box-shadow: var(--tip-shadow);
   font-size: 12px; line-height: 1.5; color: var(--text); font-weight: 400;
 }
 .card-guide-body p { margin: 0 0 7px; }
@@ -1584,35 +1573,31 @@ table.kv .muted { font-size: 12px; margin-top: 4px; }
 .card-guide-body dd { margin: 1px 0 7px; }
 .card-guide-body dd:last-child { margin-bottom: 0; }
 
-/* The app-wide hover/focus tooltip (Tooltip.tsx), replacing native `title=`. Deliberately the same
-   surface as the chart tooltips — recharts is given `background: panel2, 1px solid border, radius 6,
-   12px` in charts/theme.tsx, and .burn-tip draws the heatmap's own — so a hint reads the same
-   wherever it appears. Fixed-positioned and click-through; the layer places it. */
+/* The app-wide hover/focus tooltip (Tooltip.tsx), replacing native `title=`. Same surface as every
+   other tooltip (panel2, border, --tip-shadow, 12px); recharts gets it from tooltipStyle in
+   charts/theme.tsx. Fixed-positioned and click-through; the layer places it. */
 .app-tip {
   position: fixed; z-index: 60; pointer-events: none;
   max-width: 320px; padding: 5px 8px;
   border: 1px solid var(--border); border-radius: 6px;
   background: var(--panel2); color: var(--text);
-  box-shadow: 0 6px 18px rgb(0 0 0 / 35%);
+  box-shadow: var(--tip-shadow);
   font-size: 12px; line-height: 1.45; white-space: pre-wrap; overflow-wrap: anywhere;
 }
 
 /* Heatmap cell tooltip — hover IS right here: one short fact, tied to one mark. Same surface as
    .app-tip; it is positioned inside the heatmap rather than by the tooltip layer because it follows
    a cell, not an element with a hint. */
-.burn { position: relative; }
 .burn-tip {
   position: absolute; z-index: 6; pointer-events: none;
   padding: 5px 8px; border: 1px solid var(--border); border-radius: 6px;
-  background: var(--panel2); box-shadow: 0 6px 18px rgb(0 0 0 / 35%);
+  background: var(--panel2); box-shadow: var(--tip-shadow);
   font-size: 12px; line-height: 1.45; white-space: nowrap;
 }
 .burn-tip-head { font-weight: 600; }
 .burn-tip-row { color: var(--muted); font-variant-numeric: tabular-nums; }
-/* "Files changed" rework line: a list, deliberately not a badge — it is a count, not a verdict. */
-.files-rework { margin: 0.4rem 0 0.2rem; padding-left: 0.4rem; font-size: 12px; }
-
 /* The observed-day support line, set below the value it qualifies. */
 .burn-tip-support { font-size: 11px; opacity: 0.8; }
-.burn-cell { cursor: default; }
-.burn-cell:hover { outline: 2px solid var(--text); outline-offset: -1px; }
+
+/* "Files changed" rework line: a list, deliberately not a badge — it is a count, not a verdict. */
+.files-rework { margin: 0.4rem 0 0.2rem; padding-left: 0.4rem; font-size: 12px; }

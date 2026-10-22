@@ -63,14 +63,14 @@ export function useChartTokens() {
     const PALETTE = [C.accent, C.green, C.gold, C.violet, C.teal, C.red, C.muted, "#d98c5f", "#5f9ed9"];
     const axisProps = { stroke: C.muted, tick: { fill: C.muted, fontSize: 11 }, tickLine: false };
     const gridProps = { stroke: C.border, strokeDasharray: "3 3", vertical: false };
-    // Recharts draws its own tooltip DOM, so this mirrors `.app-tip` in styles.css (the hover hints
-    // everywhere else) by hand — same surface, same 12px type, same shadow. Change one, change both.
+    // Recharts draws its own tooltip DOM, so it gets the shared tooltip surface from styles.css
+    // (`.app-tip` and friends) as inline style; the shadow is the same --tip-shadow token.
     const tooltipStyle = {
       contentStyle: {
         background: C.panel2,
         border: `1px solid ${C.border}`,
         borderRadius: 6,
-        boxShadow: "0 6px 18px rgb(0 0 0 / 35%)",
+        boxShadow: "var(--tip-shadow)",
         padding: "5px 8px",
         fontSize: 12,
         lineHeight: 1.45,
