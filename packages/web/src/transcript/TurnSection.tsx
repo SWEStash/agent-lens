@@ -1,5 +1,5 @@
 import { useId } from "react";
-import type { EventNode } from "../api";
+import type { EventNode, TurnRow } from "../api";
 import { fmtDuration } from "../format";
 import { previewLabel } from "./parse";
 import { EventBlock } from "./EventBlock";
@@ -18,7 +18,7 @@ export function TurnSection({
   open,
   onToggle,
 }: {
-  turn: any;
+  turn: TurnRow;
   events: EventNode[];
   matches?: number;
   /** The turn's message count BEFORE the timeline's range filter, when one is active. */

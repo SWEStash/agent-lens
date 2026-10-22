@@ -11,7 +11,7 @@ import { loadPrefLocal } from "./prefs";
 
 /** Pref key for an explicitly pinned zone — set so a reader of someone else's snapshot can hold the
  *  author's zone. There is no picker UI yet; an unset pref means "follow this machine". */
-export const TZ_PREF_KEY = "dashboard.timezone";
+const TZ_PREF_KEY = "dashboard.timezone";
 
 /** Explicit pref → the OS zone → UTC. */
 export function resolveZone(pref?: string | null): string {

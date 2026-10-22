@@ -45,7 +45,7 @@ export interface Mark {
  * Classify an event. Order matters: a failed tool call outranks a successful one, and any tool call
  * outranks the prose around it, because the tool is what the reader is scanning for.
  */
-export function markKind(e: EventNode): MarkKind {
+function markKind(e: EventNode): MarkKind {
   if (e.toolCalls.some((t) => t.status === "error")) return "tool-error";
   if (e.toolCalls.length) return "tool";
   if (e.thinking && !e.text) return "thinking";

@@ -153,7 +153,7 @@ export const codeOf = (c: string): string => neutralizeEcho(stripComments(blankH
 export const bareOf = (c: string): string => blankQuoted(codeOf(c));
 
 /** The two derived views of one command, built together — the single place the pipeline is assembled. */
-export function commandViews(raw: string): { code: string; bare: string } {
+function commandViews(raw: string): { code: string; bare: string } {
   const code = codeOf(raw);
   return { code, bare: blankQuoted(code) };
 }

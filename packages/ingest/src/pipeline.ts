@@ -26,7 +26,7 @@ export function newStats(): IngestStats {
   return { files: 0, skipped: 0, malformed: 0, newEvents: 0 };
 }
 
-export function preview(text: string): string {
+function preview(text: string): string {
   return text.replace(/\s+/g, " ").trim().slice(0, 140);
 }
 
@@ -153,7 +153,7 @@ function durationMs(start: string | null, end: string | null): number | null {
  * prompt starts a turn too; we don't filter on is_sidechain here. Tool-result carrier messages have
  * empty text, and a slash command's output rides on a user line without being a prompt (`/login`
  * logs its stdout with the same timestamp as the command). */
-export function isTurnStart(e: { type: string; is_meta: number; text: string | null }): boolean {
+function isTurnStart(e: { type: string; is_meta: number; text: string | null }): boolean {
   const body = e.text?.trim() ?? "";
   return e.type === "user" && e.is_meta === 0 && body.length > 0 && !isCommandResultCarrier(body);
 }
@@ -290,6 +290,62 @@ function rebuildTurns(db: DB, scope: Scope, sessionIds: Array<{ id: string }>): 
   db.exec(`UPDATE tool_calls SET turn_id = (SELECT turn_id FROM events WHERE events.uuid = tool_calls.event_uuid)${scope.bySession}`);
 }
 
+// Type aliases, not interfaces, so a node:sqlite row array casts to them directly.
+export type SkillCall = { id: string; event_uuid: string | null; skill_name: string | null; input_json: string | null };
+export type SkillEvent = { uuid: string; type: string; is_meta: number; timestamp: string | null; text: string | null };
+/** One Skill call paired with the body its firing injected (already masked for known values). */
+export interface SkillMatch {
+  callId: string;
+  name: string;
+  baseDir: string | null;
+  body: string;
+  ts: string | null;
+}
+
+/**
+ * Pair one session's Skill calls with the body injections that follow them. Walking the events in
+ * time order, each call joins a queue keyed by its skill-name token; each injection takes a queued
+ * call with the same token, preferring one whose args equal the injection's ARGUMENTS and otherwise
+ * the earliest. An injection with no pending call, and a call whose body never arrived, match
+ * nothing. Known per-call values (args, base dir, session id) are masked out of the body. Pure.
+ */
+export function matchSkillInjections(sessionId: string, calls: readonly SkillCall[], events: readonly SkillEvent[]): SkillMatch[] {
+  const ordered = [...events].sort((x, y) => (x.timestamp ?? "").localeCompare(y.timestamp ?? "") || x.uuid.localeCompare(y.uuid));
+  const callByEvent = new Map<string, SkillCall[]>();
+  for (const c of calls) {
+    if (!c.event_uuid) continue;
+    const arr = callByEvent.get(c.event_uuid) ?? [];
+    arr.push(c);
+    callByEvent.set(c.event_uuid, arr);
+  }
+  const matches: SkillMatch[] = [];
+  // Queue of pending Skill calls awaiting their body injection, keyed by skill-name token.
+  const pending = new Map<string, Array<{ id: string; name: string; args: string | null }>>();
+  for (const e of ordered) {
+    for (const c of callByEvent.get(e.uuid) ?? []) {
+      if (!c.skill_name) continue;
+      const key = skillNameKey(c.skill_name);
+      const raw = parseStored<{ args?: unknown }>(c.input_json, "skill versions: tool_calls.input_json")?.args;
+      const args = typeof raw === "string" ? raw.trim() || null : raw != null ? JSON.stringify(raw) : null;
+      const arr = pending.get(key) ?? [];
+      arr.push({ id: c.id, name: c.skill_name, args });
+      pending.set(key, arr);
+    }
+    if (e.is_meta !== 1 || e.type !== "user" || !e.text) continue;
+    const inj = parseSkillInjection(e.text);
+    if (!inj) continue;
+    const queue = pending.get(inj.nameKey);
+    if (!queue || !queue.length) continue;
+    // Prefer a call whose args match the injection's ARGUMENTS; else take the earliest pending.
+    let idx = inj.args != null ? queue.findIndex((q) => q.args === inj.args) : -1;
+    if (idx < 0) idx = 0;
+    const [match] = queue.splice(idx, 1);
+    const body = maskKnownValues(inj.body, { args: match.args ?? inj.args, baseDir: inj.baseDir, sessionId });
+    matches.push({ callId: match.id, name: match.name, baseDir: inj.baseDir, body, ts: e.timestamp });
+  }
+  return matches;
+}
+
 /** Link each Skill tool_call to a content-addressed skill *version*. A firing injects the full
  * SKILL.md body as an isMeta user event right after the launch; we pair each Skill tool_call with
  * the following injection (by skill-name token, ARGUMENTS as tiebreak), normalize + hash the body,
@@ -327,50 +383,13 @@ function linkSkillVersions(db: DB, sessionIds: Array<{ id: string }>): void {
   const relinkVersion = db.prepare("UPDATE tool_calls SET skill_id = ? WHERE skill_id = ?");
   const delVersion = db.prepare("DELETE FROM skills WHERE id = ?");
 
-  const matches: Array<{ callId: string; name: string; baseDir: string | null; body: string; ts: string | null }> = [];
+  const matches: SkillMatch[] = [];
 
   const linkTx = transaction(db, () => {
     for (const { id: sid } of sessionIds) {
-      const calls = selSkillCalls.all(sid) as Array<{ id: string; event_uuid: string | null; skill_name: string | null; input_json: string | null }>;
+      const calls = selSkillCalls.all(sid) as SkillCall[];
       if (!calls.length) continue;
-      const events = (selEventsOrdered.all(sid) as Array<{ uuid: string; type: string; is_meta: number; timestamp: string | null; text: string | null }>).sort(
-        (x, y) => (x.timestamp ?? "").localeCompare(y.timestamp ?? "") || x.uuid.localeCompare(y.uuid),
-      );
-      const callByEvent = new Map<string, typeof calls>();
-      for (const c of calls) {
-        if (!c.event_uuid) continue;
-        const arr = callByEvent.get(c.event_uuid) ?? [];
-        arr.push(c);
-        callByEvent.set(c.event_uuid, arr);
-      }
-      // Queue of pending Skill calls awaiting their body injection, keyed by skill-name token.
-      const pending = new Map<string, Array<{ id: string; args: string | null }>>();
-      for (const e of events) {
-        const here = callByEvent.get(e.uuid);
-        if (here) {
-          for (const c of here) {
-            if (!c.skill_name) continue;
-            const key = skillNameKey(c.skill_name);
-            const raw = parseStored<{ args?: unknown }>(c.input_json, "skill versions: tool_calls.input_json")?.args;
-            const args = typeof raw === "string" ? raw.trim() || null : raw != null ? JSON.stringify(raw) : null;
-            const arr = pending.get(key) ?? [];
-            arr.push({ id: c.id, args });
-            pending.set(key, arr);
-          }
-        }
-        if (e.is_meta !== 1 || e.type !== "user" || !e.text) continue;
-        const inj = parseSkillInjection(e.text);
-        if (!inj) continue;
-        const queue = pending.get(inj.nameKey);
-        if (!queue || !queue.length) continue;
-        // Prefer a call whose args match the injection's ARGUMENTS; else take the earliest pending.
-        let idx = inj.args != null ? queue.findIndex((q) => q.args === inj.args) : -1;
-        if (idx < 0) idx = 0;
-        const [match] = queue.splice(idx, 1);
-        const c = calls.find((x) => x.id === match.id)!;
-        const body = maskKnownValues(inj.body, { args: match.args ?? inj.args, baseDir: inj.baseDir, sessionId: sid });
-        matches.push({ callId: match.id, name: c.skill_name!, baseDir: inj.baseDir, body, ts: e.timestamp });
-      }
+      matches.push(...matchSkillInjections(sid, calls, selEventsOrdered.all(sid) as SkillEvent[]));
     }
 
     const slotsByName = new Map<string, Slot[]>();

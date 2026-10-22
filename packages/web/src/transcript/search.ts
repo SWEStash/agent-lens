@@ -27,7 +27,7 @@ export interface SearchModel {
   total: number;
 }
 
-export const EMPTY_MODEL: SearchModel = { hits: [], byTurn: new Map(), total: 0 };
+const EMPTY_MODEL: SearchModel = { hits: [], byTurn: new Map(), total: 0 };
 
 /** The searchable text of one message, flattened: the body, the thinking block, and every tool call's
  * input and result. Mirrors what the event renders — tool payloads are where paths and secrets live,

@@ -5,18 +5,15 @@
  * incrementally: the same indexes and triggers, and a full-text index that finds every message and
  * keeps up with later runs.
  */
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { describe, it, expect } from "vitest";
+import { writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { tmpdir } from "node:os";
 import { DatabaseSync } from "node:sqlite";
-import { runIngest } from "../dist/run.js";
 import { openDb } from "../dist/db.js";
+import { withArchive } from "./helpers/archive.js";
 
-let root: string;
-let projects: string;
-let dbPath: string;
-const env = { CLAUDE_DIR: process.env.CLAUDE_DIR, AGENT_LENS_LABEL: process.env.AGENT_LENS_LABEL };
+const a = withArchive("al-bulk.");
+
 
 function session(id: string, text: string): void {
   const line = {
@@ -27,12 +24,11 @@ function session(id: string, text: string): void {
     cwd: "/work/demo",
     message: { role: "user", content: text },
   };
-  writeFileSync(join(projects, `${id}.jsonl`), JSON.stringify(line) + "\n");
+  writeFileSync(join(a.projects, `${id}.jsonl`), JSON.stringify(line) + "\n");
 }
 
-const ingest = (...extra: string[]) => runIngest(["--db", dbPath, "--archive", join(root, "archive"), ...extra]);
 
-function read<T>(fn: (db: DatabaseSync) => T, file = dbPath): T {
+function read<T>(fn: (db: DatabaseSync) => T, file = a.dbPath): T {
   const db = new DatabaseSync(file, { readOnly: true });
   try {
     return fn(db);
@@ -49,24 +45,12 @@ const matching = (term: string) =>
     ),
   );
 
-beforeEach(() => {
-  root = mkdtempSync(join(tmpdir(), "al-bulk."));
-  projects = join(root, "archive", "test", "projects", "-work-demo");
-  mkdirSync(projects, { recursive: true });
-  dbPath = join(root, "test.db");
-  process.env.CLAUDE_DIR = join(root, "claude");
-  process.env.AGENT_LENS_LABEL = "test";
-});
-afterEach(() => {
-  rmSync(root, { recursive: true, force: true });
-  for (const [k, v] of Object.entries(env)) v === undefined ? delete process.env[k] : (process.env[k] = v);
-});
 
 describe("ingest --full bulk load", () => {
   it("leaves the same indexes and triggers as a fresh schema", () => {
     session("s1", "alpha");
-    ingest("--full");
-    const fresh = join(root, "fresh.db");
+    a.ingest("--full");
+    const fresh = join(a.root, "fresh.db");
     openDb(fresh).close();
     expect(read(schemaObjects)).toEqual(read(schemaObjects, fresh));
   });
@@ -74,10 +58,10 @@ describe("ingest --full bulk load", () => {
   it("indexes every message for search, consistently", () => {
     session("s1", "alpha bravo");
     session("s2", "bravo charlie");
-    ingest("--full");
+    a.ingest("--full");
     expect(matching("bravo")).toEqual(["s1", "s2"]);
     expect(matching("charlie")).toEqual(["s2"]);
-    const db = new DatabaseSync(dbPath);
+    const db = new DatabaseSync(a.dbPath);
     try {
       expect(() => db.exec("INSERT INTO events_fts(events_fts) VALUES('integrity-check')")).not.toThrow();
     } finally {
@@ -87,9 +71,9 @@ describe("ingest --full bulk load", () => {
 
   it("keeps search current on the incremental runs after it", () => {
     session("s1", "alpha");
-    ingest("--full");
+    a.ingest("--full");
     session("s2", "delta");
-    ingest();
+    a.ingest();
     expect(matching("delta")).toEqual(["s2"]);
   });
 });
