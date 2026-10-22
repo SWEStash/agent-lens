@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { fetchPref, loadPrefLocal, savePref } from "../prefs";
 import {
   LAYOUT_PREF_KEY,
@@ -48,10 +48,14 @@ export function useDashLayout(kpiIds: readonly string[], chartIds: readonly stri
     normalizeLayout(loadPrefLocal<unknown>(LAYOUT_PREF_KEY, null), loadPrefLocal<unknown>(LEGACY_CHARTS_PREF_KEY, null)),
   );
 
+  // Set by every commit, so a server answer that arrives after the user's first edit can't undo it.
+  const touched = useRef(false);
+
   useEffect(() => {
     // The legacy key is fetched alongside so a user whose pre-layout chart choices only ever reached
     // the server (different browser, cleared cache) still inherits them here.
     void Promise.all([fetchPref<unknown>(LAYOUT_PREF_KEY), fetchPref<unknown>(LEGACY_CHARTS_PREF_KEY)]).then(([stored, legacy]) => {
+      if (touched.current) return;
       if (stored != null || legacy != null) setLayout(normalizeLayout(stored, legacy));
     });
   }, []);
@@ -62,6 +66,7 @@ export function useDashLayout(kpiIds: readonly string[], chartIds: readonly stri
   // Every change rewrites the whole blob — it is one small value, and atomicity is what keeps the
   // active view and the strips consistent with each other.
   const commit = useCallback((next: DashLayout) => {
+    touched.current = true;
     setLayout(next);
     savePref(LAYOUT_PREF_KEY, next);
   }, []);

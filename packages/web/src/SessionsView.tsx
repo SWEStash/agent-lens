@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useState } from "react";
+import { Fragment, useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { type Project, type SessionSummary, type Source } from "./api";
 import { useFetch, useLookup } from "./useFetch";
@@ -211,10 +211,14 @@ export default function SessionsView() {
 
   const offset = Number(get("offset", "0"));
 
+  // Set once the user toggles a column, so a server answer that arrives later can't undo the choice.
+  const colsTouched = useRef(false);
   useEffect(() => {
     // Reconcile the localStorage-cached column choice with the server's stored value (source of truth
     // when a writable store is configured); no-op when it returns null.
-    fetchPref<unknown>(COLS_PREF_KEY).then((ids) => ids != null && setVisibleCols(normalizeCols(ids)));
+    void fetchPref<unknown>(COLS_PREF_KEY).then((ids) => {
+      if (ids != null && !colsTouched.current) setVisibleCols(normalizeCols(ids));
+    });
   }, []);
 
   const qs = pick(["source", "project", "model", "q", "sort", "dir", "severity", "error_type"]);
@@ -233,6 +237,7 @@ export default function SessionsView() {
   }
 
   function toggleColumn(id: string, on: boolean) {
+    colsTouched.current = true;
     setVisibleCols((prev) => {
       const next = new Set(prev);
       if (on) next.add(id);
