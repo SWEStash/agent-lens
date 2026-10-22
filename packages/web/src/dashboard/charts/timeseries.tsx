@@ -8,7 +8,7 @@ import { toggleIn } from "../../sets";
 /** Stacked token components per bucket. The legend toggles series: hiding the dominant cache-read
  * series lets the others use the full scale, and the stack recomputes automatically. */
 export function TokensOverTime({ hidden, ts }: ChartProps) {
-  const { C, TOKEN_COLORS, axisProps, gridProps, tooltipStyle } = useChartTokens();
+  const { C, TOKEN_COLORS, axisProps, gridProps, tooltipStyle, legendProps } = useChartTokens();
   const [hiddenSeries, setHiddenSeries] = useState<Set<string>>(new Set());
   const toggle = (key: string) => setHiddenSeries((prev) => toggleIn(prev, key));
 
@@ -41,10 +41,10 @@ export function TokensOverTime({ hidden, ts }: ChartProps) {
           <YAxis {...axisProps} tickFormatter={(v) => fmtTokens(v as number)} width={48} label={unitLabel("tokens", C.muted)} />
           <Tooltip {...tooltipStyle} formatter={(v: number | string, n: string) => [`${fmtTokens(Number(v))} tokens`, n]} />
           <Legend
-            wrapperStyle={{ fontSize: 12, cursor: "pointer" }}
+            wrapperStyle={{ ...legendProps.wrapperStyle, cursor: "pointer" }}
             onClick={(o: { dataKey?: unknown }) => o?.dataKey && toggle(String(o.dataKey))}
             formatter={(value: React.ReactNode, entry: { dataKey?: unknown }) => (
-              <span style={{ color: C.muted, opacity: hiddenSeries.has(String(entry?.dataKey)) ? 0.4 : 1 }}>{value}</span>
+              <span className="chart-legend-text" style={{ opacity: hiddenSeries.has(String(entry?.dataKey)) ? 0.4 : 1 }}>{value}</span>
             )}
           />
           <Area type="monotone" dataKey="input" hide={hiddenSeries.has("input")} stackId="1" stroke={TOKEN_COLORS.input} fill={TOKEN_COLORS.input} fillOpacity={0.5} />

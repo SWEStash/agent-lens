@@ -304,7 +304,7 @@ function LatencyLegend({
   muted: string;
 }) {
   const swatch = (color: string, dashed?: boolean) => (
-    <svg width="18" height="8" aria-hidden="true" style={{ flex: "none" }}>
+    <svg width="18" height="8" aria-hidden="true">
       <line x1="0" y1="4" x2="18" y2="4" stroke={color} strokeWidth="2" strokeDasharray={dashed ? "4 3" : undefined} />
     </svg>
   );
@@ -323,11 +323,11 @@ function LatencyLegend({
             style={{ opacity: on ? 1 : 0.4 }}
           >
             {swatch(colorFor(m))}
-            <span style={{ color: muted }}>{shortModel(m)}</span>
+            <span>{shortModel(m)}</span>
           </button>
         );
       })}
-      <span className="lat-key" style={{ color: muted }}>
+      <span className="lat-key">
         {swatch(muted)} p50 {swatch(muted, true)} p90
       </span>
     </div>
@@ -491,7 +491,7 @@ export function ModelLatency({ hidden, time }: ChartProps) {
               formatter={(v: number | string, n: string) => [fmtLatency(Number(v)), shortModel(String(n).replace(/ p\d0$/, "")) + String(n).slice(-4)]}
             />
             <Legend
-              wrapperStyle={{ fontSize: 12 }}
+              wrapperStyle={legendProps.wrapperStyle}
               // An ELEMENT, not a `() => <LatencyLegend/>` render function: an inline function is a new
               // component type on every render, so React unmounts and remounts the legend each time a
               // chip is clicked — which throws focus back to the body and leaves a keyboard user
