@@ -210,7 +210,7 @@ export default function AboutView() {
                       {a.retention.origin}
                     </span>
                     <div className="muted">
-                      How long superseded transcript snapshots are kept before <code>scripts/prune.sh</code>{" "}
+                      How long superseded transcript snapshots are kept before <code>agent-lens prune</code>{" "}
                       removes them. Does not affect the database.
                     </div>
                   </Row>

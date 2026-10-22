@@ -32,8 +32,7 @@ export const DEFAULT_PORT = 4477;
 export const DEFAULT_HOST = "127.0.0.1"; // loopback only
 export const DEFAULT_DB_NAME = "agent-lens.db";
 
-/** `.versions/` retention window. NOTE: `scripts/prune.sh` carries its own copy (bash can't import
- *  this) — change both together. The TS side reads it here so the CLI and the server cannot drift. */
+/** `.versions/` retention window, read by `agent-lens prune` and the About page alike. */
 export const DEFAULT_VERSIONS_KEEP_DAYS = 90;
 
 /** The retention window in force. Narrower than ConfigOrigin on purpose: retention has no flag or
