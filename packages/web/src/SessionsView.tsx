@@ -6,8 +6,8 @@ import { useQueryState } from "./useQueryState";
 import { ErrorAlert, Loading } from "./AsyncBoundary";
 import { useDetailsAutoClose } from "./useOutsideClick";
 import { MultiSelect } from "./MultiSelect";
-import { costTitle, fmtCost, fmtDate, fmtDuration, fmtTokens, shortModel, tokenSplitTitle } from "./format";
-import { FilterSelect } from "./FilterSelect";
+import { costTitle, fmtCost, fmtDate, fmtDuration, fmtTokens, projectLabel, shortModel, tokenSplitTitle } from "./format";
+import { SearchBox, SourceSelect, ProjectSelect } from "./ListFilters";
 import { Pager } from "./Pager";
 import { SortHeader, type SortDir } from "./sort";
 import { loadPrefLocal, fetchPref, savePref } from "./prefs";
@@ -64,7 +64,7 @@ const COLUMNS: ColumnDef[] = [
     label: "Project",
     toggleable: true,
     defaultVisible: true,
-    cell: (s) => <td className="path">{s.project_path?.replace(/^.*\//, "") ?? "—"}</td>,
+    cell: (s) => <td className="path">{s.project_path ? projectLabel(s.project_path) : "—"}</td>,
   },
   { id: "turns", label: "Turns", toggleable: true, defaultVisible: true, sortKey: "turns", thClassName: "num", cell: (s) => <td className="num">{s.turn_count}</td> },
   {
@@ -206,7 +206,6 @@ export default function SessionsView() {
   const sources = useLookup<Source[]>("/sources", []);
   const projects = useLookup<Project[]>("/projects", []);
   const models = useLookup<string[]>("/models", []);
-  const [qInput, setQInput] = useState(get("q"));
   const [visibleCols, setVisibleCols] = useState<Set<string>>(loadVisibleCols);
 
   const offset = Number(get("offset", "0"));
@@ -231,10 +230,6 @@ export default function SessionsView() {
   const { data, loading, error } = useFetch<{ total: number; sessions: SessionSummary[] }>("/sessions?" + qs.toString());
   const { total, sessions } = data ?? EMPTY_PAGE;
 
-  function submitSearch(e: React.FormEvent) {
-    e.preventDefault();
-    setParam({ q: qInput.trim() });
-  }
 
   function toggleColumn(id: string, on: boolean) {
     colsTouched.current = true;
@@ -265,39 +260,9 @@ export default function SessionsView() {
     <div>
       <h1 className="sr-only">Sessions</h1>
       <div className="filters">
-        <form onSubmit={submitSearch} className="search" role="search">
-          <input
-            type="search"
-            aria-label="Search session names, projects and transcripts"
-            placeholder="Search names, projects & transcripts…"
-            value={qInput}
-            onChange={(e) => setQInput(e.target.value)}
-          />
-          <button type="submit">Search</button>
-          {get("q") && (
-            <button type="button" className="ghost" onClick={() => (setQInput(""), setParam({ q: "" }))}>
-              clear
-            </button>
-          )}
-        </form>
-        <select aria-label="Filter by source" value={get("source")} onChange={(e) => setParam({ source: e.target.value })}>
-          <option value="">all sources</option>
-          {sources.map((s) => (
-            <option key={s.id} value={s.id}>
-              {s.label} ({s.session_count})
-            </option>
-          ))}
-        </select>
-        <FilterSelect
-          ariaLabel="Filter by project"
-          searchPlaceholder="Find project…"
-          value={get("project")}
-          onChange={(v) => setParam({ project: v })}
-          options={[
-            { value: "", label: "all projects" },
-            ...projects.map((p) => ({ value: p.id, label: `${p.path.replace(/^.*\//, "")} (${p.session_count})` })),
-          ]}
-        />
+        <SearchBox q={get("q")} onSearch={(q) => setParam({ q })} label="Search session names, projects and transcripts" placeholder="Search names, projects & transcripts…" />
+        <SourceSelect value={get("source")} sources={sources} onChange={(v) => setParam({ source: v })} counts />
+        <ProjectSelect value={get("project")} projects={projects} onChange={(v) => setParam({ project: v })} counts />
         <select aria-label="Filter by model" value={get("model")} onChange={(e) => setParam({ model: e.target.value })}>
           <option value="">all models</option>
           {models.map((m) => (

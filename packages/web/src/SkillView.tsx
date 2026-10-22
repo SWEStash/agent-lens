@@ -6,7 +6,7 @@ import { type SkillDetail } from "./api";
 import { AsyncBoundary } from "./AsyncBoundary";
 import { useFetch } from "./useFetch";
 import { useQueryState } from "./useQueryState";
-import { fmtBytes, fmtDate } from "./format";
+import { fmtBytes, fmtDate, projectLabel } from "./format";
 
 function sizeLabel(n: number | null): string {
   return !n || n < 0 ? "—" : fmtBytes(n);
@@ -133,7 +133,7 @@ function SkillDetailView({ data }: { data: SkillDetail }) {
                             </Link>
                           </td>
                           <td>{s.source_id}</td>
-                          <td className="path">{s.project_path?.replace(/^.*\//, "") ?? "—"}</td>
+                          <td className="path">{s.project_path ? projectLabel(s.project_path) : "—"}</td>
                           <td className="num">{s.fire_count}</td>
                           <td>{fmtDate(s.fired_at)}</td>
                         </tr>

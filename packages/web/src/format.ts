@@ -17,6 +17,11 @@ export function fmtTokens(n: number): string {
   return String(n);
 }
 
+/** A project's display name: the basename of its canonical root path. */
+export function projectLabel(path: string): string {
+  return path.replace(/^.*\//, "");
+}
+
 /** 512 B / 3.4 KB / 12 MB / 1.2 GB. Binary units (1 KB = 1024 B), used for every byte size in the UI. */
 export function fmtBytes(n: number): string {
   if (n < 1024) return `${n} B`;

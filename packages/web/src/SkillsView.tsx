@@ -5,7 +5,7 @@ import { useFetch, useLookup } from "./useFetch";
 import { useQueryState } from "./useQueryState";
 import { ErrorAlert, Loading } from "./AsyncBoundary";
 import { fmtDate } from "./format";
-import { FilterSelect } from "./FilterSelect";
+import { SearchBox, SourceSelect, ProjectSelect } from "./ListFilters";
 import { Pager } from "./Pager";
 import { SortHeader, sortRows, useSort } from "./sort";
 
@@ -27,7 +27,6 @@ export default function SkillsView() {
   const { params, get, set: setParam, pick } = useQueryState();
   const sources = useLookup<Source[]>("/sources", []);
   const projects = useLookup<Project[]>("/projects", []);
-  const [qInput, setQInput] = useState(get("q"));
   // Sorting is client-side: the /skills endpoint returns the whole filtered list, so a sort here spans
   // every skill, not just a page. Default mirrors the server order (most-fired).
   const { sort, toggle } = useSort<SkillSortKey>("fired", "desc");
@@ -37,10 +36,6 @@ export default function SkillsView() {
   const qs = pick(["source", "project", "q"]);
   const { data: skills, loading, error } = useFetch<SkillSummary[]>("/skills" + (qs.toString() ? "?" + qs : ""));
 
-  function submitSearch(e: React.FormEvent) {
-    e.preventDefault();
-    setParam({ q: qInput.trim() });
-  }
 
   // A filter or sort change returns to page 1 (mirrors the sessions list).
   useEffect(() => setPage(1), [params, sort.key, sort.dir]);
@@ -54,42 +49,12 @@ export default function SkillsView() {
     <div>
       <h1 className="sr-only">Skills</h1>
       <div className="filters">
-        <form onSubmit={submitSearch} className="search" role="search">
-          <input
-            type="search"
-            aria-label="Search skills by name and body"
-            placeholder="Search skill names & bodies…"
-            value={qInput}
-            onChange={(e) => setQInput(e.target.value)}
-          />
-          <button type="submit">Search</button>
-          {get("q") && (
-            <button type="button" className="ghost" onClick={() => (setQInput(""), setParam({ q: "" }))}>
-              clear
-            </button>
-          )}
-        </form>
+        <SearchBox q={get("q")} onSearch={(q) => setParam({ q })} label="Search skills by name and body" placeholder="Search skill names & bodies…" />
         {/* Source/project filters scope the list to skills fired in matching sessions. No "(count)"
             suffix here: the /sources and /projects endpoints report SESSION counts, which are
             unrelated to skills and only confuse on this page. */}
-        <select aria-label="Filter by source" value={get("source")} onChange={(e) => setParam({ source: e.target.value })}>
-          <option value="">all sources</option>
-          {sources.map((s) => (
-            <option key={s.id} value={s.id}>
-              {s.label}
-            </option>
-          ))}
-        </select>
-        <FilterSelect
-          ariaLabel="Filter by project"
-          searchPlaceholder="Find project…"
-          value={get("project")}
-          onChange={(v) => setParam({ project: v })}
-          options={[
-            { value: "", label: "all projects" },
-            ...projects.map((p) => ({ value: p.id, label: p.path.replace(/^.*\//, "") })),
-          ]}
-        />
+        <SourceSelect value={get("source")} sources={sources} onChange={(v) => setParam({ source: v })} />
+        <ProjectSelect value={get("project")} projects={projects} onChange={(v) => setParam({ project: v })} />
       </div>
 
       <ErrorAlert error={error} />

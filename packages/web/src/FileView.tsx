@@ -2,7 +2,7 @@ import { Link, useSearchParams } from "react-router-dom";
 import { type FileTimeline } from "./api";
 import { AsyncBoundary } from "./AsyncBoundary";
 import { useFetch } from "./useFetch";
-import { fmtDate } from "./format";
+import { fmtDate, projectLabel } from "./format";
 import { LinesDelta, relPath } from "./FilesView";
 
 /**
@@ -38,7 +38,7 @@ function FileTimelineView({ data }: { data: FileTimeline }) {
         <h1>📄 {relPath(data.file_path, data.project_path)}</h1>
         <div className="skill-head-meta muted">
           <span data-tip={data.file_path}>{data.file_path}</span>
-          {data.project_path ? <> · in {data.project_path.replace(/^.*\//, "")}</> : null}
+          {data.project_path ? <> · in {projectLabel(data.project_path)}</> : null}
         </div>
       </header>
 
