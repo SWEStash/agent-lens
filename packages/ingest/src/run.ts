@@ -21,7 +21,7 @@ import {
   transaction,
   type SourceAdapter,
 } from "@agent-lens/core";
-import { finishBulkLoad, openDb, openRaw, readSchemaVersion, resetSchema, type DB } from "./db.js";
+import { finishBulkLoad, openDb, openRaw, resetSchema, SchemaMismatchError, type DB } from "./db.js";
 import { ClaudeCodeAdapter } from "./adapters/claude-code.js";
 import { classify, CLASSIFIER_VERSION } from "./classify.js";
 import { detect, DETECTOR_VERSION } from "./detect.js";
@@ -71,6 +71,17 @@ function shouldReingest(path: string, size: number, mtimeMs: number, prev: FileS
 
   if (prev && prev.sha256 === hash) return { action: "skip-hash", hash };
   return { action: "ingest", hash };
+}
+
+/** openDb, but a stale store ends the process with the rebuild hint instead of a stack trace. */
+function openOrExplain(dbPath: string, tool: string): DB {
+  try {
+    return openDb(dbPath);
+  } catch (err) {
+    if (!(err instanceof SchemaMismatchError)) throw err;
+    console.error(`${tool}: ${err.message}`);
+    process.exit(1);
+  }
 }
 
 /** Everything the end-of-run report counts, gathered from the callers that produced it. */
@@ -170,22 +181,10 @@ export function runIngest(argv: string[] = process.argv.slice(2)): void {
   // --full: open WITHOUT applying schema (the on-disk schema may be a stale version), then
   // drop+recreate from the archive (source of truth). This is also the migration path — a
   // SCHEMA_VERSION bump's new columns take effect here without a separate migration step.
-  const db = args.full ? openRaw(dbPath) : openDb(dbPath);
-  if (!args.full) {
-    // Schema guard: an incremental ingest only runs CREATE IF NOT EXISTS — it adds new tables but
-    // cannot migrate altered columns on existing ones, and never advances the stamp (applySchema is
-    // stamp-if-absent). So a DB stamped by an older build is stale: refuse rather than silently ingest
-    // into a half-migrated schema. `ingest --full` (drop+recreate) is the migration path.
-    const dbVer = readSchemaVersion(db);
-    if (dbVer != null && dbVer !== SCHEMA_VERSION) {
-      console.error(
-        `agent-lens-ingest: schema mismatch — DB is v${dbVer}, this build expects v${SCHEMA_VERSION}. ` +
-          `Run 'agent-lens ingest --full' to rebuild.`,
-      );
-      db.close();
-      process.exit(1);
-    }
-  }
+  // Schema guard: openDb refuses a store stamped by another build before touching its schema, since
+  // an incremental ingest cannot migrate existing tables. `ingest --full` (drop+recreate) is the
+  // migration path.
+  const db = args.full ? openRaw(dbPath) : openOrExplain(dbPath, "agent-lens-ingest");
 
   // Adapter registry keyed by agent type; configured sources resolved by the shared resolver.
   const adapterList: SourceAdapter[] = [new ClaudeCodeAdapter()];
@@ -344,7 +343,7 @@ export function runMetrics(argv: string[] = process.argv.slice(2)): void {
     process.exit(1);
   }
 
-  const db = openDb(dbPath);
+  const db = openOrExplain(dbPath, "agent-lens-metrics");
   const { classified: r, detected: d, errors: e, fileChanges: fc } = runDerivedPasses(db, null);
   db.close();
   console.log(

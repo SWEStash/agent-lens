@@ -46,14 +46,29 @@ function applySchema(db: DB): void {
   ).run(String(SCHEMA_VERSION));
 }
 
+/** The store was written by a build with another SCHEMA_VERSION; only `ingest --full` can rebuild it. */
+export class SchemaMismatchError extends Error {
+  constructor(readonly dbVersion: number) {
+    super(`schema mismatch — DB is v${dbVersion}, this build expects v${SCHEMA_VERSION}. Run 'agent-lens ingest --full' to rebuild.`);
+    this.name = "SchemaMismatchError";
+  }
+}
+
 /**
- * Open (creating if needed) the Agent Lens database and ensure the schema is applied.
- * NOTE: on a stale on-disk schema this only adds missing objects (CREATE IF NOT EXISTS) — it does
- * not migrate changed/added columns. A SCHEMA_VERSION bump is applied via `ingest --full`
- * (openRaw + resetSchema), the canonical rebuild path.
+ * Open (creating if needed) the Agent Lens database and ensure the schema is applied. A store stamped
+ * by another build is refused with SchemaMismatchError BEFORE the schema is applied: CREATE IF NOT
+ * EXISTS cannot migrate an existing table, and an index on a column the old table lacks fails with a
+ * bare "no such column" instead (the v16 upgrade did exactly that). A SCHEMA_VERSION bump is applied
+ * via `ingest --full` (openRaw + resetSchema), the canonical rebuild path.
  */
 export function openDb(file: string): DB {
   const db = openRaw(file);
+  const hasMeta = db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'meta'").get();
+  const stamped = hasMeta ? readSchemaVersion(db) : null;
+  if (stamped != null && stamped !== SCHEMA_VERSION) {
+    db.close();
+    throw new SchemaMismatchError(stamped);
+  }
   applySchema(db);
   return db;
 }
