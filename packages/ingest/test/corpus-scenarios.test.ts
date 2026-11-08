@@ -15,9 +15,18 @@ import { prepareStatements, ingestFile, rebuildDerived, newStats } from "../dist
 import { classify } from "../dist/classify.js";
 import { detect } from "../dist/detect.js";
 import { ClaudeCodeAdapter, parentSessionFromPath, workflowRunFromPath } from "../dist/adapters/claude-code.js";
+import { compareIngestOrder, contentSpan } from "../dist/ingestorder.js";
 import { listJsonl } from "./helpers/seed.js";
 
 const CORPUS = join(dirname(fileURLToPath(import.meta.url)), "../../../test/fixtures/corpus");
+
+/** The corpus in the order a real run ingests it (ADR-038): the order decides which session owns
+ * history that two sessions share, so a test that used path order would test a different store. */
+const inIngestOrder = (files: string[]) =>
+  files
+    .map((path) => ({ path, isVersion: path.includes("/.versions/"), span: contentSpan(path) }))
+    .sort(compareIngestOrder)
+    .map((f) => f.path);
 
 let db: ReturnType<typeof openDb>;
 let malformed = 0;
@@ -29,7 +38,7 @@ beforeAll(() => {
   const adapter = new ClaudeCodeAdapter();
   const stats = newStats();
   const labels = new Set<string>();
-  for (const file of listJsonl(CORPUS)) {
+  for (const file of inIngestOrder(listJsonl(CORPUS))) {
     const label = relative(CORPUS, file).split("/")[0]!; // team-a | team-b | scenarios
     if (!labels.has(label)) {
       // The demo corpus lives under /home/demo; its config root is /home/demo/.claude. detect() reads
@@ -76,9 +85,9 @@ describe("committed corpus represents every pipeline scenario", () => {
     expect(one("SELECT COUNT(*) n FROM findings WHERE evidence LIKE '%/.claude/%'").n).toBe(0);
   });
 
-  it("session counts: 47 total, 38 main, 9 subagent", () => {
-    expect(one("SELECT COUNT(*) n FROM sessions").n).toBe(47);
-    expect(one("SELECT COUNT(*) n FROM sessions WHERE is_sidechain=0").n).toBe(38);
+  it("session counts: 49 total, 40 main, 9 subagent", () => {
+    expect(one("SELECT COUNT(*) n FROM sessions").n).toBe(49);
+    expect(one("SELECT COUNT(*) n FROM sessions WHERE is_sidechain=0").n).toBe(40);
     expect(one("SELECT COUNT(*) n FROM sessions WHERE is_sidechain=1").n).toBe(9);
   });
 
@@ -142,6 +151,13 @@ describe("committed corpus represents every pipeline scenario", () => {
 
   it("dedup: a uuid in mirror + .versions is stored once (version-only event kept)", () => {
     expect(one("SELECT event_count n FROM sessions WHERE id='sc-resumed-0005'").n).toBe(3);
+  });
+
+  it("continued session (ADR-038): the original keeps its history, the continuation links to it, and the shared reply is charged once", () => {
+    const s = (id: string) => one(`SELECT event_count, continued_from_session_id c FROM sessions WHERE id = '${id}'`);
+    expect(s("sc-handoff-0012")).toEqual({ event_count: 3, c: null });
+    expect(s("sc-handoff-0012-next")).toEqual({ event_count: 2, c: "sc-handoff-0012" });
+    expect(one("SELECT COUNT(*) n, MIN(session_id) s FROM token_usage WHERE message_id = 'msg_ho2'")).toEqual({ n: 1, s: "sc-handoff-0012" });
   });
 
   it("cache tokens: read and creation are both tracked", () => {

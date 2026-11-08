@@ -7,7 +7,7 @@
  *
  * Scenarios covered (one source = three claude configs once team-a/team-b are added → multi-source):
  *   plain · subagents (Task, no double-count) · workflow fan-out (linked via subagents/ path) · compaction/meta
- *   · cache tokens · dup-uuid across mirror + .versions (dedup) · malformed/partial JSONL
+ *   · cache tokens · dup-uuid across mirror + .versions (dedup) · continued session (ADR-038) · malformed/partial JSONL
  *
  * Output: test/fixtures/corpus/scenarios/{projects,.versions}/-demo-acme-api/…
  */
@@ -238,6 +238,28 @@ write(`projects/${PROJ}/sc-resumed-0005.jsonl`, resumedMirror);
 write(`.versions/20260301T000000/projects/${PROJ}/sc-resumed-0005.jsonl`, [
   ...resumedMirror,
   asst("e3", 3, OPUS, [{ type: "text", text: "Finished the refactor." }], usage(100, 20, 0, 1100)),
+]);
+
+// 5b) CONTINUED SESSION (ADR-038): Claude Code 2.1.318+ continues a session into a NEW transcript that
+//     repeats the old one's lines under the same uuids (sessionId rewritten) and appends a
+//     `continued-in` pointer to the old file. The reply spans two lines sharing one message id, as
+//     Claude Code writes a multi-block response; copies of the second line are what used to be charged
+//     twice. The continuation's name sorts BEFORE its original's ("-" < "."), so path order would hand
+//     it the shared history: only content order (ingestorder.ts) keeps the original whole.
+const handoffReply = (sid) => [
+  u("ho2", { type: "assistant", sessionId: sid, timestamp: ts(2), message: { role: "assistant", id: "msg_ho2", model: OPUS, content: [{ type: "thinking", thinking: "Sketch the retry policy first." }], usage: usage(500, 80, 0, 3000) } }),
+  u("ho3", { type: "assistant", sessionId: sid, timestamp: ts(2), message: { role: "assistant", id: "msg_ho2", model: OPUS, content: [{ type: "text", text: "Retries now back off exponentially, capped at 30s." }], usage: usage(500, 80, 0, 3000) } }),
+];
+write(`projects/${PROJ}/sc-handoff-0012.jsonl`, [
+  userMsg("ho1", 1, "Add exponential backoff to the webhook retries", { sessionId: "sc-handoff-0012" }),
+  ...handoffReply("sc-handoff-0012"),
+  { type: "continued-in", sessionId: "sc-handoff-0012", timestamp: ts(3), continuedInSessionId: "sc-handoff-0012-next" },
+]);
+write(`projects/${PROJ}/sc-handoff-0012-next.jsonl`, [
+  userMsg("ho1", 1, "Add exponential backoff to the webhook retries", { sessionId: "sc-handoff-0012-next" }),
+  ...handoffReply("sc-handoff-0012-next"),
+  userMsg("hn1", 20, "Now add jitter so retries don't stampede", { sessionId: "sc-handoff-0012-next" }),
+  asst("hn2", 21, OPUS, [{ type: "text", text: "Added full jitter to each backoff step." }], usage(300, 60, 0, 3500)),
 ]);
 
 // 6) BASH CONSOLE: shows the shell-console transcript renderer — a $ prompt per logical command

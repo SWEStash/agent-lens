@@ -51,6 +51,16 @@ line("[1] Token dedup");
     "SELECT COUNT(*) n FROM (SELECT session_id, message_id, COUNT(*) c FROM token_usage WHERE message_id IS NOT NULL GROUP BY session_id, message_id HAVING c > 1)",
   ).n;
   hard("each (session_id, message_id) appears once", dups === 0, `${dups} duplicate groups`);
+  // One API response is one cost, wherever its lines were copied (ADR-038). The per-session check
+  // above cannot see a response charged to two sessions; this one can.
+  const cross = q1(
+    "SELECT COUNT(*) n FROM (SELECT message_id FROM token_usage WHERE message_id IS NOT NULL GROUP BY message_id HAVING COUNT(DISTINCT session_id) > 1)",
+  ).n;
+  hard("each message_id is charged to one session", cross === 0, `${cross} responses in more than one session`);
+  for (const t of ["token_usage", "tool_calls"]) {
+    const n = q1(`SELECT COUNT(*) n FROM ${t} x JOIN events e ON e.uuid = x.event_uuid WHERE e.session_id <> x.session_id`).n;
+    hard(`${t}.session_id == its event's session_id`, n === 0, `${n} rows charged to a session that does not own the line`);
+  }
 }
 
 // 2) Conservation — the shipped dashboardOverview totals must equal direct SUMs over token_usage.
@@ -86,6 +96,17 @@ line("[4] Linkage integrity");
     "SELECT COUNT(*) n FROM sessions s WHERE s.parent_turn_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM turns t WHERE t.id = s.parent_turn_id AND t.session_id = s.parent_session_id)",
   ).n;
   hard("linked subagent.parent_turn_id resolves within parent_session", badParentTurn === 0, `${badParentTurn} broken`);
+  const hasContinuation = qa("PRAGMA table_info(sessions)").some((c) => c.name === "continued_from_session_id");
+  if (hasContinuation) {
+    const badContinuation = q1(
+      "SELECT COUNT(*) n FROM sessions WHERE continued_from_session_id IS NOT NULL AND (continued_from_session_id = id OR continued_from_session_id NOT IN (SELECT id FROM sessions))",
+    ).n;
+    hard("continued_from_session_id resolves to another session", badContinuation === 0, `${badContinuation} broken`);
+  } else soft("continued_from_session_id", "absent: the store predates SCHEMA_VERSION 16, run `ingest --full`");
+  const fk = qa("PRAGMA foreign_key_check");
+  const edges = [...new Set(fk.map((v) => `${v.table} -> ${v.parent}`))].join(", ");
+  hard("no foreign-key violations", fk.length === 0, `${fk.length} rows (${edges})`);
+  if (hasContinuation) soft("continued sessions", `${q1("SELECT COUNT(*) n FROM sessions WHERE continued_from_session_id IS NOT NULL").n}`);
 }
 
 // 5) Orphan accounting — report only. Subagents link either via a Task/Agent tool_use

@@ -49,17 +49,26 @@ pnpm sandbox                                # Layer 5 over the corpus
     signals.
   - `ingest/test/ingest.test.ts`: deduplication, linkage, pruning, streaming, malformed and meta
     lines, cross-file duplicates, and orphan subagents.
+  - `ingest/test/shared-history.test.ts`: history two sessions share (ADR-038). A continuation's
+    copied lines are charged once, the original owns them whatever the discovery order, the copy
+    links back, and a continuation arriving across runs matches a full rebuild.
+  - `ingest/test/fk-diagnostics.test.ts`: a foreign-key violation names its table, missing keys and
+    source files.
   - `ingest/test/detect.test.ts` and `sanitize.test.ts`: the security rules, severities, and the
     command sanitizer, including the gaps we accept.
   - `web/test/`: transcript logic, hooks, components, the session view's deep links, search, time
     range, and keyboard, plus chart visibility and every chart's explanation panel.
     `packages/web/vitest.config.ts` defines the web project and the root config includes it.
-- **Layer 2: invariants** (`scripts/validate.mjs`). Deduplication, conservation (the dashboard total
-  equals a direct `SUM`), cost additivity, linkage integrity, and recomputed aggregates, through the
-  same query code the server runs. Orphans, unpriced models, and unattributed rows are reported
+- **Layer 2: invariants** (`scripts/validate.mjs`). Deduplication (per session, and each response
+  charged to one session only), row ownership (a `token_usage` or `tool_calls` row belongs to its
+  event's session), conservation (the dashboard total equals a direct `SUM`), cost additivity,
+  linkage integrity (including continuations and `PRAGMA foreign_key_check`), and recomputed
+  aggregates, through the same query code the server runs. Orphans, unpriced models, and unattributed rows are reported
   without failing.
 - **Layer 3: determinism** (`ingest/test/determinism.test.ts`). A full rebuild equals a chunked
-  incremental ingest (mains first, then subagents), and re-ingesting adds nothing.
+  incremental ingest (mains first, then subagents), and re-ingesting adds nothing. Files go in the
+  order a real run uses (`ingestorder.ts`), and the Layer 2 ownership and foreign-key invariants are
+  asserted here too, so they run in CI and not only against a real store.
 - **Layer 4: redaction** (`packages/ingest/src/redact.ts`, `test/fixtures/corpus/`). The committed
   corpus is real sessions (not from this project) passed through the redactor. `redact.test.ts`
   proves preservation and leak-freedom on synthetic data; the oracle proves it on the real sessions.
@@ -100,6 +109,7 @@ The corpus has three sources: `team-a` and `team-b` (redacted real sessions) and
 | Several sources, no cross-source bleed | `dashboard.test.ts` | the 3 sources |
 | Compaction and meta lines create no turn | `ingest.test.ts` | `sc-plain-0001` (2 turns) |
 | Resumed session: duplicate uuids deduplicated | `ingest.test.ts` | `sc-resumed-0005` (mirror and `.versions`, 3 events) |
+| Continued session: copied history owned once, copy links back (ADR-038) | `shared-history.test.ts` | `sc-handoff-0012` and `sc-handoff-0012-next` |
 | Cache tokens, read and write | `pricing.test.ts`, `classify.test.ts` | corpus totals |
 | Malformed or partial JSONL | `ingest.test.ts` | `sc-malformed-0004` (1 malformed line) |
 

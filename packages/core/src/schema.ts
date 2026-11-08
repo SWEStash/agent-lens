@@ -19,7 +19,7 @@
  * Bump SCHEMA_VERSION on any DDL change.
  */
 
-export const SCHEMA_VERSION = 15;
+export const SCHEMA_VERSION = 16;
 
 /**
  * Refresh the query planner's statistics. Run by ingest after every write pass. Without
@@ -95,6 +95,7 @@ CREATE TABLE IF NOT EXISTS sessions (
   workflow_run_id   TEXT,                           -- for a Workflow-tool subagent: its run id (wf_<id>) from the path; groups fan-out by run
   parent_session_id TEXT REFERENCES sessions(id), -- spawning session (subagents only); derived in rebuildDerived
   parent_turn_id    TEXT REFERENCES turns(id),     -- the turn that spawned this subagent
+  continued_from_session_id TEXT REFERENCES sessions(id), -- the session whose history this one repeats (ADR-038); derived in rebuildDerived
   started_at        TEXT,               -- ISO8601 of first event
   ended_at          TEXT,               -- ISO8601 of last event
   duration_ms       INTEGER,
@@ -107,6 +108,20 @@ CREATE INDEX IF NOT EXISTS idx_sessions_started ON sessions(started_at);
 CREATE INDEX IF NOT EXISTS idx_sessions_parent_session ON sessions(parent_session_id);
 CREATE INDEX IF NOT EXISTS idx_sessions_workflow_run ON sessions(workflow_run_id);
 CREATE INDEX IF NOT EXISTS idx_sessions_parent_turn ON sessions(parent_turn_id);
+CREATE INDEX IF NOT EXISTS idx_sessions_continued_from ON sessions(continued_from_session_id);
+
+-- Evidence that one session continues another (ADR-038), written at ingest; rebuildDerived turns it
+-- into sessions.continued_from_session_id. No foreign keys: either side may arrive first, or never.
+--   pointer        the origin's transcript ends in {"type":"continued-in","continuedInSessionId":…}
+--   shared-history this session's file repeated lines the origin already owned (shared_events of them)
+CREATE TABLE IF NOT EXISTS session_continuations (
+  session_id        TEXT NOT NULL,
+  origin_session_id TEXT NOT NULL,
+  evidence          TEXT NOT NULL CHECK (evidence IN ('pointer', 'shared-history')),
+  shared_events     INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY (session_id, origin_session_id, evidence)
+);
+CREATE INDEX IF NOT EXISTS idx_session_continuations_origin ON session_continuations(origin_session_id);
 
 -- A turn = user prompt -> assistant completion within a session. ------------
 CREATE TABLE IF NOT EXISTS turns (
@@ -231,7 +246,7 @@ CREATE INDEX IF NOT EXISTS idx_skills_name ON skills(name);
 -- Token usage at the assistant-response grain. Cost derived later from model. --
 -- One API response is logged across multiple JSONL lines (one per content block: text + each
 -- tool_use), and Claude Code stamps the SAME usage object on every line. We dedup at the response
--- grain via the unique (session_id, message_id) index so a response's tokens are counted ONCE, not
+-- grain via the unique message_id index so a response's tokens are counted ONCE, not
 -- once per content block (which over-counted tokens ~2.3x and cost ~3x). event_uuid stays the PK
 -- (the row is attached to whichever content-block event won the insert). --
 CREATE TABLE IF NOT EXISTS token_usage (
@@ -249,9 +264,14 @@ CREATE TABLE IF NOT EXISTS token_usage (
 CREATE INDEX IF NOT EXISTS idx_token_usage_session ON token_usage(session_id);
 -- Foreign-key lookup for deleting turns; see idx_tool_calls_turn.
 CREATE INDEX IF NOT EXISTS idx_token_usage_turn ON token_usage(turn_id);
--- Partial so rare usage rows lacking a message_id (e.g. <synthetic>) don't collide on NULL. --
-CREATE UNIQUE INDEX IF NOT EXISTS idx_token_usage_msg
-  ON token_usage(session_id, message_id) WHERE message_id IS NOT NULL;
+-- One response is one cost wherever its lines were copied (ADR-038), so message_id is unique across
+-- sessions, not per session: a fork subagent re-emits its parent's reply under a new uuid with the same
+-- message id and usage. The first session to store it (content order, ingestorder.ts) is charged.
+-- Partial so rare usage rows lacking a message_id (e.g. <synthetic>) don't collide on NULL.
+-- Renamed from idx_token_usage_msg (session_id, message_id): an index's columns cannot change in place. --
+DROP INDEX IF EXISTS idx_token_usage_msg;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_token_usage_message
+  ON token_usage(message_id) WHERE message_id IS NOT NULL;
 
 -- Heuristic classification (category + complexity), re-runnable. -----------
 -- scope: 'session' | 'turn'; target_id references that entity. -------------

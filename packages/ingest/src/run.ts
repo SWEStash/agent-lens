@@ -34,6 +34,8 @@ import { ingestSubagentMeta, newMetaStats } from "./meta.js";
 import { ingestToolResults, newToolResultStats } from "./toolResults.js";
 import { encodeProjectPath, isExcludedArchivePath } from "./redact.js";
 import { sha256, sha256File, streamLines, STREAM_THRESHOLD } from "./fileread.js";
+import { compareIngestOrder, contentSpan } from "./ingestorder.js";
+import { assertForeignKeys } from "./fkcheck.js";
 
 function parseIngestArgs(argv: string[]) {
   const a = { full: false, db: "", archive: "" };
@@ -54,23 +56,21 @@ type FileState = { size: number; mtime_ms: number; sha256: string; events_ingest
  *   (ADR-010, impact 1).
  * - `skip-hash`: content is unchanged though mtime moved (e.g. an rsync --append-verify re-stat) —
  *   skip the ingest but refresh size/mtime so the next run short-circuits on stat alone.
- * - `ingest`: genuinely new/changed. `buf` is the whole file for the common case, null for a large
- *   file that must be streamed instead. */
+ * - `ingest`: genuinely new/changed. Its bytes are read again when it is ingested, after the run has
+ *   put its files in content order (ADR-038). */
 type FileDecision =
   | { action: "skip-stat" }
   | { action: "skip-hash"; hash: string }
-  | { action: "ingest"; hash: string; buf: Buffer | null };
+  | { action: "ingest"; hash: string };
 
 function shouldReingest(path: string, size: number, mtimeMs: number, prev: FileState): FileDecision {
   if (prev && prev.size === size && prev.mtime_ms === mtimeMs) return { action: "skip-stat" };
 
   // Size/mtime moved: read + hash to decide. Whole-file for the common case; stream large files.
-  const small = size <= STREAM_THRESHOLD;
-  const buf = small ? readFileSync(path) : null;
-  const hash = small ? sha256(buf!) : sha256File(path);
+  const hash = size <= STREAM_THRESHOLD ? sha256(readFileSync(path)) : sha256File(path);
 
   if (prev && prev.sha256 === hash) return { action: "skip-hash", hash };
-  return { action: "ingest", hash, buf };
+  return { action: "ingest", hash };
 }
 
 /** Everything the end-of-run report counts, gathered from the callers that produced it. */
@@ -83,14 +83,6 @@ interface IngestReport {
   wfStats: { upserted: number; skipped: number; malformed: number };
   metaStats: { upserted: number; skipped: number; malformed: number };
   trStats: { upserted: number; skipped: number; malformed: number };
-}
-
-/** Fail the run (rolling it back) if any row references a parent that does not exist. */
-function assertForeignKeys(db: DB): void {
-  const bad = db.prepare("PRAGMA foreign_key_check").all() as Array<{ table: string; parent: string }>;
-  if (!bad.length) return;
-  const edges = [...new Set(bad.map((b) => `${b.table} -> ${b.parent}`))].join(", ");
-  throw new Error(`agent-lens-ingest: --full produced ${bad.length} foreign-key violations (${edges}); rolled back`);
 }
 
 /** Tally the final table counts, close the DB, and print the one-block run summary. */
@@ -242,9 +234,11 @@ export function runIngest(argv: string[] = process.argv.slice(2)): void {
         let files = adapter.discover(join(archiveRoot, source.label), source.label);
         // Drop excluded projects (matches /projects/<encodedDir>/ so nested subagent files go too).
         if (excludedDirs.length) files = files.filter((f) => !isExcludedArchivePath(f.path, excludedDirs));
-        // Mirror before versions so the mirror copy wins canonical fields (ON CONFLICT DO NOTHING).
-        files.sort((a, b) => Number(a.isVersion) - Number(b.isVersion));
-
+        // Decide every file first, then ingest the changed ones in content order (ADR-038): an event
+        // belongs to the first session that stores it, so an original must precede the sessions that
+        // repeat its lines. The order also puts the mirror before .versions/, so the mirror's copy of
+        // a line wins its canonical fields (ON CONFLICT DO NOTHING).
+        const pending = [];
         for (const file of files) {
           stats.files++;
           const st = statSync(file.path);
@@ -268,9 +262,15 @@ export function runIngest(argv: string[] = process.argv.slice(2)): void {
             stats.skipped++;
             continue;
           }
+          // Keep the hash, not decision.buf: holding every pending file's bytes would put the whole
+          // archive in memory on --full. The re-read below is served from the page cache.
+          pending.push({ file, path: file.path, isVersion: file.isVersion, span: contentSpan(file.path), size: st.size, mtimeMs, hash: decision.hash });
+        }
+        pending.sort(compareIngestOrder);
 
-          const lines = decision.buf ? decision.buf.toString("utf8").split("\n") : streamLines(file.path);
-          ingestFile(db, stmts, adapter, file, lines, { size: st.size, mtimeMs, hash: decision.hash }, now, stats, { provisionalTurns: args.full });
+        for (const { file, size, mtimeMs, hash } of pending) {
+          const lines = size <= STREAM_THRESHOLD ? readFileSync(file.path, "utf8").split("\n") : streamLines(file.path);
+          ingestFile(db, stmts, adapter, file, lines, { size, mtimeMs, hash }, now, stats, { provisionalTurns: args.full });
           dirty.add(file.sessionId);
         }
 
@@ -299,7 +299,9 @@ export function runIngest(argv: string[] = process.argv.slice(2)): void {
       // dashboard's covering indexes only win with stats present (see ANALYZE_SQL).
       db.exec(ANALYZE_SQL);
 
-      if (args.full) assertForeignKeys(db);
+      // Every run, not just --full: deferred foreign keys would otherwise fail at COMMIT with no
+      // table, key or session named (ADR-038). ~1.5 s on a 3 GB store.
+      assertForeignKeys(db);
       return { stats, classified, detected, fileChanges, wfStats, metaStats, trStats };
     })();
   } finally {

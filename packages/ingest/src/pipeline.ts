@@ -127,6 +127,8 @@ export function pruneExcluded(db: DB, excludedPaths: string[]): number {
       db.exec("DELETE FROM file_changes WHERE session_id IN (SELECT id FROM _prune)");
       for (const t of ["token_usage", "tool_calls", "turns", "events"]) db.exec(`DELETE FROM ${t} WHERE session_id IN (SELECT id FROM _prune)`);
       db.exec("DELETE FROM classifications WHERE scope = 'session' AND target_id IN (SELECT id FROM _prune)");
+      db.exec("UPDATE sessions SET continued_from_session_id = NULL WHERE continued_from_session_id IN (SELECT id FROM _prune)");
+      db.exec("DELETE FROM session_continuations WHERE session_id IN (SELECT id FROM _prune) OR origin_session_id IN (SELECT id FROM _prune)");
       db.exec("DELETE FROM sessions WHERE id IN (SELECT id FROM _prune)");
       const delState = db.prepare("DELETE FROM ingest_state WHERE file_path = ?");
       for (const f of files) delState.run(f);
@@ -246,6 +248,11 @@ function expandDirtyScope(db: DB, dirty: Set<string>): void {
       UNION
       SELECT spawn_parent_id FROM sessions
         WHERE id IN (SELECT id FROM _dirty) AND spawn_parent_id IS NOT NULL
+      UNION
+      -- continuation evidence (ADR-038): a dirty origin pulls in its copies, since its pointer (or
+      -- its being pruned) changes their link. A dirty copy relinks itself; its origin is unaffected.
+      SELECT session_id FROM session_continuations
+        WHERE origin_session_id IN (SELECT id FROM _dirty)
   `);
   const count = db.prepare("SELECT COUNT(*) n FROM _dirty");
   let prev = -1;
@@ -476,6 +483,23 @@ function linkParents(db: DB, scope: Scope): void {
   `);
 }
 
+/** Link each copy to the session it continues (ADR-038): a pointer wins, else the origin it shares
+ * the most lines with. Runs after pruneOrphans, so only an origin that survived the run is linked. */
+function linkContinuations(db: DB, scope: Scope): void {
+  db.exec(`
+    UPDATE sessions SET continued_from_session_id = COALESCE(
+      (SELECT c.origin_session_id FROM session_continuations c
+        WHERE c.session_id = sessions.id AND c.evidence = 'pointer' AND c.origin_session_id <> sessions.id
+          AND c.origin_session_id IN (SELECT id FROM sessions)
+        ORDER BY c.origin_session_id LIMIT 1),
+      (SELECT c.origin_session_id FROM session_continuations c
+        WHERE c.session_id = sessions.id AND c.evidence = 'shared-history' AND c.origin_session_id <> sessions.id
+          AND c.origin_session_id IN (SELECT id FROM sessions)
+        ORDER BY c.shared_events DESC, c.origin_session_id LIMIT 1))
+    WHERE EXISTS (SELECT 1 FROM session_continuations c WHERE c.session_id = sessions.id)${scope.andSelfId}
+  `);
+}
+
 /** Recompute the per-session aggregates (counts, wall-clock span, sidechain flag) from events/turns. */
 function recomputeSessionAggregates(db: DB, scope: Scope): void {
   db.exec(`
@@ -503,6 +527,9 @@ function recomputeSessionAggregates(db: DB, scope: Scope): void {
  * session, while detect() and deriveFileChanges run after this rebuild over the dirty scope only — so
  * a vanished non-dirty session's rows must be cleared here or they leak. */
 function pruneOrphans(db: DB, scope: Scope, incremental: boolean): void {
+  // A copy may already link to a session about to go (ADR-038); unlink it so the delete stays FK-safe.
+  db.exec(`UPDATE sessions SET continued_from_session_id = NULL
+    WHERE continued_from_session_id IN (SELECT id FROM sessions WHERE event_count = 0${scope.andId})`);
   db.exec(`DELETE FROM sessions WHERE event_count = 0${scope.andId}`);
   db.exec("DELETE FROM classifications WHERE scope = 'session' AND target_id NOT IN (SELECT id FROM sessions)");
   db.exec("DELETE FROM findings WHERE session_id NOT IN (SELECT id FROM sessions)");
@@ -537,6 +564,7 @@ export function rebuildDerived(db: DB, dirty?: Set<string> | null): Set<string> 
     // Clear skill-version links for the scope so changed/removed bodies don't leave a stale link.
     db.exec(`UPDATE tool_calls SET skill_id = NULL${scope.bySession}`);
     db.exec(`UPDATE sessions SET parent_turn_id = NULL${scope.byId}`);
+    db.exec(`UPDATE sessions SET continued_from_session_id = NULL${scope.byId}`);
     db.exec(`DELETE FROM turns${scope.bySession}`);
 
     const sessionIds = db.prepare(`SELECT id FROM sessions${scope.byId}`).all() as Array<{ id: string }>;
@@ -546,6 +574,7 @@ export function rebuildDerived(db: DB, dirty?: Set<string> | null): Set<string> 
     linkParents(db, scope);
     recomputeSessionAggregates(db, scope);
     pruneOrphans(db, scope, incremental);
+    linkContinuations(db, scope);
 
     if (incremental) {
       const expanded = new Set(
@@ -570,6 +599,8 @@ export interface IngestStatements {
   upsertProject: Stmt;
   insSessionStub: Stmt;
   upsertSession: Stmt;
+  eventOwner: Stmt;
+  upsertContinuation: Stmt;
 }
 
 export function prepareStatements(db: DB): IngestStatements {
@@ -594,8 +625,8 @@ export function prepareStatements(db: DB): IngestStatements {
     ),
     insTokens: db.prepare(
       // Bare ON CONFLICT (no target) so the insert is skipped on EITHER the event_uuid PK or the
-      // unique (session_id, message_id) index — the latter collapses a response's repeated
-      // per-content-block usage lines into a single row.
+      // unique message_id index — the latter collapses a response's repeated per-content-block
+      // usage lines into a single row, and keeps a copy in another session from charging it again.
       `INSERT INTO token_usage (event_uuid, session_id, turn_id, message_id, model, input_tokens, output_tokens, cache_creation_input_tokens, cache_read_input_tokens, service_tier)
        VALUES (@event_uuid, @session_id, @turn_id, @message_id, @model, @input_tokens, @output_tokens, @cache_creation_input_tokens, @cache_read_input_tokens, @service_tier)
        ON CONFLICT DO NOTHING`,
@@ -625,6 +656,13 @@ export function prepareStatements(db: DB): IngestStatements {
        ON CONFLICT(id) DO UPDATE SET last_seen = @now, encoded_dir = COALESCE(excluded.encoded_dir, encoded_dir)`,
     ),
     insSessionStub: db.prepare("INSERT OR IGNORE INTO sessions (id, agent_id, source_id) VALUES (?, ?, ?)"),
+    eventOwner: db.prepare("SELECT session_id FROM events WHERE uuid = ?"),
+    // A file is always re-read whole, so its shared-line count replaces the previous one.
+    upsertContinuation: db.prepare(
+      `INSERT INTO session_continuations (session_id, origin_session_id, evidence, shared_events)
+       VALUES (@session_id, @origin_session_id, @evidence, @shared_events)
+       ON CONFLICT(session_id, origin_session_id, evidence) DO UPDATE SET shared_events = excluded.shared_events`,
+    ),
     upsertSession: db.prepare(
       `INSERT INTO sessions (id, agent_id, source_id, project_id, slug, ai_title, cli_version, entrypoint, git_branch, spawn_parent_id, workflow_run_id)
        VALUES (@id, @agent_id, @source_id, @project_id, @slug, @ai_title, @cli_version, @entrypoint, @git_branch, @spawn_parent_id, @workflow_run_id)
@@ -667,6 +705,8 @@ export function ingestFile(
   // implies, so rebuildTurns has to rewrite only where timestamps disagree (0.6% of real events).
   let turnSeq = -1;
   let firstCwd: string | null = null;
+  // Lines this file repeats that another session already owns, by owner (ADR-038).
+  const sharedWith = new Map<string, number>();
 
   const tx = transaction(db, () => {
     // Ensure the session row exists before any event references it (FK).
@@ -686,6 +726,10 @@ export function ingestFile(
         if (parsed.meta.cwd && firstCwd === null) firstCwd = parsed.meta.cwd;
         Object.assign(sessionMeta, parsed.meta);
       }
+      // A line's token_usage and tool_calls rows belong to the session that owns its event (ADR-038).
+      // A line already stored (a re-read, a .versions/ copy, or history another session repeats)
+      // adds none: its rows were written with the event, under the owner's session id.
+      let inserted = false;
       if (parsed.event) {
         // raw_json is stored gzip-compressed (ADR-011); compress at this single write chokepoint so
         // adapters stay agent-agnostic and emit a plain string.
@@ -696,12 +740,16 @@ export function ingestFile(
         }
         const info = stmts.insEvent.run({ ...parsed.event, turn_id: turnId, raw_json: packRaw(parsed.event.raw_json) });
         if (info.changes > 0) {
+          inserted = true;
           stats.newEvents++;
           eventsInFile++;
+        } else {
+          const owner = (stmts.eventOwner.get(parsed.event.uuid) as { session_id: string } | undefined)?.session_id;
+          if (owner && owner !== file.sessionId) sharedWith.set(owner, (sharedWith.get(owner) ?? 0) + 1);
         }
       }
-      if (parsed.tokenUsage) runNamed(stmts.insTokens, parsed.tokenUsage);
-      if (parsed.toolCalls) for (const tc of parsed.toolCalls) runNamed(stmts.insTool, tc);
+      if (inserted && parsed.tokenUsage) runNamed(stmts.insTokens, parsed.tokenUsage);
+      if (inserted && parsed.toolCalls) for (const tc of parsed.toolCalls) runNamed(stmts.insTool, tc);
       if (parsed.toolResults)
         for (const tr of parsed.toolResults)
           stmts.patchTool.run({
@@ -745,6 +793,13 @@ export function ingestFile(
       spawn_parent_id: file.parentSessionId ?? null,
       workflow_run_id: file.workflowRunId ?? null,
     });
+
+    for (const [origin, n] of sharedWith) {
+      stmts.upsertContinuation.run({ session_id: file.sessionId, origin_session_id: origin, evidence: "shared-history", shared_events: n });
+    }
+    if (sessionMeta.continued_in_session_id && sessionMeta.continued_in_session_id !== file.sessionId) {
+      stmts.upsertContinuation.run({ session_id: sessionMeta.continued_in_session_id, origin_session_id: file.sessionId, evidence: "pointer", shared_events: 0 });
+    }
 
     stmts.setState.run({
       file_path: file.path,
