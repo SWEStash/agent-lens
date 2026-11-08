@@ -392,3 +392,20 @@ describe("unpriced models travel with the cost they understate", () => {
     await local.close();
   });
 });
+
+describe("continued sessions (ADR-038)", () => {
+  it("names the session a continuation continues, and lists an original's continuations", async () => {
+    const db = freshDb();
+    addSession(db, "orig", { title: "Original work", startedAt: "2026-11-04T22:03:26.000Z" });
+    addSession(db, "cont", { title: "Picked up again", continuedFrom: "orig", startedAt: "2026-11-04T22:03:26.000Z" });
+    const api = await appFor(db);
+
+    const cont = (await api.inject({ method: "GET", url: "/api/sessions/cont" })).json();
+    expect(cont.continued_from).toEqual({ id: "orig", title: "Original work" });
+    expect(cont.continued_in).toEqual([]);
+
+    const orig = (await api.inject({ method: "GET", url: "/api/sessions/orig" })).json();
+    expect(orig.continued_from).toBeNull();
+    expect(orig.continued_in).toEqual([{ id: "cont", title: "Picked up again" }]);
+  });
+});

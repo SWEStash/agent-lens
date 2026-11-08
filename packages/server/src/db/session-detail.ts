@@ -1,7 +1,7 @@
 /** One session's detail payload (GET /api/sessions/:id) and its archive location. */
 import { existsSync } from "node:fs";
 import { severityRank, errorKind, type ToolErrorType } from "@agent-lens/core";
-import type { Finding, FileChangeRow, EventNode, Classification, ClassificationSignals, SessionChild, SessionDetail, SessionDetailData, SessionLocation, SessionParent, SessionRow, TokenSplit, ToolCall, TurnRow, WorkflowRun } from "@agent-lens/contracts";
+import type { Finding, FileChangeRow, EventNode, Classification, ClassificationSignals, SessionChild, SessionDetail, SessionDetailData, SessionLink, SessionLocation, SessionParent, SessionRow, TokenSplit, ToolCall, TurnRow, WorkflowRun } from "@agent-lens/contracts";
 import { tableExists, queryAll, queryGet, pushGrouped, metaJoin, metaProjection } from "../sql-util.js";
 import type { ToolCallProjection, ClassificationProjectionRow, EventProjectionRow, EventUsageRow, FindingProjectionRow, SessionChildRow, SessionParentRow, ToolResultRow } from "../rows.js";
 import { sessionUsage, usageBySession, splitOf, tokensOf, costOf, unpricedOf } from "../usage.js";
@@ -220,6 +220,22 @@ function loadParent(db: DB, session: SessionRow): SessionParent | null {
   return p ? { id: p.id, title: displayTitle(p.ai_title, p.slug), turn_seq: p.turn_seq ?? null } : null;
 }
 
+/** Continuation links (ADR-038), both ways. A store older than schema v16 has no such column, which
+ * shows as the key missing from `SELECT s.*`; it then has no links rather than a failed query. */
+function loadContinuations(db: DB, session: SessionRow): { continued_from: SessionLink | null; continued_in: SessionLink[] } {
+  if (!("continued_from_session_id" in session)) return { continued_from: null, continued_in: [] };
+  const link = (r: { id: string; ai_title: string | null; slug: string | null }): SessionLink => ({ id: r.id, title: displayTitle(r.ai_title, r.slug) });
+  const from = session.continued_from_session_id
+    ? queryGet<{ id: string; ai_title: string | null; slug: string | null }>(db, "SELECT id, ai_title, slug FROM sessions WHERE id = ?", session.continued_from_session_id)
+    : undefined;
+  const into = queryAll<{ id: string; ai_title: string | null; slug: string | null }>(
+    db,
+    "SELECT id, ai_title, slug FROM sessions WHERE continued_from_session_id = ? ORDER BY started_at, id",
+    session.id,
+  );
+  return { continued_from: from ? link(from) : null, continued_in: into.map(link) };
+}
+
 /** Spawned subagents (schema v3): sessions whose parent_session_id points back here. Nesting them
  * under the parent is why the flat session list defaults to main-only — a task with N subagents is
  * one row with N children, not N+1 sibling rows sharing the same slug.
@@ -336,6 +352,7 @@ export function getSession(db: DB, id: string): SessionDetail | null {
     events,
     classification: loadClassification(db, id),
     parent: loadParent(db, session),
+    ...loadContinuations(db, session),
     children: loadChildren(db, id),
     workflow_runs: loadWorkflowRuns(db, id),
     findings,

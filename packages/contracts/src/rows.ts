@@ -42,6 +42,8 @@ export interface SessionRow {
   workflow_run_id: string | null;
   parent_session_id: string | null;
   parent_turn_id: string | null;
+  /** The session whose history this one repeats (ADR-038). Absent on a store older than schema v16. */
+  continued_from_session_id?: string | null;
   started_at: string | null;
   ended_at: string | null;
   duration_ms: number | null;
