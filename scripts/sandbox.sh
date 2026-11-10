@@ -42,8 +42,8 @@ echo "=== scenario assertions (DB) ==="
 ok 1 "$(echo "$INGEST" | grep -oE 'malformed=[0-9]+' | head -1 | cut -d= -f2)" "malformed line counted"
 # multi-source: three labeled sources, no cross-source bleed.
 ok 3 "$(q "SELECT COUNT(DISTINCT source_id) FROM sessions;")" "multi-source (3 sources)"
-ok 47 "$(q "SELECT COUNT(*) FROM sessions;")" "total sessions"
-ok 38 "$(q "SELECT COUNT(*) FROM sessions WHERE is_sidechain=0;")" "main sessions"
+ok 49 "$(q "SELECT COUNT(*) FROM sessions;")" "total sessions"
+ok 40 "$(q "SELECT COUNT(*) FROM sessions WHERE is_sidechain=0;")" "main sessions"
 # sidecars: the workflow result (phase graph), per-subagent meta (type/description badges), and a
 # spilled full tool output ("Show full result") — the three sidecar ingest paths, exercised end-to-end.
 ok 1 "$(q "SELECT COUNT(*) FROM workflow_results WHERE run_id='wf_demo000abc';")" "workflow result sidecar ingested"
@@ -66,6 +66,9 @@ ok 1300 "$(q "SELECT SUM(input_tokens) FROM token_usage WHERE session_id='sc-sub
 ok 2 "$(q "SELECT turn_count FROM sessions WHERE id='sc-plain-0001';")" "compaction adds no turn"
 # dedup: a uuid in both mirror and .versions is stored once (e3 from the version is kept).
 ok 3 "$(q "SELECT event_count FROM sessions WHERE id='sc-resumed-0005';")" "dup-uuid dedup (mirror + .versions)"
+ok 3 "$(q "SELECT event_count FROM sessions WHERE id='sc-handoff-0012';")" "continued session: original keeps its history (ADR-038)"
+ok sc-handoff-0012 "$(q "SELECT continued_from_session_id FROM sessions WHERE id='sc-handoff-0012-next';")" "continued session: copy links to its original"
+ok 1 "$(q "SELECT COUNT(*) FROM token_usage WHERE message_id='msg_ho2';")" "continued session: shared reply charged once"
 # cache tokens accounted (read and creation are tracked separately).
 ok 1 "$(q "SELECT (SUM(cache_read_input_tokens)>0 AND SUM(cache_creation_input_tokens)>0) FROM token_usage;")" "cache read + creation tracked"
 
@@ -81,7 +84,7 @@ node -e '
   const ov = JSON.parse(process.argv[1]), bd = JSON.parse(process.argv[2]);
   const sk = JSON.parse(process.argv[3]), skd = JSON.parse(process.argv[4]);
   let bad = 0; const ok = (c, n) => { console.log(`  ${c ? "PASS" : "FAIL"}  ${n}`); if (!c) bad++; };
-  ok(ov.sessions === 47, "overview serves 47 sessions");
+  ok(ov.sessions === 49, "overview serves 49 sessions");
   ok(bd.by_source.length === 3, "breakdowns: 3 sources");
   ok(ov.cost > 0 && ov.tokens.cache_read > 0, "overview: cost + cache_read > 0");
   ok(bd.subagent_fanout.total_spawns >= 1, "breakdowns: subagent fan-out present");

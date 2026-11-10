@@ -50,13 +50,16 @@ export interface SessionOpts {
   parent?: string | null;
   parentTurn?: string | null;
   workflowRun?: string | null;
+  /** The session this one continues (ADR-038). */
+  continuedFrom?: string | null;
 }
 
 export function addSession(db: DatabaseSync, id: string, o: SessionOpts = {}) {
   db.prepare(
     `INSERT INTO sessions (id, agent_id, source_id, project_id, ai_title, is_sidechain, started_at, ended_at,
-                           duration_ms, event_count, turn_count, parent_session_id, parent_turn_id, workflow_run_id)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                           duration_ms, event_count, turn_count, parent_session_id, parent_turn_id, workflow_run_id,
+                           continued_from_session_id)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     id,
     AGENT,
@@ -72,6 +75,7 @@ export function addSession(db: DatabaseSync, id: string, o: SessionOpts = {}) {
     o.parent ?? null,
     o.parentTurn ?? null,
     o.workflowRun ?? null,
+    o.continuedFrom ?? null,
   );
 }
 

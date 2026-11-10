@@ -18,11 +18,20 @@ import { classify } from "../dist/classify.js";
 import { detect } from "../dist/detect.js";
 import { deriveFileChanges } from "../dist/filechanges.js";
 import { ClaudeCodeAdapter } from "../dist/adapters/claude-code.js";
+import { compareIngestOrder, contentSpan } from "../dist/ingestorder.js";
 import { listJsonl } from "./helpers/seed.js";
 
 const CORPUS = join(dirname(fileURLToPath(import.meta.url)), "../../../test/fixtures/corpus");
 
-const allFiles = listJsonl(CORPUS);
+/** The corpus in the order a real run ingests it (ADR-038): the order decides which session owns
+ * history that two sessions share, so a test that used path order would test a different store. */
+const inIngestOrder = (files: string[]) =>
+  files
+    .map((path) => ({ path, isVersion: path.includes("/.versions/"), span: contentSpan(path) }))
+    .sort(compareIngestOrder)
+    .map((f) => f.path);
+
+const allFiles = inIngestOrder(listJsonl(CORPUS));
 const toSF = (file: string): SourceFile => ({ path: file, sessionId: basename(file, ".jsonl"), encodedDir: basename(dirname(file)), isVersion: false, sourceId: "x" });
 
 function newDb() {
@@ -45,7 +54,7 @@ const sessionIdsOf = (files: string[]) => new Set(files.map((f) => basename(f, "
 function snapshot(db: any): string {
   const dump = (sql: string) => JSON.stringify(db.prepare(sql).all());
   return [
-    dump("SELECT id, is_sidechain, parent_session_id, parent_turn_id, event_count, turn_count, duration_ms FROM sessions ORDER BY id"),
+    dump("SELECT id, is_sidechain, parent_session_id, parent_turn_id, continued_from_session_id, event_count, turn_count, duration_ms FROM sessions ORDER BY id"),
     dump("SELECT id, session_id, seq, model FROM turns ORDER BY id"),
     dump("SELECT target_id, category, complexity_score, complexity_band FROM classifications ORDER BY target_id"),
     dump("SELECT event_uuid, turn_id FROM token_usage ORDER BY event_uuid"),
@@ -55,8 +64,27 @@ function snapshot(db: any): string {
   ].join("\n");
 }
 
+/**
+ * What must hold for any store, checked here on every CI run rather than only by `pnpm validate`
+ * against a real store (validation Layer 2). The double-count behind the 2026-11-04 outage broke the
+ * second and third for months before anything crashed (ADR-038).
+ */
+function ownershipViolations(db: any): Record<string, number> {
+  const n = (sql: string) => (db.prepare(sql).get() as { n: number }).n;
+  return {
+    foreignKeys: db.prepare("PRAGMA foreign_key_check").all().length,
+    responsesInTwoSessions: n(
+      "SELECT COUNT(*) n FROM (SELECT message_id FROM token_usage WHERE message_id IS NOT NULL GROUP BY message_id HAVING COUNT(DISTINCT session_id) > 1)",
+    ),
+    tokenRowsNotOwned: n("SELECT COUNT(*) n FROM token_usage x JOIN events e ON e.uuid = x.event_uuid WHERE e.session_id <> x.session_id"),
+    toolRowsNotOwned: n("SELECT COUNT(*) n FROM tool_calls x JOIN events e ON e.uuid = x.event_uuid WHERE e.session_id <> x.session_id"),
+  };
+}
+const NONE = { foreignKeys: 0, responsesInTwoSessions: 0, tokenRowsNotOwned: 0, toolRowsNotOwned: 0 };
+
 describe("pipeline determinism over the committed corpus", () => {
   let fullSnap: string;
+  let fullDb: any;
   beforeAll(() => {
     expect(allFiles.length).toBeGreaterThan(0); // corpus is present
     const { db, stmts, adapter } = newDb();
@@ -66,6 +94,11 @@ describe("pipeline determinism over the committed corpus", () => {
     detect(db); // full
     deriveFileChanges(db); // full
     fullSnap = snapshot(db);
+    fullDb = db;
+  });
+
+  it("leaves no row pointing at a missing parent, and charges every line to the session that owns it", () => {
+    expect(ownershipViolations(fullDb)).toEqual(NONE);
   });
 
   it("incremental (mains then subagents) reproduces the full-rebuild snapshot exactly", () => {
@@ -85,6 +118,7 @@ describe("pipeline determinism over the committed corpus", () => {
     detect(db, e2);
     deriveFileChanges(db, e2);
     expect(snapshot(db)).toBe(fullSnap);
+    expect(ownershipViolations(db)).toEqual(NONE);
   });
 
   it("is idempotent: re-ingesting unchanged files adds 0 events and changes nothing", () => {

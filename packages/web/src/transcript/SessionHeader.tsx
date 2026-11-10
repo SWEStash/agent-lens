@@ -9,6 +9,10 @@ import { ClassificationBadge } from "./Classification";
 import { SecurityBanner } from "./Findings";
 import { FilesChangedPanel } from "./FilesChanged";
 
+const SessionLinkTo = ({ s }: { s: { id: string; title: string | null } }) => (
+  <Link to={`/session/${s.id}`}>{s.title || s.id.slice(0, 12)}</Link>
+);
+
 export function SessionHeader({ d }: { d: SessionDetail }) {
   const s = d.session;
   return (
@@ -24,10 +28,27 @@ export function SessionHeader({ d }: { d: SessionDetail }) {
         {d.parent && (
           <span className="spawned-by">
             ↖ spawned by{" "}
-            <Link to={`/session/${d.parent.id}`}>{d.parent.title || d.parent.id.slice(0, 12)}</Link>
+            <SessionLinkTo s={d.parent} />
             {d.parent.turn_seq != null ? ` · turn ${d.parent.turn_seq + 1}` : ""}
           </span>
         )}
+        {/* Optional-chained like the cost below: an older server sends neither field (ADR-038). */}
+        {d.continued_from && (
+          <span className="spawned-by" data-tip="This session repeats that one's history; the earlier part is shown there.">
+            ↖ continues <SessionLinkTo s={d.continued_from} />
+          </span>
+        )}
+        {d.continued_in?.length ? (
+          <span className="spawned-by">
+            ↘ continued in{" "}
+            {d.continued_in.map((c, i) => (
+              <span key={c.id}>
+                {i > 0 && ", "}
+                <SessionLinkTo s={c} />
+              </span>
+            ))}
+          </span>
+        ) : null}
         <span>{d.turns.length} turns</span>
         <span>{s.event_count} events</span>
         <span data-tip={tokenSplitTitle(s.token_split)}>{fmtTokens(s.tokens)} tok</span>

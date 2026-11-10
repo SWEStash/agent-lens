@@ -45,6 +45,8 @@ export interface SessionMeta {
   entrypoint?: string;
   git_branch?: string;
   is_sidechain?: boolean;
+  /** This session handed off to that one (a `continued-in` line); ADR-038. */
+  continued_in_session_id?: string;
 }
 
 /** What an adapter produces for a single raw transcript line. */

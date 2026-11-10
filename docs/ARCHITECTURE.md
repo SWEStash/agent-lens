@@ -107,7 +107,9 @@ Key properties (full rationale in [ADR-010](decisions/ADR-010-incremental-scalab
 - **Stat short-circuit.** A file with unchanged `size` and `mtime` is skipped without reading or
   hashing, so a run's I/O tracks what changed, not the size of the archive.
 - **Idempotent writes.** Events are keyed by `uuid` with `ON CONFLICT DO NOTHING`; ingesting the mirror
-  and all divergence backups deduplicates to the maximal history (ADR-001/002).
+  and all divergence backups deduplicates to the maximal history (ADR-001/002). A line's token and
+  tool rows are written only by the session that stores its event, and a run ingests files oldest
+  content first, so history a continued session repeats stays with its original (ADR-038).
 - **Dirty-session rebuild.** Only the sessions touched this run, plus their linked subagents and
   parents (expanded to a fixpoint), get their turns, aggregates, linkage, classification, findings,
   and error types recomputed. `--full` rebuilds everything.

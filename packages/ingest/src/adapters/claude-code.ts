@@ -200,6 +200,7 @@ export class ClaudeCodeAdapter implements SourceAdapter {
     if (asString(r.gitBranch)) meta.git_branch = r.gitBranch;
     if (typeof r.isSidechain === "boolean") meta.is_sidechain = r.isSidechain;
     if (r.type === "ai-title" && asString(r.aiTitle)) meta.ai_title = r.aiTitle;
+    if (r.type === "continued-in" && asString(r.continuedInSessionId)) meta.continued_in_session_id = r.continuedInSessionId;
 
     // Lines without a uuid (pointer/meta lines) contribute metadata only.
     if (!asString(r.uuid)) return { meta };

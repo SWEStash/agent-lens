@@ -315,6 +315,12 @@ export interface SessionParent {
   turn_seq: number | null;
 }
 
+/** Another session on the far side of a continuation (ADR-038). */
+export interface SessionLink {
+  id: string;
+  title: string | null;
+}
+
 export interface SessionChild {
   id: string;
   title: string | null;
@@ -382,6 +388,10 @@ export interface SessionDetail {
   events: EventNode[];
   classification: Classification | null;
   parent: SessionParent | null;
+  /** The session this one continues: its transcript holds the history this one starts after. */
+  continued_from: SessionLink | null;
+  /** Sessions that continue this one, oldest first. */
+  continued_in: SessionLink[];
   children: SessionChild[];
   workflow_runs: WorkflowRun[];
   /** Security findings across this session (ADR-017), most-severe first — for the header summary. */

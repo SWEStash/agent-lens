@@ -10,8 +10,8 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { DatabaseSync } from "node:sqlite";
-import { SCHEMA_VERSION } from "@agent-lens/core";
-import { openDb, openRaw, resetSchema, readSchemaVersion } from "../dist/db.js";
+import { SCHEMA_SQL, SCHEMA_VERSION } from "@agent-lens/core";
+import { openDb, openRaw, resetSchema, readSchemaVersion, SchemaMismatchError } from "../dist/db.js";
 
 let root: string;
 let dbPath: string;
@@ -23,17 +23,31 @@ beforeEach(() => {
 afterEach(() => rmSync(root, { recursive: true, force: true }));
 
 describe("schema-version guard", () => {
-  it("keeps a stale stamp — an incremental open never overwrites an older version", () => {
+  it("refuses a store stamped by an older build, and leaves its stamp alone", () => {
     // Simulate a DB last written by an older build: minimal meta table stamped one version back.
     const seed = new DatabaseSync(dbPath);
     seed.exec("CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT)");
     seed.prepare("INSERT INTO meta(key, value) VALUES ('schema_version', ?)").run(String(SCHEMA_VERSION - 1));
     seed.close();
 
-    // Incremental open applies CREATE IF NOT EXISTS but must NOT re-stamp.
-    const db = openDb(dbPath);
-    expect(readSchemaVersion(db)).toBe(SCHEMA_VERSION - 1);
-    db.close();
+    expect(() => openDb(dbPath)).toThrow(SchemaMismatchError);
+    const raw = openRaw(dbPath);
+    expect(readSchemaVersion(raw)).toBe(SCHEMA_VERSION - 1);
+    raw.close();
+  });
+
+  it("refuses an older store BEFORE applying the new schema, so the user gets the rebuild hint, not a SQL error", () => {
+    // A realistic older store: today's tables minus a column the current schema indexes. Applying
+    // SCHEMA_SQL first would fail on that index ("no such column"), which is how the v16 upgrade
+    // first surfaced: the timer died in openDb before the version check could say "run --full".
+    const seed = new DatabaseSync(dbPath);
+    seed.exec(SCHEMA_SQL);
+    seed.exec("DROP INDEX idx_sessions_continued_from");
+    seed.exec("ALTER TABLE sessions DROP COLUMN continued_from_session_id");
+    seed.prepare("INSERT OR REPLACE INTO meta(key, value) VALUES ('schema_version', ?)").run(String(SCHEMA_VERSION - 1));
+    seed.close();
+
+    expect(() => openDb(dbPath)).toThrow(/DB is v\d+, this build expects v\d+.*ingest --full/);
   });
 
   it("stamps the current version on a fresh DB", () => {

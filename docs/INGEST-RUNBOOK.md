@@ -45,7 +45,9 @@ when parser or classifier logic changes. Run `--full` for that.
   (below), v13 adds `tool_calls.error_type`
   ([ADR-019](decisions/ADR-019-tool-error-observability.md)), and v15 moves reasoning into
   `events.thinking` ([ADR-031](decisions/ADR-031-transcript-text-is-stored.md)); until you rebuild,
-  transcripts show no reasoning.
+  transcripts show no reasoning. v16 links continued sessions and stops charging their copied
+  history twice ([ADR-038](decisions/ADR-038-shared-session-history.md)); the rebuild also removes
+  rows a v15 store already double-counted.
 - After a parser or classifier change that should apply to all history. This includes the ADR-019
   fix that maps a tool result's `is_error` to `status='error'`.
 - To recover from any doubt about derived tables. The archive rebuilds a clean store.
@@ -76,6 +78,8 @@ still works, uncompressed. Expect it to shrink by about 40%.
 | `malformed=N` | N lines didn't parse and were skipped. A few is normal (a partial last line). A spike suggests a corrupt archive file; inspect it |
 | An empty "phantom" session | A non-transcript `.jsonl` under `projects/` (such as a workflow `journal.jsonl`) made an empty stub. Ingest removes sessions with no events; if one stays, run `--full` |
 | A subagent has no parent | The parent and child arrived in different runs. The run that ingests the second one links them, or run `--full` now |
+| `the run would leave rows pointing at missing parents` | Ingest found a row whose parent is missing and rolled back the whole run; nothing was written. The message names the table, the missing keys and the archive files involved. It is an ingest bug: report it with those lines. Until it is fixed every run fails the same way, so adding the named project to `exclude` is the stopgap |
+| `FOREIGN KEY constraint failed` at `COMMIT`, nothing else | A build older than schema v16, which did not check before committing. Upgrade; the new message names the rows |
 | `database is locked` or `SQLITE_BUSY` | Another writer, such as a second ingest, holds the lock. The server only reads. Wait and retry |
 | A parser or classifier change didn't apply | Expected for incremental runs. Run `--full` |
 | Anything else | Delete `<dataDir>/agent-lens.db*` and run `agent-lens ingest --full`. The archive rebuilds everything |

@@ -21,7 +21,7 @@ import {
   transaction,
   type SourceAdapter,
 } from "@agent-lens/core";
-import { finishBulkLoad, openDb, openRaw, readSchemaVersion, resetSchema, type DB } from "./db.js";
+import { finishBulkLoad, openDb, openRaw, resetSchema, SchemaMismatchError, type DB } from "./db.js";
 import { ClaudeCodeAdapter } from "./adapters/claude-code.js";
 import { classify, CLASSIFIER_VERSION } from "./classify.js";
 import { detect, DETECTOR_VERSION } from "./detect.js";
@@ -34,6 +34,8 @@ import { ingestSubagentMeta, newMetaStats } from "./meta.js";
 import { ingestToolResults, newToolResultStats } from "./toolResults.js";
 import { encodeProjectPath, isExcludedArchivePath } from "./redact.js";
 import { sha256, sha256File, streamLines, STREAM_THRESHOLD } from "./fileread.js";
+import { compareIngestOrder, contentSpan } from "./ingestorder.js";
+import { assertForeignKeys } from "./fkcheck.js";
 
 function parseIngestArgs(argv: string[]) {
   const a = { full: false, db: "", archive: "" };
@@ -54,23 +56,32 @@ type FileState = { size: number; mtime_ms: number; sha256: string; events_ingest
  *   (ADR-010, impact 1).
  * - `skip-hash`: content is unchanged though mtime moved (e.g. an rsync --append-verify re-stat) —
  *   skip the ingest but refresh size/mtime so the next run short-circuits on stat alone.
- * - `ingest`: genuinely new/changed. `buf` is the whole file for the common case, null for a large
- *   file that must be streamed instead. */
+ * - `ingest`: genuinely new/changed. Its bytes are read again when it is ingested, after the run has
+ *   put its files in content order (ADR-038). */
 type FileDecision =
   | { action: "skip-stat" }
   | { action: "skip-hash"; hash: string }
-  | { action: "ingest"; hash: string; buf: Buffer | null };
+  | { action: "ingest"; hash: string };
 
 function shouldReingest(path: string, size: number, mtimeMs: number, prev: FileState): FileDecision {
   if (prev && prev.size === size && prev.mtime_ms === mtimeMs) return { action: "skip-stat" };
 
   // Size/mtime moved: read + hash to decide. Whole-file for the common case; stream large files.
-  const small = size <= STREAM_THRESHOLD;
-  const buf = small ? readFileSync(path) : null;
-  const hash = small ? sha256(buf!) : sha256File(path);
+  const hash = size <= STREAM_THRESHOLD ? sha256(readFileSync(path)) : sha256File(path);
 
   if (prev && prev.sha256 === hash) return { action: "skip-hash", hash };
-  return { action: "ingest", hash, buf };
+  return { action: "ingest", hash };
+}
+
+/** openDb, but a stale store ends the process with the rebuild hint instead of a stack trace. */
+function openOrExplain(dbPath: string, tool: string): DB {
+  try {
+    return openDb(dbPath);
+  } catch (err) {
+    if (!(err instanceof SchemaMismatchError)) throw err;
+    console.error(`${tool}: ${err.message}`);
+    process.exit(1);
+  }
 }
 
 /** Everything the end-of-run report counts, gathered from the callers that produced it. */
@@ -83,14 +94,6 @@ interface IngestReport {
   wfStats: { upserted: number; skipped: number; malformed: number };
   metaStats: { upserted: number; skipped: number; malformed: number };
   trStats: { upserted: number; skipped: number; malformed: number };
-}
-
-/** Fail the run (rolling it back) if any row references a parent that does not exist. */
-function assertForeignKeys(db: DB): void {
-  const bad = db.prepare("PRAGMA foreign_key_check").all() as Array<{ table: string; parent: string }>;
-  if (!bad.length) return;
-  const edges = [...new Set(bad.map((b) => `${b.table} -> ${b.parent}`))].join(", ");
-  throw new Error(`agent-lens-ingest: --full produced ${bad.length} foreign-key violations (${edges}); rolled back`);
 }
 
 /** Tally the final table counts, close the DB, and print the one-block run summary. */
@@ -178,22 +181,10 @@ export function runIngest(argv: string[] = process.argv.slice(2)): void {
   // --full: open WITHOUT applying schema (the on-disk schema may be a stale version), then
   // drop+recreate from the archive (source of truth). This is also the migration path — a
   // SCHEMA_VERSION bump's new columns take effect here without a separate migration step.
-  const db = args.full ? openRaw(dbPath) : openDb(dbPath);
-  if (!args.full) {
-    // Schema guard: an incremental ingest only runs CREATE IF NOT EXISTS — it adds new tables but
-    // cannot migrate altered columns on existing ones, and never advances the stamp (applySchema is
-    // stamp-if-absent). So a DB stamped by an older build is stale: refuse rather than silently ingest
-    // into a half-migrated schema. `ingest --full` (drop+recreate) is the migration path.
-    const dbVer = readSchemaVersion(db);
-    if (dbVer != null && dbVer !== SCHEMA_VERSION) {
-      console.error(
-        `agent-lens-ingest: schema mismatch — DB is v${dbVer}, this build expects v${SCHEMA_VERSION}. ` +
-          `Run 'agent-lens ingest --full' to rebuild.`,
-      );
-      db.close();
-      process.exit(1);
-    }
-  }
+  // Schema guard: openDb refuses a store stamped by another build before touching its schema, since
+  // an incremental ingest cannot migrate existing tables. `ingest --full` (drop+recreate) is the
+  // migration path.
+  const db = args.full ? openRaw(dbPath) : openOrExplain(dbPath, "agent-lens-ingest");
 
   // Adapter registry keyed by agent type; configured sources resolved by the shared resolver.
   const adapterList: SourceAdapter[] = [new ClaudeCodeAdapter()];
@@ -242,9 +233,11 @@ export function runIngest(argv: string[] = process.argv.slice(2)): void {
         let files = adapter.discover(join(archiveRoot, source.label), source.label);
         // Drop excluded projects (matches /projects/<encodedDir>/ so nested subagent files go too).
         if (excludedDirs.length) files = files.filter((f) => !isExcludedArchivePath(f.path, excludedDirs));
-        // Mirror before versions so the mirror copy wins canonical fields (ON CONFLICT DO NOTHING).
-        files.sort((a, b) => Number(a.isVersion) - Number(b.isVersion));
-
+        // Decide every file first, then ingest the changed ones in content order (ADR-038): an event
+        // belongs to the first session that stores it, so an original must precede the sessions that
+        // repeat its lines. The order also puts the mirror before .versions/, so the mirror's copy of
+        // a line wins its canonical fields (ON CONFLICT DO NOTHING).
+        const pending = [];
         for (const file of files) {
           stats.files++;
           const st = statSync(file.path);
@@ -268,9 +261,15 @@ export function runIngest(argv: string[] = process.argv.slice(2)): void {
             stats.skipped++;
             continue;
           }
+          // Keep the hash, not decision.buf: holding every pending file's bytes would put the whole
+          // archive in memory on --full. The re-read below is served from the page cache.
+          pending.push({ file, path: file.path, isVersion: file.isVersion, span: contentSpan(file.path), size: st.size, mtimeMs, hash: decision.hash });
+        }
+        pending.sort(compareIngestOrder);
 
-          const lines = decision.buf ? decision.buf.toString("utf8").split("\n") : streamLines(file.path);
-          ingestFile(db, stmts, adapter, file, lines, { size: st.size, mtimeMs, hash: decision.hash }, now, stats, { provisionalTurns: args.full });
+        for (const { file, size, mtimeMs, hash } of pending) {
+          const lines = size <= STREAM_THRESHOLD ? readFileSync(file.path, "utf8").split("\n") : streamLines(file.path);
+          ingestFile(db, stmts, adapter, file, lines, { size, mtimeMs, hash }, now, stats, { provisionalTurns: args.full });
           dirty.add(file.sessionId);
         }
 
@@ -299,7 +298,9 @@ export function runIngest(argv: string[] = process.argv.slice(2)): void {
       // dashboard's covering indexes only win with stats present (see ANALYZE_SQL).
       db.exec(ANALYZE_SQL);
 
-      if (args.full) assertForeignKeys(db);
+      // Every run, not just --full: deferred foreign keys would otherwise fail at COMMIT with no
+      // table, key or session named (ADR-038). ~1.5 s on a 3 GB store.
+      assertForeignKeys(db);
       return { stats, classified, detected, fileChanges, wfStats, metaStats, trStats };
     })();
   } finally {
@@ -342,7 +343,7 @@ export function runMetrics(argv: string[] = process.argv.slice(2)): void {
     process.exit(1);
   }
 
-  const db = openDb(dbPath);
+  const db = openOrExplain(dbPath, "agent-lens-metrics");
   const { classified: r, detected: d, errors: e, fileChanges: fc } = runDerivedPasses(db, null);
   db.close();
   console.log(

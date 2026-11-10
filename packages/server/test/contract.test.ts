@@ -43,7 +43,7 @@ const SESSION_SUMMARY_KEYS = [
 ];
 
 const SESSION_DETAIL_KEYS = [
-  "session", "turns", "events", "classification", "parent", "children", "workflow_runs", "findings",
+  "session", "turns", "events", "classification", "parent", "continued_from", "continued_in", "children", "workflow_runs", "findings",
   "file_changes",
 ];
 
