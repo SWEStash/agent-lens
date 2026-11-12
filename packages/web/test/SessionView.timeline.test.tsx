@@ -77,6 +77,7 @@ const toolEvent = (uuid: string, turnId: string, timestamp: string) => ({
       input_json: JSON.stringify({ command: "ls -la" }),
       result_summary: "total 0",
       findings: [],
+      permission: null,
     },
   ],
 });

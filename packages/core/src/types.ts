@@ -15,9 +15,11 @@ export type {
   ToolCallRow,
   SkillRow,
   ClassificationRow,
+  PermissionDecision,
+  PermissionVia,
 } from "@agent-lens/contracts";
 
-import type { EventRow, TokenUsageRow, ToolCallRow } from "@agent-lens/contracts";
+import type { EventRow, PermissionDecision, TokenUsageRow, ToolCallRow } from "@agent-lens/contracts";
 
 /** Patch applied to a previously-seen tool_call once its result line arrives. */
 export interface ToolResultPatch {
@@ -34,6 +36,8 @@ export interface ToolResultPatch {
   total_tokens?: number | null;
   total_tool_use_count?: number | null;
   result_summary?: string | null;
+  /** How the call was approved (ADR-040); omit when the source recorded nothing. */
+  permission?: PermissionDecision | null;
 }
 
 /** Session-level metadata accumulated from envelopes and pointer lines. */

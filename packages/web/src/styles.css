@@ -745,6 +745,10 @@ table.sessions { width: 100%; border-collapse: collapse; }
 }
 .tool-name { font-weight: 600; font-size: var(--fs-md); }
 .tool-status { font-size: var(--fs-xs); color: var(--muted); }
+/* How a tool call was approved (ADR-040). Neutral when allowed; a rejection uses the error colour. */
+.tag.perm { white-space: nowrap; }
+.tag.perm-reject { color: var(--err); background: color-mix(in srgb, var(--err) 14%, transparent); }
+.tag.perm-unknown { font-style: italic; }
 .chev { margin-left: auto; color: var(--muted); }
 .tool-body { padding: 0 10px 10px; }
 .code, .result {

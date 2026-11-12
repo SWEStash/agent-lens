@@ -650,7 +650,12 @@ export function prepareStatements(db: DB): IngestStatements {
          total_duration_ms = COALESCE(@total_duration_ms, total_duration_ms),
          total_tokens = COALESCE(@total_tokens, total_tokens),
          total_tool_use_count = COALESCE(@total_tool_use_count, total_tool_use_count),
-         result_summary = COALESCE(@result_summary, result_summary)
+         result_summary = COALESCE(@result_summary, result_summary),
+         permission_decision = COALESCE(@permission_decision, permission_decision),
+         permission_via = COALESCE(@permission_via, permission_via),
+         permission_scope = COALESCE(@permission_scope, permission_scope),
+         permission_rule_source = COALESCE(@permission_rule_source, permission_rule_source),
+         permission_reason = COALESCE(@permission_reason, permission_reason)
        WHERE id = @tool_use_id`,
     ),
     upsertProject: db.prepare(
@@ -767,6 +772,11 @@ export function ingestFile(
             total_tokens: tr.total_tokens ?? null,
             total_tool_use_count: tr.total_tool_use_count ?? null,
             result_summary: tr.result_summary ?? null,
+            permission_decision: tr.permission?.decision ?? null,
+            permission_via: tr.permission?.via ?? null,
+            permission_scope: tr.permission?.scope ?? null,
+            permission_rule_source: tr.permission?.rule_source ?? null,
+            permission_reason: tr.permission?.reason ?? null,
           });
     }
 

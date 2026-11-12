@@ -8,6 +8,7 @@ import { ErrorAlert, Loading } from "./AsyncBoundary";
 import { SortHeader, useSort } from "./sort";
 import { Pager } from "./Pager";
 import { toggleIn } from "./sets";
+import { APPROVAL_OPTIONS, PermissionTag } from "./permission";
 import { SourceSelect, ProjectSelect } from "./ListFilters";
 import { fmtDate, projectLabel, sessionLabel } from "./format";
 import { SeverityTag, SEVERITIES } from "./severity";
@@ -42,13 +43,14 @@ export default function SecurityView() {
   const from = get("from");
   const to = get("to");
   const status = get("status", "open");
+  const approval = get("approval");
 
   // The active filter as a query string (shared by the list fetch and dismiss-all-matching).
   const filterQs = useMemo(() => {
     const qs = new URLSearchParams();
-    for (const [k, v] of Object.entries({ severity, category, rule, session, source, project, from, to, status })) if (v) qs.set(k, v);
+    for (const [k, v] of Object.entries({ severity, category, rule, session, source, project, from, to, status, approval })) if (v) qs.set(k, v);
     return qs;
-  }, [severity, category, rule, session, source, project, from, to, status]);
+  }, [severity, category, rule, session, source, project, from, to, status, approval]);
 
   const summary = useLookup<SecuritySummary | null>("/security/summary", null, [reloadKey]);
   // No backend in the snapshot build, so there are no mutes to fetch.
@@ -184,6 +186,12 @@ export default function SecurityView() {
             <option key={r.rule_id} value={r.rule_id}>{r.rule_id} ({r.n})</option>
           ))}
         </select>
+        <select aria-label="Filter by how the call was approved" value={approval} onChange={(e) => setParam({ approval: e.target.value })}>
+          <option value="">any approval</option>
+          {APPROVAL_OPTIONS.map((o) => (
+            <option key={o.value} value={o.value}>{o.label}</option>
+          ))}
+        </select>
         <SourceSelect value={source} sources={sources} onChange={(v) => setParam({ source: v })} />
         <ProjectSelect value={project} projects={projects} onChange={(v) => setParam({ project: v })} />
         <label className="ctl">from <input type="date" value={from} onChange={(e) => setParam({ from: e.target.value })} /></label>
@@ -256,6 +264,7 @@ export default function SecurityView() {
               <th>Finding</th>
               <SortHeader label="Category" sortKey="category" active={sort.key} dir={sort.dir} onSort={toggle} />
               <th>Evidence</th>
+              <th>Approved</th>
               <SortHeader label="When" sortKey="time" active={sort.key} dir={sort.dir} onSort={toggle} />
               <SortHeader label="Session" sortKey="session" active={sort.key} dir={sort.dir} onSort={toggle} />
               {!SNAPSHOT && <th>Actions</th>}
@@ -321,6 +330,9 @@ function FindingRow({
       <td className="finding-evidence-cell">
         {f.tool_name && <span className="tag tool-tag" data-tip="Tool the finding fired on">{f.tool_name}</span>}
         <code data-tip={f.evidence ?? ""}>{f.evidence}</code>
+      </td>
+      <td className="small">
+        <PermissionTag p={f.permission} unknown />
       </td>
       <td className="small muted" data-tip={f.started_at ?? ""}>{fmtDate(f.started_at ?? null)}</td>
       <td className="small">

@@ -58,7 +58,7 @@ const EVENT_NODE_KEYS_WITH_USAGE = [...EVENT_NODE_KEYS, "usage"];
 const TOOL_CALL_KEYS = [
   "id", "tool_name", "skill_name", "skill_id", "agent_type", "spawned_session_id",
   "workflow_run_id", "workflow_name", "status", "total_duration_ms",
-  "input_json", "result_summary", "workflow_agent_count", "findings",
+  "input_json", "result_summary", "workflow_agent_count", "findings", "permission",
 ];
 
 const TOKEN_SPLIT_KEYS = ["input", "output", "cache_creation", "cache_read"];
@@ -240,6 +240,9 @@ describe("response contracts — populated DB", () => {
     const list = (await app.inject({ method: "GET", url: "/api/security/findings" })).json();
     expectKeys(list, ["total", "findings"], "findings page");
     expect(list.findings[0].session_id).toBe("sess1");
+    // The approval fields ship folded into one object (ADR-040), never as the flat perm_* columns.
+    expect(list.findings[0]).toHaveProperty("permission", null);
+    expect(Object.keys(list.findings[0]).filter((k) => k.startsWith("perm_"))).toEqual([]);
     await app.close();
   });
 

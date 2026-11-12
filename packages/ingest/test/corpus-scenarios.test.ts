@@ -65,6 +65,18 @@ describe("committed corpus represents every pipeline scenario", () => {
     expect(one("SELECT COUNT(*) n FROM sessions WHERE source_id NOT IN ('team-a','team-b','scenarios')").n).toBe(0);
   });
 
+  it("permission decisions (ADR-040): every channel lands on its tool call, and a missing one stays NULL", () => {
+    const via = (id: string) => one(`SELECT permission_decision d, permission_via v FROM tool_calls WHERE id='${id}'`);
+    expect(via("tu_ap2")).toEqual({ d: "accept", v: "classifier" });
+    expect(via("tu_ap4")).toEqual({ d: "reject", v: "user" });
+    expect(via("tu_ap6")).toEqual({ d: "reject", v: "hook" });
+    expect(via("tu_ap8")).toEqual({ d: "accept", v: "rule" });
+    expect(via("tu_ap10")).toEqual({ d: "accept", v: "user" });
+    expect(via("tu_ap12")).toEqual({ d: null, v: null });
+    // Older scenarios predate the field: nothing is guessed for them.
+    expect(one("SELECT COUNT(*) n FROM tool_calls WHERE session_id='sc-security-0011' AND permission_decision IS NOT NULL").n).toBe(0);
+  });
+
   it("security findings (ADR-017): the synthetic scenario trips all four categories", () => {
     const sid = "sc-security-0011";
     // 8 findings: rm -rf * (critical), key file read + private-key in output (2), force-push,
@@ -85,9 +97,9 @@ describe("committed corpus represents every pipeline scenario", () => {
     expect(one("SELECT COUNT(*) n FROM findings WHERE evidence LIKE '%/.claude/%'").n).toBe(0);
   });
 
-  it("session counts: 49 total, 40 main, 9 subagent", () => {
-    expect(one("SELECT COUNT(*) n FROM sessions").n).toBe(49);
-    expect(one("SELECT COUNT(*) n FROM sessions WHERE is_sidechain=0").n).toBe(40);
+  it("session counts: 50 total, 41 main, 9 subagent", () => {
+    expect(one("SELECT COUNT(*) n FROM sessions").n).toBe(50);
+    expect(one("SELECT COUNT(*) n FROM sessions WHERE is_sidechain=0").n).toBe(41);
     expect(one("SELECT COUNT(*) n FROM sessions WHERE is_sidechain=1").n).toBe(9);
   });
 

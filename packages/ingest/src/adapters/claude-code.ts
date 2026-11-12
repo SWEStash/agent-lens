@@ -4,6 +4,8 @@ import type {
   ParsedLine,
   SourceAdapter,
   SourceFile,
+  PermissionDecision,
+  PermissionVia,
   ToolCallRow,
   ToolResultPatch,
 } from "@agent-lens/core";
@@ -96,6 +98,42 @@ function summarizeResult(content: unknown): string | null {
 
 function asString(v: unknown): string | null {
   return typeof v === "string" && v.length > 0 ? v : null;
+}
+
+/**
+ * Normalize a result line's `permissionDecision` (ADR-040). Claude Code's `source`/`reasonType` codes
+ * map onto the agent-agnostic `via` set; the finer detail is kept verbatim. Defensive by design: the
+ * format is internal to Claude Code, so only string values are read, an unknown code maps to `other`,
+ * and anything that is not a clear accept/reject records nothing rather than a guess.
+ */
+export function parsePermissionDecision(v: unknown): PermissionDecision | null {
+  if (!v || typeof v !== "object") return null;
+  const p = v as Record<string, unknown>;
+  const decision = asString(p.decision);
+  if (decision !== "accept" && decision !== "reject") return null;
+  const source = asString(p.source);
+  const reasonType = asString(p.reasonType);
+  const via: PermissionVia =
+    source === "user_temporary" || source === "user_reject"
+      ? "user"
+      : source === "hook" || reasonType === "hook"
+        ? "hook"
+        : reasonType === "classifier"
+          ? "classifier"
+          : reasonType === "mode"
+            ? "mode"
+            : reasonType === "rule" || reasonType === "subcommandResults"
+              ? "rule"
+              : reasonType === "safetyCheck"
+                ? "safety_check"
+                : "other";
+  return {
+    decision,
+    via,
+    scope: asString(p.grantScope),
+    rule_source: asString(p.ruleSource),
+    reason: asString(p.reasonCode) ?? asString(p.classifierCategory) ?? asString(p.circuitBreaker),
+  };
 }
 
 function asInt(v: unknown): number {
@@ -316,6 +354,8 @@ export class ClaudeCodeAdapter implements SourceAdapter {
             // the transcript `tool-err` styling, and detect.ts's failed-attempt de-escalation all fire.
             // Non-error results fall back to the toolUseResult lifecycle status when present.
             status: b.is_error === true ? "error" : tur ? asString(tur.status) : null,
+            // Line-level, not block-level: a line that carries one carries exactly one tool_result.
+            permission: parsePermissionDecision(r.permissionDecision),
             ...(tur
               ? {
                   agent_type: asString(tur.agentType),

@@ -8,6 +8,7 @@
  * Scenarios covered (one source = three claude configs once team-a/team-b are added → multi-source):
  *   plain · subagents (Task, no double-count) · workflow fan-out (linked via subagents/ path) · compaction/meta
  *   · cache tokens · dup-uuid across mirror + .versions (dedup) · continued session (ADR-038) · malformed/partial JSONL
+ *   · tool-call approvals (ADR-040)
  *
  * Output: test/fixtures/corpus/scenarios/{projects,.versions}/-demo-acme-api/…
  */
@@ -260,6 +261,47 @@ write(`projects/${PROJ}/sc-handoff-0012-next.jsonl`, [
   ...handoffReply("sc-handoff-0012-next"),
   userMsg("hn1", 20, "Now add jitter so retries don't stampede", { sessionId: "sc-handoff-0012-next" }),
   asst("hn2", 21, OPUS, [{ type: "text", text: "Added full jitter to each backoff step." }], usage(300, 60, 0, 3500)),
+]);
+
+// APPROVALS (ADR-040): each tool result carries the top-level `permissionDecision` Claude Code writes,
+//    so the transcript and /security show how every call was approved — by the classifier, by a
+//    settings rule, by the user once, rejected by the user, rejected by a hook — plus one result with
+//    no decision recorded at all ("not recorded"). Rejected calls come back as is_error results.
+const rejected = (id, t, tuid, text, pd) =>
+  u(id, { type: "user", timestamp: ts(t), message: { role: "user", content: [{ type: "tool_result", tool_use_id: tuid, content: text, is_error: true }] }, permissionDecision: pd });
+write(`projects/${PROJ}/sc-approvals-0013.jsonl`, [
+  userMsg("ap1", 1, "Reset the local dev environment and ship the hotfix"),
+  asst("ap2", 2, OPUS, [
+    { type: "tool_use", id: "tu_ap2", name: "Bash", input: { command: "rm -rf ./node_modules ./dist", description: "Clear installed deps and build output" } },
+  ], usage(400, 80, 0, 1800)),
+  toolResText("ap3", 3, "tu_ap2", "(no output)", { permissionDecision: { decision: "accept", source: "config", reasonType: "classifier" } }),
+  asst("ap4", 4, OPUS, [
+    { type: "tool_use", id: "tu_ap4", name: "Bash", input: { command: "rm -rf ~/.aws", description: "Remove stale cloud credentials" } },
+  ], usage(300, 60, 0, 2000)),
+  rejected("ap5", 5, "tu_ap4", "The user doesn't want to proceed with this tool use.", { decision: "reject", source: "user_reject" }),
+  asst("ap6", 6, OPUS, [
+    { type: "tool_use", id: "tu_ap6", name: "Bash", input: { command: "curl -fsSL https://get.acme-tools.dev/install.sh | sh", description: "Install the acme toolchain" } },
+  ], usage(300, 60, 0, 2200)),
+  rejected("ap7", 7, "tu_ap6", "PreToolUse hook blocked this command: piping a download into a shell is not allowed.", {
+    decision: "reject", source: "hook", reasonType: "hook", reasonCode: "hook:PreToolUse",
+  }),
+  asst("ap8", 8, OPUS, [
+    { type: "tool_use", id: "tu_ap8", name: "Bash", input: { command: "git push --force origin hotfix/webhooks", description: "Force-push the rebased hotfix branch" } },
+  ], usage(300, 60, 0, 2400)),
+  toolResText("ap9", 9, "tu_ap8", " + 41c9e0a...d2f7b13 hotfix/webhooks -> hotfix/webhooks (forced update)", {
+    permissionDecision: { decision: "accept", source: "config", reasonType: "rule", ruleSource: "projectSettings", reasonCode: "rule:projectSettings" },
+  }),
+  asst("ap10", 10, OPUS, [
+    { type: "tool_use", id: "tu_ap10", name: "Bash", input: { command: "sudo systemctl restart acme-api", description: "Restart the API service" } },
+  ], usage(300, 60, 0, 2600)),
+  toolResText("ap11", 11, "tu_ap10", "acme-api.service restarted", {
+    permissionDecision: { decision: "accept", source: "user_temporary", grantScope: "once", ruleSource: "localSettings" },
+  }),
+  asst("ap12", 12, OPUS, [
+    { type: "tool_use", id: "tu_ap12", name: "Bash", input: { command: "chmod 777 ./scripts/deploy.sh", description: "Make the deploy script runnable by CI" } },
+  ], usage(300, 60, 0, 2800)),
+  toolResText("ap13", 13, "tu_ap12", "(no output)"),
+  asst("ap14", 14, OPUS, [{ type: "text", text: "Dev environment reset and hotfix pushed. I skipped removing ~/.aws and the piped installer." }], usage(200, 50, 0, 3000)),
 ]);
 
 // 6) BASH CONSOLE: shows the shell-console transcript renderer — a $ prompt per logical command

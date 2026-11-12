@@ -3,6 +3,7 @@ import type { ToolCall } from "../../api";
 import { fmtBytes, fmtDuration } from "../../format";
 import { prettyJson } from "../../jsonish";
 import CopyButton from "../../CopyButton";
+import { PermissionTag } from "../../permission";
 
 /**
  * The collapsible container every transcript tool block shares: the header button (name, the block's
@@ -39,6 +40,7 @@ export function ToolShell({
         <span className="tool-name">{name}</span>
         {head?.(open)}
         {t.status && <span className="tool-status">{t.status}</span>}
+        <PermissionTag p={t.permission} />
         {t.total_duration_ms ? <span className="muted">{fmtDuration(t.total_duration_ms)}</span> : null}
         <span className="chev">{open ? "▾" : "▸"}</span>
       </button>

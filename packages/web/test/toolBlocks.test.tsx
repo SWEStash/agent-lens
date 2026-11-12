@@ -32,6 +32,7 @@ function call(over: Partial<ToolCall> = {}): ToolCall {
     input_json: JSON.stringify({ file_path: "/p/a.ts" }),
     result_summary: "summary text",
     full_result: { text: "the whole output", bytes: 2048 },
+    permission: null,
     ...over,
   };
 }
@@ -181,5 +182,17 @@ describe("WorkflowLaunchBlock", () => {
     expect(within(c).getByText("🔀 Workflow · review")).toBeTruthy();
     expect(c.querySelector("a.subagent-link")!.getAttribute("href")).toBe("/workflow/wf_2");
     expect(c.querySelector(".result")!.textContent).toBe("summary text");
+  });
+});
+
+describe("approval tag (ADR-040)", () => {
+  it("shows how the call was approved in the header ToolShell gives every block", () => {
+    const { container: c } = ui(<BashBlock t={call({ tool_name: "Bash", permission: { decision: "accept", via: "classifier", scope: null, rule_source: null, reason: null } })} bash={{ command: "ls" }} />);
+    expect(head(c).querySelector(".tag.perm")!.textContent).toBe("allowed by classifier");
+  });
+
+  it("shows nothing when the transcript did not record it", () => {
+    const { container: c } = ui(<ToolChip t={call()} />);
+    expect(c.querySelector(".tag.perm")).toBeNull();
   });
 });

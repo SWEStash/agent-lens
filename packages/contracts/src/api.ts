@@ -173,6 +173,10 @@ export type FileSort = "last_ts" | "first_ts" | "changes" | "sessions" | "path";
 export type FindingSort = "severity" | "session" | "rule" | "category" | "time";
 /** GET /api/security/findings `?status=`: open (excludes dismissed and muted) | dismissed | muted | all. */
 export type FindingStatus = "open" | "dismissed" | "muted" | "all";
+/** GET /api/security/findings `?approval=` (ADR-040). A `PermissionVia` value means approved through
+ * that channel; `rejected` is any rejected call; `unknown` is not recorded. The buckets partition the
+ * findings, so each finding falls in exactly one. */
+export type FindingApproval = PermissionVia | "rejected" | "unknown";
 /** POST /api/security/mute and /unmute `scope`. */
 export type MuteScope = "global" | "project" | "source";
 
@@ -239,6 +243,22 @@ export interface SessionsPage {
  * server-side for the failure-vs-rejection split, and surfaced to the UI as a dashboard breakdown,
  * never per-call), and `total_tokens` (nothing reads it).
  */
+/** The channel that approved or rejected a tool call (ADR-040). Agent-agnostic: each adapter maps its
+ * source's own codes onto this set. */
+export type PermissionVia = "user" | "rule" | "mode" | "classifier" | "hook" | "safety_check" | "other";
+
+/** How a tool call was approved (ADR-040). Null on the call when the source recorded nothing. */
+export interface PermissionDecision {
+  decision: "accept" | "reject";
+  via: PermissionVia;
+  /** a user grant's lifetime: once | session */
+  scope: string | null;
+  /** the settings source of the deciding rule */
+  rule_source: string | null;
+  /** the source's own reason code, verbatim */
+  reason: string | null;
+}
+
 export interface ToolCall {
   id: string | null;
   tool_name: string;
@@ -259,6 +279,8 @@ export interface ToolCall {
   full_result?: { text: string; bytes: number } | null;
   /** Security findings raised on this tool call (ADR-017) — drives the inline severity badge + panel. */
   findings?: Finding[];
+  /** How the call was approved (ADR-040); null when the source recorded nothing. */
+  permission: PermissionDecision | null;
 }
 
 export interface EventNode {
@@ -480,6 +502,8 @@ export interface Finding {
  */
 export interface FindingListRow extends Finding {
   session_id: string;
+  /** How the finding's tool call was approved (ADR-040); null when not recorded. */
+  permission: PermissionDecision | null;
 }
 
 export interface FindingsPage {

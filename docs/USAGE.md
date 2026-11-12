@@ -313,8 +313,13 @@ Risky operations the agent performed, flagged after the fact by deterministic ru
 severity, and anchored to OWASP Agentic and MITRE ATLAS
 ([ADR-017](decisions/ADR-017-security-findings.md)). It reports; it doesn't block.
 
-- Filter by severity, category, rule, source, project, date, and status. Findings also show inline
-  in the transcript.
+- Filter by severity, category, rule, source, project, date, status, and how the call was approved.
+  Findings also show inline in the transcript.
+- Each finding, and each tool call in the transcript, shows how the call was approved: by you (once
+  or for the session), by a settings rule, by the permission mode, by the auto-mode classifier, or
+  by a hook, or that it was rejected. Claude Code records this only in recent versions and not on
+  every result, so older calls show "not recorded"; nothing is guessed
+  ([ADR-040](decisions/ADR-040-tool-call-permission-decisions.md)).
 - Mark findings safe one by one or in bulk, or mute a rule globally or for one project or source.
   KPIs count only open findings. Triage is stored in `triage.db` and survives `ingest --full`
   ([ADR-018](decisions/ADR-018-security-triage-store.md)).
@@ -431,8 +436,9 @@ Query parameters:
   model, [ADR-035](decisions/ADR-035-dashboard-model-filter.md)). `timeseries`, `time`, and `audit`
   also take `bucket` (`day`, `week`, or `month`; chosen from the date range otherwise).
 - `/api/security/findings`: `severity`, `category`, `rule`, `session`, `source`, `project`, `from`,
-  `to`, `status` (`open` by default, `dismissed`, `muted`, or `all`), `sort`, `dir`, `limit`,
-  `offset`.
+  `to`, `status` (`open` by default, `dismissed`, `muted`, or `all`), `approval` (`user`, `rule`,
+  `mode`, `classifier`, `hook`, `safety_check` or `other` for calls approved that way, `rejected`, or
+  `unknown` for not recorded), `sort`, `dir`, `limit`, `offset`.
 - `/api/files`: `q` (path substring), `source`, `project`, `sort`, `dir`, `limit` (up to 200),
   `offset`.
 

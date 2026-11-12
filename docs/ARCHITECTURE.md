@@ -179,3 +179,4 @@ erDiagram
 | [037](decisions/ADR-037-canonical-model-key.md) | A model id groups and filters at its minor version; a dated snapshot and its alias are one model |
 | [038](decisions/ADR-038-shared-session-history.md) | History shared between sessions has one owner, and the copy links to it |
 | [039](decisions/ADR-039-otel-is-enrichment-not-source.md) | OpenTelemetry is an optional enrichment signal; the transcript archive stays the system of record |
+| [040](decisions/ADR-040-tool-call-permission-decisions.md) | Each tool call records how it was approved, as an agent-agnostic channel; missing means not recorded |
