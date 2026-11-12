@@ -23,7 +23,7 @@
     "@agent-lens/core": "workspace:*",
     "@agent-lens/ingest": "workspace:*",
     "@agent-lens/transcript-format": "workspace:*",
-    "@fastify/static": "^10.1.0",
-    "fastify": "^5.2.0"
+    "@fastify/static": "^10.1.10",
+    "fastify": "^5.12.8"
   }
 }
