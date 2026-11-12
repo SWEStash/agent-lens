@@ -1,5 +1,6 @@
 import { useState } from "react";
 import type { SortDir } from "./api";
+import type { QueryState } from "./useQueryState";
 
 /** Sort direction for a table column (shared with the server's `?dir=`). */
 export type { SortDir };
@@ -40,6 +41,17 @@ export function useSort<K extends string>(initialKey: K, initialDir: SortDir) {
   const toggle = (key: K, defaultDir: SortDir = "desc") =>
     setSort((s) => (s.key === key ? { key, dir: s.dir === "asc" ? "desc" : "asc" } : { key, dir: defaultDir }));
   return { sort, toggle };
+}
+
+/** Sort state for a server-sorted list page, read from and written to the URL (`?sort=&dir=`), with
+ * the same click rule as useSort. Writing goes through the page's QueryState, so a sort change resets
+ * whatever the page resets on change (its offset). */
+export function urlSort<K extends string>({ get, set }: Pick<QueryState, "get" | "set">, defaultKey: K) {
+  const sortKey = get("sort", defaultKey) as K;
+  const sortDir: SortDir = get("dir") === "asc" ? "asc" : "desc";
+  const onSort = (key: K, defaultDir: SortDir) =>
+    set({ sort: key, dir: sortKey === key ? (sortDir === "asc" ? "desc" : "asc") : defaultDir });
+  return { sortKey, sortDir, onSort };
 }
 
 /**

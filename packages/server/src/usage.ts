@@ -18,7 +18,7 @@ export type { UsageRow };
  */
 export const usageSums = (t = "") =>
   `SUM(${t}input_tokens) i, SUM(${t}output_tokens) o, SUM(${t}cache_creation_input_tokens) cw, SUM(${t}cache_read_input_tokens) cr`;
-export const USAGE_SUMS = usageSums();
+const USAGE_SUMS = usageSums();
 
 /** Per-model token usage for one session. */
 export function sessionUsage(db: DB, sessionId: string): UsageRow[] {

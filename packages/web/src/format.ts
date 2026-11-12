@@ -93,3 +93,13 @@ export function shortModel(m: string | null): string {
   if (m === "<synthetic>") return "local";
   return m.replace(/^claude-/, "").replace(/-\d{8}$/, "");
 }
+
+/** The first 12 characters of a session id — what a session shows when it has no title. */
+export function shortId(id: string): string {
+  return id.slice(0, 12);
+}
+
+/** A session's display label: its title, else its short id. */
+export function sessionLabel(title: string | null | undefined, id: string): string {
+  return title || shortId(id);
+}

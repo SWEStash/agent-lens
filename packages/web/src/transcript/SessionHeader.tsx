@@ -2,16 +2,13 @@
  * (classification, security findings, files changed) that sit above the transcript itself. */
 import { Link } from "react-router-dom";
 import type { SessionDetail } from "../api";
-import { costTitle, fmtCost, fmtDate, fmtDuration, fmtTokens, tokenSplitTitle } from "../format";
+import { costTitle, fmtCost, fmtDate, fmtDuration, fmtTokens, sessionLabel, tokenSplitTitle } from "../format";
+import { SessionLink } from "../SessionLink";
 import { ArchivePathButton } from "./ArchivePathButton";
 import { ExportMenu } from "./ExportMenu";
 import { ClassificationBadge } from "./Classification";
 import { SecurityBanner } from "./Findings";
 import { FilesChangedPanel } from "./FilesChanged";
-
-const SessionLinkTo = ({ s }: { s: { id: string; title: string | null } }) => (
-  <Link to={`/session/${s.id}`}>{s.title || s.id.slice(0, 12)}</Link>
-);
 
 export function SessionHeader({ d }: { d: SessionDetail }) {
   const s = d.session;
@@ -20,7 +17,7 @@ export function SessionHeader({ d }: { d: SessionDetail }) {
       <Link to="/" className="back">
         ← all sessions
       </Link>
-      <h1>{s.title || s.id.slice(0, 12)}</h1>
+      <h1>{sessionLabel(s.title, s.id)}</h1>
       <div className="detail-meta">
         <span><b>{s.source_id}</b></span>
         <span className="path">{s.project_path}</span>
@@ -28,14 +25,14 @@ export function SessionHeader({ d }: { d: SessionDetail }) {
         {d.parent && (
           <span className="spawned-by">
             ↖ spawned by{" "}
-            <SessionLinkTo s={d.parent} />
+            <SessionLink s={d.parent} />
             {d.parent.turn_seq != null ? ` · turn ${d.parent.turn_seq + 1}` : ""}
           </span>
         )}
         {/* Optional-chained like the cost below: an older server sends neither field (ADR-038). */}
         {d.continued_from && (
           <span className="spawned-by" data-tip="This session repeats that one's history; the earlier part is shown there.">
-            ↖ continues <SessionLinkTo s={d.continued_from} />
+            ↖ continues <SessionLink s={d.continued_from} />
           </span>
         )}
         {d.continued_in?.length ? (
@@ -44,7 +41,7 @@ export function SessionHeader({ d }: { d: SessionDetail }) {
             {d.continued_in.map((c, i) => (
               <span key={c.id}>
                 {i > 0 && ", "}
-                <SessionLinkTo s={c} />
+                <SessionLink s={c} />
               </span>
             ))}
           </span>

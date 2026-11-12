@@ -6,7 +6,7 @@ import { ErrorAlert, Loading } from "./AsyncBoundary";
 import { fmtDate, projectLabel } from "./format";
 import { SearchBox, SourceSelect, ProjectSelect } from "./ListFilters";
 import { Pager } from "./Pager";
-import { SortHeader, type SortDir } from "./sort";
+import { SortHeader, urlSort } from "./sort";
 
 const PAGE = 50;
 /** Identity-stable placeholder so the table renders empty (not crashing) before the first load. */
@@ -50,11 +50,7 @@ export default function FilesView() {
   const { total, files } = data ?? EMPTY_PAGE;
 
   // Sort is server-side (whole list, not just the page) and lives in the URL, like the sessions list.
-  const sortKey = get("sort", "last_ts") as FileSort;
-  const sortDir = (get("dir") === "asc" ? "asc" : "desc") as SortDir;
-  function onSort(key: FileSort, defaultDir: SortDir) {
-    setParam({ sort: key, dir: sortKey === key ? (sortDir === "asc" ? "desc" : "asc") : defaultDir });
-  }
+  const { sortKey, sortDir, onSort } = urlSort<FileSort>({ get, set: setParam }, "last_ts");
 
   const page = Math.floor(offset / PAGE) + 1;
   const pages = Math.max(1, Math.ceil(total / PAGE));

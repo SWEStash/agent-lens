@@ -171,6 +171,8 @@ function snapshot(absPath: string, relParts: string[], versionsDir: string, stat
   stats.snapshots++;
 }
 
+const SUPERSEDED = /\.jsonl\.superseded-[^/]+$/;
+
 /**
  * Recursively collect the relevant transcript + sidecar files under `dir`:
  *   - `*.jsonl`                — session/subagent transcripts and journals (the core traces)
@@ -183,8 +185,6 @@ function snapshot(absPath: string, relParts: string[], versionsDir: string, stat
  * Secrets (.credentials.json, *.lock) are filtered by the caller. `inWorkflows`/`inToolResults` track
  * whether recursion is inside one of those directories so every file within is captured.
  */
-const SUPERSEDED = /\.jsonl\.superseded-[^/]+$/;
-
 function walkCollectable(dir: string, out: string[], inWorkflows = false, inToolResults = false): void {
   for (const e of readdirSync(dir, { withFileTypes: true })) {
     const p = join(dir, e.name);

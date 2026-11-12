@@ -7,8 +7,9 @@ import { useResetOn } from "./useResetOn";
 import { ErrorAlert, Loading } from "./AsyncBoundary";
 import { SortHeader, useSort } from "./sort";
 import { Pager } from "./Pager";
+import { toggleIn } from "./sets";
 import { SourceSelect, ProjectSelect } from "./ListFilters";
-import { fmtDate, projectLabel } from "./format";
+import { fmtDate, projectLabel, sessionLabel } from "./format";
 import { SeverityTag, SEVERITIES } from "./severity";
 
 const PAGE = 50;
@@ -98,12 +99,7 @@ export default function SecurityView() {
   const pageIds = findings.map((f) => f.id);
   const allSelected = pageIds.length > 0 && pageIds.every((id) => selected.has(id));
 
-  const toggleSel = (id: string) =>
-    setSelected((s) => {
-      const n = new Set(s);
-      n.has(id) ? n.delete(id) : n.add(id);
-      return n;
-    });
+  const toggleSel = (id: string) => setSelected((s) => toggleIn(s, id));
 
   return (
     <div>
@@ -328,7 +324,7 @@ function FindingRow({
       </td>
       <td className="small muted" data-tip={f.started_at ?? ""}>{fmtDate(f.started_at ?? null)}</td>
       <td className="small">
-        <Link to={to} className="title">{f.session_title || f.session_id.slice(0, 12)}</Link>
+        <Link to={to} className="title">{sessionLabel(f.session_title, f.session_id)}</Link>
         {f.is_sidechain ? <span className="tag subagent">subagent</span> : null}
         {f.project_path && <div className="muted path">{projectLabel(f.project_path)}</div>}
       </td>

@@ -7,6 +7,7 @@
 import { existsSync } from "node:fs";
 import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from "fastify";
 import fastifyStatic from "@fastify/static";
+import type { ApiError } from "@agent-lens/contracts";
 import { resolveVersion } from "@agent-lens/core";
 import { renderSessionExport, parseRedactionLevel } from "./export.js";
 import { type DB, lastIngested, schemaStatus, listSources, listProjects, listModels, listSessions, getSession, sessionLocation, getWorkflow, listSkills, getSkill, listFindings, openFindingIds, securitySummary, listFiles, getFileTimeline, safeJson, SESSION_SORTS, FILE_SORTS, FINDING_SORTS, FINDING_STATUSES } from "./db.js";
@@ -32,10 +33,15 @@ export interface CreateAppOpts {
   about?: AboutContext;
 }
 
-/** Structured 404 envelope. Every not-found response shares this shape so a client can uniformly read
- *  `err.error.code` — the rest of the API already uses `{ error: { code, message } }`. */
+/** Send the structured error envelope every API error shares, so a client can uniformly read
+ *  `err.error.code`. */
+function sendError(reply: FastifyReply, status: number, code: string, message: string) {
+  const body: ApiError = { error: { code, message } };
+  return reply.code(status).send(body);
+}
+
 function notFound(reply: FastifyReply, message = "not found") {
-  return reply.code(404).send({ error: { code: "NOT_FOUND", message } });
+  return sendError(reply, 404, "NOT_FOUND", message);
 }
 
 export async function createApp(db: DB, opts: CreateAppOpts = {}): Promise<FastifyInstance> {
@@ -51,7 +57,7 @@ export async function createApp(db: DB, opts: CreateAppOpts = {}): Promise<Fasti
       // would otherwise be rejected — over-strict, but a needless 403 all the same.
       const host = (req.headers.host ?? "").replace(/:\d+$/, "").toLowerCase();
       if (!LOOPBACK_HOSTS.has(host)) {
-        return reply.code(403).send({ error: { code: "FORBIDDEN_HOST", message: "non-loopback Host rejected" } });
+        return sendError(reply, 403, "FORBIDDEN_HOST", "non-loopback Host rejected");
       }
     });
   }
@@ -86,11 +92,11 @@ export async function createApp(db: DB, opts: CreateAppOpts = {}): Promise<Fasti
   // Shared CSRF + availability guard for the triage write routes (same posture as /api/refresh).
   const guardWrite = (req: FastifyRequest, reply: FastifyReply): boolean => {
     if (writeBlocked(req.headers)) {
-      reply.code(403).send({ error: { code: "FORBIDDEN_ORIGIN", message: "cross-origin write blocked" } });
+      sendError(reply, 403, "FORBIDDEN_ORIGIN", "cross-origin write blocked");
       return false;
     }
     if (!triageDb) {
-      reply.code(503).send({ error: { code: "TRIAGE_UNAVAILABLE", message: "triage store not configured" } });
+      sendError(reply, 503, "TRIAGE_UNAVAILABLE", "triage store not configured");
       return false;
     }
     return true;
@@ -125,7 +131,7 @@ export async function createApp(db: DB, opts: CreateAppOpts = {}): Promise<Fasti
   // concurrent runs (single-instance lock → 409). See refresh.ts.
   app.post("/api/refresh", async (req, reply) => {
     if (writeBlocked(req.headers)) {
-      return reply.code(403).send({ error: { code: "FORBIDDEN_ORIGIN", message: "cross-origin refresh blocked" } });
+      return sendError(reply, 403, "FORBIDDEN_ORIGIN", "cross-origin refresh blocked");
     }
     let result;
     try {
@@ -134,10 +140,10 @@ export async function createApp(db: DB, opts: CreateAppOpts = {}): Promise<Fasti
       // Don't leak the raw exception (may include host filesystem paths, LOW-003) to the client; the
       // recipient is the local user but a generic message keeps this safe if ever exposed. Detail → log.
       console.error("agent-lens-server: refresh failed:", e);
-      return reply.code(500).send({ error: { code: "REFRESH_FAILED", message: "refresh failed; see server logs" } });
+      return sendError(reply, 500, "REFRESH_FAILED", "refresh failed; see server logs");
     }
     if (!result) {
-      return reply.code(409).send({ error: { code: "REFRESH_IN_PROGRESS", message: "a collect/ingest run is already in progress" } });
+      return sendError(reply, 409, "REFRESH_IN_PROGRESS", "a collect/ingest run is already in progress");
     }
     return { ok: true, collected: result.collected, last_ingested: lastIngested(db) };
   });
@@ -176,7 +182,7 @@ export async function createApp(db: DB, opts: CreateAppOpts = {}): Promise<Fasti
   const PREF_KEY = /^[a-z0-9._-]{1,64}$/i;
   app.get("/api/prefs/:key", async (req, reply) => {
     const { key } = req.params as { key: string };
-    if (!PREF_KEY.test(key)) return reply.code(400).send({ error: { code: "BAD_KEY", message: "invalid pref key" } });
+    if (!PREF_KEY.test(key)) return sendError(reply, 400, "BAD_KEY", "invalid pref key");
     if (!triageDb) return { value: null };
     const raw = getPref(triageDb, key);
     // safeJson tolerates a malformed stored value (returns null) rather than throwing a 500.
@@ -184,7 +190,7 @@ export async function createApp(db: DB, opts: CreateAppOpts = {}): Promise<Fasti
   });
   app.put("/api/prefs/:key", async (req, reply) => {
     const { key } = req.params as { key: string };
-    if (!PREF_KEY.test(key)) return reply.code(400).send({ error: { code: "BAD_KEY", message: "invalid pref key" } });
+    if (!PREF_KEY.test(key)) return sendError(reply, 400, "BAD_KEY", "invalid pref key");
     if (!guardWrite(req, reply)) return;
     const body = req.body as { value?: unknown };
     setPref(triageDb!, key, JSON.stringify(body?.value ?? null));
@@ -285,7 +291,7 @@ export async function createApp(db: DB, opts: CreateAppOpts = {}): Promise<Fasti
   app.post("/api/security/mute", async (req, reply) => {
     if (!guardWrite(req, reply)) return reply;
     const b = (req.body ?? {}) as { rule_id?: string; scope?: string; scope_id?: string; note?: string };
-    if (!b.rule_id) return reply.code(400).send({ error: { code: "BAD_REQUEST", message: "rule_id required" } });
+    if (!b.rule_id) return sendError(reply, 400, "BAD_REQUEST", "rule_id required");
     const scope = pickEnum(MUTE_SCOPES, b.scope) ?? "global";
     muteRule(triageDb!, b.rule_id, scope, b.scope_id ?? "", b.note ?? null);
     return { ok: true };
@@ -293,7 +299,7 @@ export async function createApp(db: DB, opts: CreateAppOpts = {}): Promise<Fasti
   app.post("/api/security/unmute", async (req, reply) => {
     if (!guardWrite(req, reply)) return reply;
     const b = (req.body ?? {}) as { rule_id?: string; scope?: string; scope_id?: string };
-    if (!b.rule_id) return reply.code(400).send({ error: { code: "BAD_REQUEST", message: "rule_id required" } });
+    if (!b.rule_id) return sendError(reply, 400, "BAD_REQUEST", "rule_id required");
     const scope = pickEnum(MUTE_SCOPES, b.scope) ?? "global";
     const n = unmute(triageDb!, b.rule_id, scope, b.scope_id ?? "");
     return { ok: true, unmuted: n };
@@ -311,7 +317,7 @@ export async function createApp(db: DB, opts: CreateAppOpts = {}): Promise<Fasti
       decoded = decodeURIComponent(name);
     } catch {
       // A malformed percent-escape (e.g. `%zz`) throws URIError — that's a bad request, not a 500.
-      return reply.code(400).send({ error: { code: "BAD_NAME", message: "invalid skill name encoding" } });
+      return sendError(reply, 400, "BAD_NAME", "invalid skill name encoding");
     }
     const result = getSkill(db, decoded);
     if (!result) return notFound(reply);
@@ -336,7 +342,7 @@ export async function createApp(db: DB, opts: CreateAppOpts = {}): Promise<Fasti
 
   app.get("/api/file", async (req, reply) => {
     const q = req.query as Record<string, string>;
-    if (!q.path) return reply.code(400).send({ error: { code: "MISSING_PATH", message: "missing path" } });
+    if (!q.path) return sendError(reply, 400, "MISSING_PATH", "missing path");
     const result = getFileTimeline(db, q.path, q.project || undefined);
     if (!result) return notFound(reply);
     return result;

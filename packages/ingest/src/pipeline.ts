@@ -160,10 +160,13 @@ function isTurnStart(e: { type: string; is_meta: number; text: string | null }):
   return e.type === "user" && e.is_meta === 0 && body.length > 0 && !isCommandResultCarrier(body);
 }
 
+/** The events columns buildTurns reads. */
+type TurnEventRow = { uuid: string; seq: number | null; type: string; is_sidechain: number; is_meta: number; timestamp: string | null; model: string | null; text: string | null };
+
 /** Group a session's events into turns and return the turns + a uuid→turn_id map. */
 export function buildTurns(
   sessionId: string,
-  rows: Array<{ uuid: string; seq: number | null; type: string; is_sidechain: number; is_meta: number; timestamp: string | null; model: string | null; text: string | null }>,
+  rows: TurnEventRow[],
 ): { turns: TurnRow[]; eventTurn: Map<string, string> } {
   // Ties on timestamp are common and meaningful — a slash command and its output share one to the
   // millisecond — so the tiebreak decides which of them opens the turn and which events land in it.
@@ -280,7 +283,7 @@ function rebuildTurns(db: DB, scope: Scope, sessionIds: Array<{ id: string }>): 
 
   const tx = transaction(db, () => {
     for (const { id } of sessionIds) {
-      const rows = selEvents.all(id) as any[];
+      const rows = selEvents.all(id) as unknown as Array<TurnEventRow & { turn_id: string | null }>;
       const { turns, eventTurn } = buildTurns(id, rows);
       for (const t of turns) runNamed(insTurn, t);
       // An events row is a few KB and setting turn_id resizes it, so each write rewrites the row.

@@ -6,7 +6,7 @@ import { type SkillDetail } from "./api";
 import { AsyncBoundary } from "./AsyncBoundary";
 import { useFetch } from "./useFetch";
 import { useQueryState } from "./useQueryState";
-import { fmtBytes, fmtDate, projectLabel } from "./format";
+import { fmtBytes, fmtDate, projectLabel, shortId } from "./format";
 
 function sizeLabel(n: number | null): string {
   return !n || n < 0 ? "—" : fmtBytes(n);
@@ -129,7 +129,7 @@ function SkillDetailView({ data }: { data: SkillDetail }) {
                         <tr key={s.id}>
                           <td>
                             <Link to={`/session/${s.id}`} className="title">
-                              {s.title || <span className="muted">{s.id.slice(0, 12)}</span>}
+                              {s.title || <span className="muted">{shortId(s.id)}</span>}
                             </Link>
                           </td>
                           <td>{s.source_id}</td>
