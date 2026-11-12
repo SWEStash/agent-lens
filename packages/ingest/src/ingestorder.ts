@@ -30,6 +30,14 @@ function readAt(fd: number, position: number, length: number): string {
   return buf.toString("utf8", 0, n);
 }
 
+/** A copy of `s` that shares no storage with the string it was cut from. V8 keeps a regex match or
+ * slice of a long string as a view into it, so a timestamp matched in a 64 KB edge read would keep
+ * all 64 KB alive for as long as the span lives — and `ingest --full` keeps one span per pending file
+ * until the whole file loop ends (#93). */
+function detach(s: string): string {
+  return Buffer.from(s, "utf8").toString("utf8");
+}
+
 /** First and last timestamps of a transcript, from at most EDGE_BYTES at each end. */
 export function contentSpan(path: string): ContentSpan {
   const fd = openSync(path, "r");
@@ -40,7 +48,7 @@ export function contentSpan(path: string): ContentSpan {
     const first = head.match(FIRST_TIMESTAMP)?.[1] ?? "";
     let last = "";
     for (const m of tail.matchAll(TIMESTAMP)) last = m[1];
-    return { first, last, handsOff: tail.includes(HANDOFF) };
+    return { first: detach(first), last: detach(last), handsOff: tail.includes(HANDOFF) };
   } finally {
     closeSync(fd);
   }
