@@ -48,9 +48,9 @@
     "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.test.json"
   },
   "dependencies": {
-    "@fastify/static": "^10.1.0",
+    "@fastify/static": "^10.1.10",
     "chokidar": "^4.0.3",
-    "fastify": "^5.2.0"
+    "fastify": "^5.12.8"
   },
   "devDependencies": {
     "@agent-lens/core": "workspace:*",

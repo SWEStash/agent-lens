@@ -5,9 +5,8 @@
  *   • the corpus redactor's fail-closed scan (`LEAK_PATTERNS` / `findLeak`, relocated here from
  *     packages/ingest/src/redact.ts and re-exported there so its API is unchanged), and
  *   • the redacted-export sanitizer (`maskSecrets`, `findShareLeak`) — see redact-export.ts.
- *
- * NOTE: packages/ingest/src/detect.ts keeps its own SECRET_VALUE_PATTERNS today (its v8 rules are
- * FP-tuned around them); a future cleanup can have it import SECRET_PATTERNS from here to dedupe.
+ *   • the security detector's `credential.secret_in_data` rule (packages/ingest/src/detect.ts),
+ *     which builds its value patterns from SECRET_PATTERNS.
  */
 
 export interface LeakPattern {
@@ -42,25 +41,26 @@ export function findLeak(text: string, patterns: LeakPattern[] = LEAK_PATTERNS):
   return null;
 }
 
-/** Secret VALUE patterns → a human-readable placeholder label. Mirrors detect.ts's stronger set,
- * extended (2026-07-18 audit) with formats seen in the wild: Google/Stripe/OpenAI/Anthropic keys,
- * GitHub fine-grained PATs, npm tokens, Slack app tokens, and JWTs. Hyphen/underscore-bearing keys
+/** Secret VALUE patterns. `label` is the export placeholder (`[API-KEY]`); `kind` is the finer
+ * slug the detector records as `secret_kind`. Covers Google/Stripe/OpenAI/Anthropic keys, GitHub
+ * fine-grained PATs, npm tokens, Slack app tokens, and JWTs. Hyphen/underscore-bearing keys
  * (sk-proj-…, sk-ant-…, sk_live_…) need their own entries — the generic `sk-…{20,}` stops at the
- * first separator and would miss them. */
-export const SECRET_PATTERNS: Array<{ re: RegExp; label: string }> = [
-  { re: /-----BEGIN (?:RSA |EC |OPENSSH |DSA |PGP )?PRIVATE KEY-----/g, label: "PRIVATE-KEY" },
-  { re: /\bAKIA[0-9A-Z]{16}\b/g, label: "AWS-KEY" },
-  { re: /\bASIA[0-9A-Z]{16}\b/g, label: "AWS-KEY" },
-  { re: /\bgithub_pat_[A-Za-z0-9_]{20,}/g, label: "GITHUB-TOKEN" },
-  { re: /\bgh[pousr]_[A-Za-z0-9]{30,}\b/g, label: "GITHUB-TOKEN" },
-  { re: /\bxox[baprs]-[A-Za-z0-9-]{10,}\b/g, label: "SLACK-TOKEN" },
-  { re: /\bxapp-[0-9A-Za-z-]{10,}/g, label: "SLACK-TOKEN" },
-  { re: /\bnpm_[A-Za-z0-9]{30,}/g, label: "NPM-TOKEN" },
-  { re: /\bAIza[0-9A-Za-z_-]{35}\b/g, label: "GOOGLE-API-KEY" },
-  { re: /\b[rsp]k_(?:live|test)_[A-Za-z0-9]{10,}\b/g, label: "STRIPE-KEY" },
-  { re: /\bsk-(?:proj|ant|or|svcacct)-[A-Za-z0-9_-]{20,}/g, label: "API-KEY" },
-  { re: /\bsk-[A-Za-z0-9]{20,}\b/g, label: "API-KEY" },
-  { re: /\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{6,}/g, label: "JWT" },
+ * first separator and would miss them — and must stay ahead of it, since the detector reports the
+ * first match. */
+export const SECRET_PATTERNS: Array<{ re: RegExp; label: string; kind: string }> = [
+  { re: /-----BEGIN (?:RSA |EC |OPENSSH |DSA |PGP )?PRIVATE KEY-----/g, label: "PRIVATE-KEY", kind: "private-key" },
+  { re: /\bAKIA[0-9A-Z]{16}\b/g, label: "AWS-KEY", kind: "aws-access-key-id" },
+  { re: /\bASIA[0-9A-Z]{16}\b/g, label: "AWS-KEY", kind: "aws-temp-key-id" },
+  { re: /\bgithub_pat_[A-Za-z0-9_]{20,}/g, label: "GITHUB-TOKEN", kind: "github-pat" },
+  { re: /\bgh[pousr]_[A-Za-z0-9]{30,}\b/g, label: "GITHUB-TOKEN", kind: "github-token" },
+  { re: /\bxox[baprs]-[A-Za-z0-9-]{10,}\b/g, label: "SLACK-TOKEN", kind: "slack-token" },
+  { re: /\bxapp-[0-9A-Za-z-]{10,}/g, label: "SLACK-TOKEN", kind: "slack-app-token" },
+  { re: /\bnpm_[A-Za-z0-9]{30,}/g, label: "NPM-TOKEN", kind: "npm-token" },
+  { re: /\bAIza[0-9A-Za-z_-]{35}\b/g, label: "GOOGLE-API-KEY", kind: "google-api-key" },
+  { re: /\b[rsp]k_(?:live|test)_[A-Za-z0-9]{10,}\b/g, label: "STRIPE-KEY", kind: "stripe-key" },
+  { re: /\bsk-(?:proj|ant|or|svcacct)-[A-Za-z0-9_-]{20,}/g, label: "API-KEY", kind: "api-key" },
+  { re: /\bsk-[A-Za-z0-9]{20,}\b/g, label: "API-KEY", kind: "api-secret-key" },
+  { re: /\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{6,}/g, label: "JWT", kind: "jwt" },
 ];
 
 /** URL-embedded credentials survive the kept-readable-URLs policy, so mask them explicitly:

@@ -26,15 +26,10 @@
 import { createHash, randomBytes } from "node:crypto";
 import { parseSkillInjection } from "./pipeline.js";
 import { maskDynamic, maskKnownValues, mergeSlots, type Slot } from "./skillslots.js";
+import { countLines } from "./lines.js";
 
 const PLACEHOLDER = "[redacted]";
 
-/** Lines in a string, matching classify.ts/countLines exactly (trailing newline doesn't add a line). */
-function countLines(s: unknown): number {
-  if (typeof s !== "string" || s.length === 0) return 0;
-  const trimmed = s.endsWith("\n") ? s.slice(0, -1) : s;
-  return trimmed.length === 0 ? 0 : trimmed.split("\n").length;
-}
 /** A dummy string whose countLines() == n (so LoC sub-scores are preserved). */
 function dummyLines(n: number): string {
   return n <= 0 ? "" : Array(n).fill("x").join("\n");

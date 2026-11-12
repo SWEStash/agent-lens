@@ -12,6 +12,7 @@ import type { DB } from "./db.js";
 import { createDirtySet } from "./dirtyset.js";
 import { transaction } from "@agent-lens/core";
 import { parseStored } from "./storedjson.js";
+import { countLines } from "./lines.js";
 
 // v2 (ADR-004): realistic complexity ceilings so real (long, substantial) main sessions spread
 // across bands instead of pegging in "large"; subagent sessions categorized by their spawner role
@@ -43,13 +44,6 @@ const REVIEW_SUBAGENT_ROLES = new Set(["Explore", "Plan", "code-reviewer", "clau
 function categoryForSubagentRole(role: string | undefined): Category | null {
   if (!role) return null;
   return REVIEW_SUBAGENT_ROLES.has(role) ? "review" : null;
-}
-
-/** Number of lines in a string (0 for empty/undefined). Trailing newline doesn't add a line. */
-function countLines(s: unknown): number {
-  if (typeof s !== "string" || s.length === 0) return 0;
-  const trimmed = s.endsWith("\n") ? s.slice(0, -1) : s;
-  return trimmed.length === 0 ? 0 : trimmed.split("\n").length;
 }
 
 const DOC_EXT = /\.(md|markdown|rst|txt|adoc)$/i;

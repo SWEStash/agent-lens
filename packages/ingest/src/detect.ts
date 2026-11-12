@@ -13,7 +13,7 @@
  */
 import { createHash } from "node:crypto";
 import { posix as path } from "node:path";
-import { transaction, bumpSeverity, type Severity, type SecurityCategoryKey } from "@agent-lens/core";
+import { transaction, bumpSeverity, SECRET_PATTERNS, type Severity, type SecurityCategoryKey } from "@agent-lens/core";
 import type { DB } from "./db.js";
 import { createDirtySet } from "./dirtyset.js";
 import { parseShellWrites } from "./shellwrites.js";
@@ -23,7 +23,7 @@ import { parseStored } from "./storedjson.js";
 // CLASSIFIER_VERSION). Recorded on every row + in signals_json. Finding ids are independent of this
 // version, so a bump doesn't invalidate user triage state. The per-version rationale (what each bump
 // fixed/added and why) lives in docs/DETECTOR-CHANGELOG.md — keep the history there, not inline.
-export const DETECTOR_VERSION = 9;
+export const DETECTOR_VERSION = 10;
 
 // Severity model + category taxonomy are shared from core (packages/core/src/security.ts) so the
 // server and web agree on ordering and keys. Re-exported for tests that drive this module directly.
@@ -92,15 +92,13 @@ const EXAMPLE_FILE = /\.(example|sample|template|dist)(?![\w-])/i;
 // read it, so they must not flag (only a content read does).
 const CONTENT_READ_CMD = /\b(cat|less|more|head|tail|bat|xxd|strings|base64|grep|egrep|rg|awk|sed|nl|tac|od|hexdump|cp|scp|sort)\b/i;
 
-/** Secret-looking values (in a command or a captured result). */
-const SECRET_VALUE_PATTERNS: Array<{ re: RegExp; label: string; critical?: boolean }> = [
-  { re: /-----BEGIN (?:RSA |EC |OPENSSH |DSA |PGP )?PRIVATE KEY-----/, label: "private-key", critical: true },
-  { re: /\bAKIA[0-9A-Z]{16}\b/, label: "aws-access-key-id" },
-  { re: /\bASIA[0-9A-Z]{16}\b/, label: "aws-temp-key-id" },
-  { re: /\bgh[pousr]_[A-Za-z0-9]{30,}\b/, label: "github-token" },
-  { re: /\bxox[baprs]-[A-Za-z0-9-]{10,}\b/, label: "slack-token" },
-  { re: /\bsk-[A-Za-z0-9]{20,}\b/, label: "api-secret-key" },
-];
+/** Secret-looking values (in a command or a captured result): core's SECRET_PATTERNS, so the detector
+ * and the export sanitizer recognise the same key formats (#86). Non-global copies, because a /g
+ * regex's lastIndex would carry over between calls. JWTs are left out: they are routine in tool
+ * output (auth flows, test fixtures) and would be the rule's main false-positive source. */
+const SECRET_VALUE_PATTERNS: Array<{ re: RegExp; label: string; critical: boolean }> = SECRET_PATTERNS.filter(
+  (p) => p.kind !== "jwt",
+).map((p) => ({ re: new RegExp(p.re.source), label: p.kind, critical: p.kind === "private-key" }));
 
 const isBash = (t: string) => t === "Bash";
 

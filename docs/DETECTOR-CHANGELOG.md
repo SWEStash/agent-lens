@@ -6,6 +6,20 @@ version (mirrors `CLASSIFIER_VERSION`); the value is recorded on every row and i
 `signals_json`. Finding ids are independent of this version, so a bump does not
 invalidate user triage state.
 
+## v10 — one secret-pattern list
+
+- **`credential.secret_in_data`** now builds its value patterns from core's
+  `SECRET_PATTERNS` (`packages/core/src/secrets.ts`), the list redacted export already
+  masks with, instead of its own six-entry copy. The two had drifted: Anthropic
+  (`sk-ant-`), OpenAI project (`sk-proj-`), GitHub fine-grained (`github_pat_`), npm,
+  Stripe, Google API and Slack app keys were masked on export but never flagged (#86).
+  JWTs stay out of the rule: they are routine in tool output and would be its main
+  false-positive source. Existing `secret_kind` values are unchanged; new formats record
+  new kinds (`api-key`, `github-pat`, `npm-token`, `stripe-key`, `google-api-key`,
+  `slack-app-token`).
+- Measured on a real archive: every v9 secret finding is unchanged, one npm token is
+  newly flagged, and no other rule's findings change.
+
 ## v9 — one shell-write parser
 
 - **`exec_generated_script`** now reads its write targets with `parseShellWrites`
