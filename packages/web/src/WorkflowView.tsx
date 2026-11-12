@@ -7,6 +7,7 @@ import { AgentRow } from "./AgentRow";
 import { AsyncBoundary } from "./AsyncBoundary";
 import { useFetch } from "./useFetch";
 import { fmtCost, fmtDate, fmtDuration, fmtTokens, shortModel } from "./format";
+import { SessionLink } from "./SessionLink";
 import { decodeEntities, looseParse, prettyJson, splitTruncation } from "./jsonish";
 import ResultView from "./ResultView";
 import LaunchView from "./LaunchView";
@@ -109,7 +110,7 @@ function WorkflowRunDetail({ d }: { d: WorkflowDetail }) {
           {d.parent?.id && (
             <span className="spawned-by">
               ↖ launched from{" "}
-              <Link to={`/session/${d.parent.id}`}>{d.parent.title || d.parent.id.slice(0, 12)}</Link>
+              <SessionLink s={d.parent} />
               {d.parent.turn_seq != null ? ` · turn ${d.parent.turn_seq + 1}` : ""}
             </span>
           )}

@@ -6,10 +6,10 @@ import { useQueryState } from "./useQueryState";
 import { ErrorAlert, Loading } from "./AsyncBoundary";
 import { useDetailsAutoClose } from "./useOutsideClick";
 import { MultiSelect } from "./MultiSelect";
-import { costTitle, fmtCost, fmtDate, fmtDuration, fmtTokens, projectLabel, shortModel, tokenSplitTitle } from "./format";
+import { costTitle, fmtCost, fmtDate, fmtDuration, fmtTokens, projectLabel, shortId, shortModel, tokenSplitTitle } from "./format";
 import { SearchBox, SourceSelect, ProjectSelect } from "./ListFilters";
 import { Pager } from "./Pager";
-import { SortHeader, type SortDir } from "./sort";
+import { SortHeader, urlSort, type SortDir } from "./sort";
 import { loadPrefLocal, fetchPref, savePref } from "./prefs";
 
 /** A sessions-table column. `toggleable` columns can be hidden via the "Columns" customizer and their
@@ -42,7 +42,7 @@ const COLUMNS: ColumnDef[] = [
     cell: (s, q) => (
       <td>
         <Link to={`/session/${s.id}${q ? `?q=${encodeURIComponent(q)}` : ""}`} className="title">
-          {s.title || <span className="muted">{s.id.slice(0, 12)}</span>}
+          {s.title || <span className="muted">{shortId(s.id)}</span>}
         </Link>
         <div className="sub">
           {s.is_sidechain ? <span className="tag subagent">subagent</span> : null}
@@ -239,11 +239,7 @@ export default function SessionsView() {
 
   // Sort is server-side (whole list, not just the page) and lives in the URL. Clicking the active
   // column flips direction; a new column adopts its default direction. Changing sort resets to page 1.
-  const sortKey = get("sort", "started") as SessionSort;
-  const sortDir = (get("dir") === "asc" ? "asc" : "desc") as SortDir;
-  function onSort(key: SessionSort, defaultDir: SortDir) {
-    setParam({ sort: key, dir: sortKey === key ? (sortDir === "asc" ? "desc" : "asc") : defaultDir });
-  }
+  const { sortKey, sortDir, onSort } = urlSort<SessionSort>({ get, set: setParam }, "started");
 
   const page = Math.floor(offset / PAGE) + 1;
   const pages = Math.max(1, Math.ceil(total / PAGE));

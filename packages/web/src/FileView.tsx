@@ -2,7 +2,7 @@ import { Link, useSearchParams } from "react-router-dom";
 import { type FileTimeline } from "./api";
 import { AsyncBoundary } from "./AsyncBoundary";
 import { useFetch } from "./useFetch";
-import { fmtDate, projectLabel } from "./format";
+import { fmtDate, projectLabel, shortId } from "./format";
 import { LinesDelta, relPath } from "./FilesView";
 
 /**
@@ -78,7 +78,7 @@ function FileTimelineView({ data }: { data: FileTimeline }) {
                 className="title"
                 data-tip={firstEv ? "Open the session at this file's first change" : undefined}
               >
-                {s.title || <span className="muted">{s.session_id.slice(0, 12)}</span>}
+                {s.title || <span className="muted">{shortId(s.session_id)}</span>}
               </Link>
             </h3>
             <span className="card-hint">

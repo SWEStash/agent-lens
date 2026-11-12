@@ -2,7 +2,7 @@
  * fanned out by a turn) and the workflow page (agents fanned out by a run), which list the same
  * thing. */
 import { Link } from "react-router-dom";
-import { fmtCost, fmtDuration, fmtTokens, shortModel } from "./format";
+import { fmtCost, fmtDuration, fmtTokens, sessionLabel, shortModel } from "./format";
 
 /** The fields both `SessionChild` and `WorkflowAgent` carry. `duration_ms` is workflow-only (the
  * session payload doesn't compute it), so the row simply omits it when absent. */
@@ -20,7 +20,7 @@ export interface AgentRowData {
 }
 
 export function AgentRow({ a }: { a: AgentRowData }) {
-  const title = a.agent_description || a.title || a.id.slice(0, 12);
+  const title = a.agent_description || sessionLabel(a.title, a.id);
   const models = (a.models ?? "").split(",").filter(Boolean).map(shortModel).join(", ");
   return (
     <li>

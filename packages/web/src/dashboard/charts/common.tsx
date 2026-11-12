@@ -86,7 +86,7 @@ export const Y_AXIS_W = 36;
 /** Measure the chart body and say whether `count` buckets still fit as bars. Attach the ref to a
  * full-size wrapper around the chart. Before the first observation lands — and in jsdom, which has no
  * ResizeObserver — width is 0 and bars are assumed to fit. */
-export function useBarsFit(count: number) {
+function useBarsFit(count: number) {
   const [ref, width] = useMeasuredWidth();
   return [ref, width === 0 || count * PX_PER_BUCKET <= width - Y_AXIS_W] as const;
 }

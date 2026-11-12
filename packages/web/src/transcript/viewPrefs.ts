@@ -1,5 +1,5 @@
-/** Transcript view preferences (message format, hide-tools). These go through the shared prefs module
- * like every other UI pref: localStorage for instant first paint, written through to the server's
+/** Transcript view preferences (message format, hide-tools, timeline axis and metric). These go
+ * through the shared prefs module like every other UI pref: localStorage for instant first paint, written through to the server's
  * writable sidecar so a choice survives a cache-clear and follows the same server across browsers.
  * They used to hand-roll `localStorage` and were the only prefs that silently did NOT sync. */
 import { fetchPref, loadPrefLocal, savePref } from "../prefs";
@@ -66,7 +66,7 @@ export function saveTimelineMetric(m: TokenMetric): void {
   savePref(METRIC_KEY, m);
 }
 
-/** Reconcile both prefs with the server's stored values (the source of truth when a writable store is
+/** Reconcile the view prefs with the server's stored values (the source of truth when a writable store is
  * configured). Mirrors how Dashboard and SessionsView reconcile theirs after first paint; resolves to
  * the values to apply, omitting whichever the server has no opinion on. */
 export async function fetchViewPrefs(): Promise<{

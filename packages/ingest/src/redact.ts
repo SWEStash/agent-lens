@@ -206,7 +206,7 @@ export class Redactor {
 export { encodeProjectPath } from "@agent-lens/core";
 // The fail-closed leak scan now lives in core (shared with the redacted-export sanitizer). Re-export
 // so this module's consumers (redact-cli.ts, tests) keep their `./redact.js` import unchanged.
-export { LEAK_PATTERNS, findLeak } from "@agent-lens/core";
+export { findLeak } from "@agent-lens/core";
 import { findLeak } from "@agent-lens/core";
 
 /** True if `encodedDir` is (or sits under) any excluded project path — used to keep data out of the corpus. */
