@@ -174,6 +174,8 @@ function snapshot(absPath: string, relParts: string[], versionsDir: string, stat
 /**
  * Recursively collect the relevant transcript + sidecar files under `dir`:
  *   - `*.jsonl`                — session/subagent transcripts and journals (the core traces)
+ *   - `*.jsonl.superseded-<ts>` — a previous transcript Claude Code set aside instead of overwriting
+ *                                (the other set-aside form, `*.orphaned-<ts>-<suffix>.jsonl`, is `*.jsonl`)
  *   - anything under `workflows/` — the Workflow-tool run result sidecars (wf_<id>.json) + scripts
  *   - `*.meta.json`            — per-subagent metadata (agentType, description, spawnDepth, toolUseId)
  *   - anything under `tool-results/` — full un-truncated tool outputs spilled from the transcript
@@ -181,6 +183,8 @@ function snapshot(absPath: string, relParts: string[], versionsDir: string, stat
  * Secrets (.credentials.json, *.lock) are filtered by the caller. `inWorkflows`/`inToolResults` track
  * whether recursion is inside one of those directories so every file within is captured.
  */
+const SUPERSEDED = /\.jsonl\.superseded-[^/]+$/;
+
 function walkCollectable(dir: string, out: string[], inWorkflows = false, inToolResults = false): void {
   for (const e of readdirSync(dir, { withFileTypes: true })) {
     const p = join(dir, e.name);
@@ -188,7 +192,7 @@ function walkCollectable(dir: string, out: string[], inWorkflows = false, inTool
       walkCollectable(p, out, inWorkflows || e.name === "workflows", inToolResults || e.name === "tool-results");
     } else if (
       e.isFile() &&
-      (e.name.endsWith(".jsonl") || inWorkflows || inToolResults || e.name.endsWith(".meta.json"))
+      (e.name.endsWith(".jsonl") || SUPERSEDED.test(e.name) || inWorkflows || inToolResults || e.name.endsWith(".meta.json"))
     ) {
       out.push(p);
     }
