@@ -150,7 +150,9 @@ subscription quota ([ADR-028](decisions/ADR-028-model-pricing.md)).
 
 Copies each source's transcripts into `<dataDir>/archive/<label>/` before Claude Code prunes them
 (after a rolling 30-day window). It never deletes and never copies credentials. When a transcript
-shrinks or diverges, the previous version is kept under `.versions/`.
+shrinks or diverges, the previous version is kept under `.versions/`. Transcripts that Claude Code
+sets aside itself (`<session>.orphaned-…jsonl`, `<session>.jsonl.superseded-…`) are copied too, and
+ingest reads them as earlier history of `<session>`.
 
 ```bash
 agent-lens collect                 # one pass

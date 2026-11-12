@@ -130,6 +130,17 @@ describe("collectAll", () => {
     expect(existsSync(arc(`projects/${ENC}/sess/tool-results/toolu_1.txt`))).toBe(true);
   });
 
+  it("collects transcripts Claude Code set aside, in both naming forms (#75)", () => {
+    const dir = join(srcDir, "projects", ENC);
+    write(join(dir, "sess.jsonl"), "live\n", 1000);
+    write(join(dir, "sess.orphaned-20261101T120000-ab12.jsonl"), "orphaned\n", 1000);
+    write(join(dir, "sess.jsonl.superseded-20261101T120000"), "superseded\n", 1000);
+    const stats = collect();
+    expect(stats.copied).toBe(3);
+    expect(readFileSync(arc(`projects/${ENC}/sess.orphaned-20261101T120000-ab12.jsonl`), "utf8")).toBe("orphaned\n");
+    expect(readFileSync(arc(`projects/${ENC}/sess.jsonl.superseded-20261101T120000`), "utf8")).toBe("superseded\n");
+  });
+
   it("a rewritten JSON sidecar diverges (snapshot + overwrite), never appends", () => {
     const rel = `projects/${ENC}/sess/workflows/wf_x.json`;
     const src = join(srcDir, rel);

@@ -141,8 +141,19 @@ function recurseJsonl(dir: string, out: string[]): void {
   for (const e of entries) {
     const p = join(dir, e.name);
     if (e.isDirectory()) recurseJsonl(p, out);
-    else if (e.isFile() && e.name.endsWith(".jsonl")) out.push(p);
+    else if (e.isFile() && transcriptSessionId(e.name)) out.push(p);
   }
+}
+
+/** A transcript file name → the session it belongs to. Claude Code writes `<session>.jsonl`, and
+ * sets a previous transcript aside instead of overwriting it as `<session>.orphaned-<ts>-<suffix>.jsonl`
+ * or `<session>.jsonl.superseded-<ts>`. A set-aside file is earlier history of the same session, so it
+ * is ingested like a `.versions/` snapshot. Null for a file that is not a transcript. */
+const SET_ASIDE = /^(.+?)(?:\.orphaned-[^/]*\.jsonl|\.jsonl\.superseded-[^/]*)$/;
+export function transcriptSessionId(name: string): { sessionId: string; setAside: boolean } | null {
+  const m = SET_ASIDE.exec(name);
+  if (m) return { sessionId: m[1], setAside: true };
+  return name.endsWith(".jsonl") ? { sessionId: name.slice(0, -".jsonl".length), setAside: false } : null;
 }
 
 export class ClaudeCodeAdapter implements SourceAdapter {
@@ -157,15 +168,15 @@ export class ClaudeCodeAdapter implements SourceAdapter {
       const found: string[] = [];
       recurseJsonl(projectsDir, found);
       for (const path of found) {
-        // <...>/projects/<encodedDir>/<sessionId>.jsonl
+        // <...>/projects/<encodedDir>/<sessionId>.jsonl (or a set-aside form of it)
         const parts = path.split("/");
-        const sessionId = basename(path, ".jsonl");
+        const { sessionId, setAside } = transcriptSessionId(basename(path))!;
         const encodedDir = parts[parts.length - 2] ?? "";
         files.push({
           path,
           sessionId,
           encodedDir,
-          isVersion,
+          isVersion: isVersion || setAside,
           sourceId,
           parentSessionId: parentSessionFromPath(path),
           workflowRunId: workflowRunFromPath(path),
