@@ -18,6 +18,8 @@
  * caller's job (see filechanges.ts) — this module only reports what the command says.
  */
 
+import { countLines } from "./lines.js";
+
 export interface ShellWrite {
   /** The target exactly as written — absolute, or relative to the command's cwd. */
   path: string;
@@ -75,12 +77,6 @@ function usable(path: string | null, keepHome = false): path is string {
   return true;
 }
 
-/** Lines a heredoc body spans; 0 when the body is empty. */
-function bodyLines(body: string): number {
-  const trimmed = body.replace(/\n$/, "");
-  return trimmed === "" ? 0 : trimmed.split("\n").length;
-}
-
 /**
  * Blank out every heredoc body (same length, so match offsets stay meaningful) and return the
  * writes those heredocs performed. Bodies are documents, not shell — a `>` inside one is prose,
@@ -103,7 +99,7 @@ function stripHeredocs(command: string, keepHome: boolean): { scan: string; writ
     const red = before.match(REDIRECT_BEFORE_HEREDOC);
     if (red) {
       const p = target(red, 1);
-      if (usable(p, keepHome)) writes.push({ at: red.index ?? m.index, write: { path: p, linesAdded: bodyLines(rest.slice(0, bodyEnd)) } });
+      if (usable(p, keepHome)) writes.push({ at: red.index ?? m.index, write: { path: p, linesAdded: countLines(rest.slice(0, bodyEnd)) } });
     }
     // Blank the opener + body + terminator so later passes never see document text as shell.
     const stripEnd = end === -1 ? scan.length : openerEnd + 1 + bodyEnd + delim.length;
