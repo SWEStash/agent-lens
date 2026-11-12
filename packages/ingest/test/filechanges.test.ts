@@ -74,6 +74,22 @@ describe("deriveFileChanges", () => {
     expect(nb).toMatchObject({ file_path: "/proj/nb.ipynb", lines_added: null, lines_removed: null });
   });
 
+  it("counts lines git's way: a trailing newline adds no line, same for Write and heredoc (#85)", () => {
+    const db = freshDb();
+    addSession(db, "s", "/proj");
+    const w = addTool(db, "s", "Write", { input: { file_path: "/proj/a.md", content: "one\ntwo\n" } });
+    const h = addTool(db, "s", "Bash", { input: { command: "cat > /proj/b.md <<'EOF'\none\ntwo\nEOF" } });
+    const e = addTool(db, "s", "Edit", {
+      input: { file_path: "/proj/c.ts", old_string: "x\n", new_string: "x\ny\n" },
+    });
+    deriveFileChanges(db);
+
+    const rows = rowsFor(db, "s");
+    expect(rows.find((r) => r.tool_call_id === w)).toMatchObject({ lines_added: 2 });
+    expect(rows.find((r) => r.tool_call_id === h)).toMatchObject({ lines_added: 2 });
+    expect(rows.find((r) => r.tool_call_id === e)).toMatchObject({ lines_added: 2, lines_removed: 1 });
+  });
+
   it("excludes failed calls, non-file tools, and unparseable/pathless inputs", () => {
     const db = freshDb();
     addSession(db, "s", "/proj");

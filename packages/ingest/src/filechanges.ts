@@ -17,11 +17,12 @@ import { createHash } from "node:crypto";
 import { posix as path } from "node:path";
 import { transaction } from "@agent-lens/core";
 import { parseShellWrites } from "./shellwrites.js";
+import { countLines } from "./lines.js";
 import type { DB } from "./db.js";
 import { parseStored } from "./storedjson.js";
 import { createDirtySet } from "./dirtyset.js";
 
-export const FILECHANGES_VERSION = 2;
+export const FILECHANGES_VERSION = 3;
 
 const FILE_TOOLS = ["Edit", "Write", "NotebookEdit", "Bash"] as const;
 
@@ -43,13 +44,9 @@ export function normalizeFilePath(filePath: unknown, projectPath: string | null)
   return path.normalize(projectPath.replace(/\/$/, "") + "/" + filePath);
 }
 
-/** Count the lines a string spans (1 + newlines); 0 for the empty string. */
+/** countLines, but null when the field is missing, so an absent count isn't stored as 0. */
 function lineCount(s: unknown): number | null {
-  if (typeof s !== "string") return null;
-  if (s === "") return 0;
-  let n = 1;
-  for (let i = 0; i < s.length; i++) if (s.charCodeAt(i) === 10) n++;
-  return n;
+  return typeof s === "string" ? countLines(s) : null;
 }
 
 interface ToolRow {
