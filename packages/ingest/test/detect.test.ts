@@ -198,6 +198,26 @@ describe("credential access rules", () => {
     const f = bashFindings("export AWS_ACCESS_KEY_ID=AKIAIOSFODNN7EXAMPLE");
     expect(f.find((x) => x.rule_id === "credential.secret_in_data").severity).toBe("high");
   });
+
+  // Invented keys, assembled at runtime so no literal token sits in the source.
+  const body = "Ab3".repeat(14);
+  it.each([
+    ["Anthropic", "sk-" + "ant-api03-" + body],
+    ["OpenAI project", "sk-" + "proj-" + body],
+    ["GitHub fine-grained PAT", "github" + "_pat_" + body],
+    ["npm", "npm" + "_" + body],
+    ["Stripe live", "sk" + "_live_" + body],
+    ["Google API", "AIza" + "Sy" + body.slice(0, 33)],
+    ["Slack app", "xapp" + "-1-" + body],
+  ])("flags a %s key in output (#86)", (_name, key) => {
+    const f = bashFindings(`echo "TOKEN=${key}"`);
+    expect(f.some((x) => x.rule_id === "credential.secret_in_data")).toBe(true);
+  });
+
+  it("does not flag a JWT (likeliest false positive in tool output) (#86)", () => {
+    const jwt = "eyJ" + "hbGciOiJIUzI1NiJ9." + "eyJzdWIiOiIxMjM0NTY3ODkwIn0." + "dozjgNryP4J3jVmNHl0w5N";
+    expect(bashFindings(`echo ${jwt}`).some((x) => x.rule_id === "credential.secret_in_data")).toBe(false);
+  });
 });
 
 describe("data exfiltration rules (MITRE ATLAS AML.T0086)", () => {
