@@ -1,0 +1,25 @@
+name: Feature request
+description: Something Agent Lens should do, or a question it can't answer yet
+type: Feature
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Issues are public. Describe your data by its shape, not by pasting real sessions.
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What question you can't answer, or what's awkward today.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposal
+      description: What you'd like Agent Lens to do. Optional.
+  - type: textarea
+    id: notes
+    attributes:
+      label: Notes
+      description: How you work around it now, related issues, a rough sketch of the UI or CLI. Optional.

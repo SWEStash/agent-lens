@@ -1,0 +1,44 @@
+name: Bug
+description: A command, the web UI, or a metric does something wrong
+type: Bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Issues are public. **Don't paste raw session transcripts, real home-directory paths, or anything from your `data/` folder**: they can contain secrets. If a specific session is needed, `agent-lens export <sessionId>` redacts by default.
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps
+      description: What you did, one step per line. Include the command (e.g. `agent-lens collect`, `ingest`, `serve`, `watch`, `export`) or the page in the UI.
+      placeholder: |
+        1. Ran `agent-lens ingest`
+        2. Opened the Sessions page
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual
+      description: What happened. Paste the error or the relevant output.
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: "`agent-lens --version`, OS, `node --version` (needs ≥ 24), and the versions and paths sections of `agent-lens config` (or the About page). Redact anything you'd rather not share."
+      render: text
+    validations:
+      required: true
+  - type: textarea
+    id: impact
+    attributes:
+      label: Impact
+      description: How often it happens, what it blocks, any workaround. Optional.

@@ -142,6 +142,7 @@ See [ADR-005](docs/decisions/ADR-005-privacy-posture.md) for the full posture.
 | [PERFORMANCE.md](docs/PERFORMANCE.md) | Benchmarks and the query-plan guard |
 | [DEVELOPMENT.md](docs/DEVELOPMENT.md) | Building from source, tests, project layout, adding an agent |
 | [RELEASING.md](docs/RELEASING.md) | Versioning and npm releases |
+| [HOW-WE-WORK.md](docs/HOW-WE-WORK.md) | How issues, pull requests, and releases are run |
 | [decisions/](docs/decisions/) | Architecture Decision Records |
 
 ## Contributing

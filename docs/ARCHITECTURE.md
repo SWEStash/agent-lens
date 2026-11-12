@@ -177,3 +177,5 @@ erDiagram
 | [035](decisions/ADR-035-dashboard-model-filter.md) | The dashboard's model filter narrows each aggregate at its own grain; an empty selection filters nothing |
 | [036](decisions/ADR-036-dashboard-audit-endpoint.md) | Four audit tiles behind one endpoint, reporting observables rather than scoring efficiency |
 | [037](decisions/ADR-037-canonical-model-key.md) | A model id groups and filters at its minor version; a dated snapshot and its alias are one model |
+| [038](decisions/ADR-038-shared-session-history.md) | History shared between sessions has one owner, and the copy links to it |
+| [039](decisions/ADR-039-otel-is-enrichment-not-source.md) | OpenTelemetry is an optional enrichment signal; the transcript archive stays the system of record |
