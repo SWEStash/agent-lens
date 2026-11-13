@@ -42,8 +42,8 @@ echo "=== scenario assertions (DB) ==="
 ok 1 "$(echo "$INGEST" | grep -oE 'malformed=[0-9]+' | head -1 | cut -d= -f2)" "malformed line counted"
 # multi-source: three labeled sources, no cross-source bleed.
 ok 3 "$(q "SELECT COUNT(DISTINCT source_id) FROM sessions;")" "multi-source (3 sources)"
-ok 49 "$(q "SELECT COUNT(*) FROM sessions;")" "total sessions"
-ok 40 "$(q "SELECT COUNT(*) FROM sessions WHERE is_sidechain=0;")" "main sessions"
+ok 50 "$(q "SELECT COUNT(*) FROM sessions;")" "total sessions"
+ok 41 "$(q "SELECT COUNT(*) FROM sessions WHERE is_sidechain=0;")" "main sessions"
 # sidecars: the workflow result (phase graph), per-subagent meta (type/description badges), and a
 # spilled full tool output ("Show full result") — the three sidecar ingest paths, exercised end-to-end.
 ok 1 "$(q "SELECT COUNT(*) FROM workflow_results WHERE run_id='wf_demo000abc';")" "workflow result sidecar ingested"
@@ -80,19 +80,21 @@ OV="$(curl -sf "http://127.0.0.1:$PORT/api/dashboard/overview")"
 BD="$(curl -sf "http://127.0.0.1:$PORT/api/dashboard/breakdowns")"
 SK="$(curl -sf "http://127.0.0.1:$PORT/api/skills")"
 SKD="$(curl -sf "http://127.0.0.1:$PORT/api/skills/api-design")"
+REJ="$(curl -sf "http://127.0.0.1:$PORT/api/security/findings?approval=rejected&limit=100")"
 node -e '
   const ov = JSON.parse(process.argv[1]), bd = JSON.parse(process.argv[2]);
-  const sk = JSON.parse(process.argv[3]), skd = JSON.parse(process.argv[4]);
+  const sk = JSON.parse(process.argv[3]), skd = JSON.parse(process.argv[4]), rej = JSON.parse(process.argv[5]);
   let bad = 0; const ok = (c, n) => { console.log(`  ${c ? "PASS" : "FAIL"}  ${n}`); if (!c) bad++; };
-  ok(ov.sessions === 49, "overview serves 49 sessions");
+  ok(ov.sessions === 50, "overview serves 50 sessions");
   ok(bd.by_source.length === 3, "breakdowns: 3 sources");
   ok(ov.cost > 0 && ov.tokens.cache_read > 0, "overview: cost + cache_read > 0");
   ok(bd.subagent_fanout.total_spawns >= 1, "breakdowns: subagent fan-out present");
   ok(bd.skill_versions.length === 2, "breakdowns: skill versions present");
   ok(sk.length === 1 && sk[0].name === "api-design" && sk[0].version_count === 2, "skills list: api-design with 2 versions");
   ok(skd.versions.length === 2 && skd.versions.every(v => v.body && v.summary === "API Design"), "skill detail: 2 versions with bodies");
+  ok(rej.findings.length >= 2 && rej.findings.every(f => f.permission && f.permission.decision === "reject"), "findings: approval=rejected lists only rejected calls (ADR-040)");
   process.exit(bad ? 1 : 0);
-' "$OV" "$BD" "$SK" "$SKD" || fails=$((fails + 1))
+' "$OV" "$BD" "$SK" "$SKD" "$REJ" || fails=$((fails + 1))
 
 echo
 [ "$fails" -eq 0 ] && { echo "=== sandbox e2e PASS (all scenarios) ==="; } || { echo "=== sandbox e2e FAILED: $fails check(s) ==="; exit 1; }

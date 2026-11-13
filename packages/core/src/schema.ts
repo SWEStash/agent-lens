@@ -19,7 +19,7 @@
  * Bump SCHEMA_VERSION on any DDL change.
  */
 
-export const SCHEMA_VERSION = 16;
+export const SCHEMA_VERSION = 17;
 
 /**
  * Refresh the query planner's statistics. Run by ingest after every write pass. Without
@@ -194,6 +194,12 @@ CREATE TABLE IF NOT EXISTS tool_calls (
   total_duration_ms   INTEGER,
   total_tokens        INTEGER,
   total_tool_use_count INTEGER,
+  -- How the call was approved (ADR-040). All NULL = not recorded, never a guess.
+  permission_decision TEXT,              -- accept | reject
+  permission_via      TEXT,              -- user | rule | mode | classifier | hook | safety_check | other
+  permission_scope    TEXT,              -- once | session (a user grant's lifetime)
+  permission_rule_source TEXT,           -- the settings source of the deciding rule
+  permission_reason   TEXT,              -- the source's own reason code, verbatim
   input_json          TEXT,              -- tool input, verbatim
   result_summary      TEXT               -- short result projection (no secrets dumped wholesale)
 );

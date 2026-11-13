@@ -6,9 +6,9 @@
  *
  *   PRESERVE (so metrics are identical to the raw input): uuid, parentUuid, type, timestamp,
  *   isSidechain, isMeta, agentId (opaque hex, drives subagent linkage), message.{role,id,model,
- *   usage,stop_reason}, toolUseResult numeric/linkage fields, tool_use {id,name}, and — crucially —
- *   the *line count* of Edit/Write payloads + the *distinctness & extension* of file paths (these
- *   feed the LoC / files complexity sub-scores).
+ *   usage,stop_reason}, toolUseResult numeric/linkage fields, permissionDecision codes, tool_use
+ *   {id,name}, and — crucially — the *line count* of Edit/Write payloads + the *distinctness &
+ *   extension* of file paths (these feed the LoC / files complexity sub-scores).
  *
  *   REDACT (deny-by-default): all message text/thinking, tool_result content, cwd & file paths
  *   (pseudonymized, usernames stripped), slug/aiTitle/gitBranch, and any other free text. Stable
@@ -29,6 +29,21 @@ import { maskDynamic, maskKnownValues, mergeSlots, type Slot } from "./skillslot
 import { countLines } from "./lines.js";
 
 const PLACEHOLDER = "[redacted]";
+
+/** The permissionDecision keys the corpus keeps (ADR-040), and the only value shape it accepts: a
+ * short code with no spaces, slashes or other text-bearing characters, so the object can never carry
+ * a command, a path or prose even if Claude Code starts writing one there. */
+const PERMISSION_KEYS = ["decision", "source", "reasonType", "ruleSource", "grantScope", "reasonCode", "classifierCategory", "circuitBreaker"];
+const PERMISSION_CODE = /^[A-Za-z0-9_:+.-]{1,80}$/;
+
+function permissionCodes(pd: Record<string, unknown>): Record<string, string> | null {
+  const out: Record<string, string> = {};
+  for (const k of PERMISSION_KEYS) {
+    const v = pd[k];
+    if (typeof v === "string" && PERMISSION_CODE.test(v)) out[k] = v;
+  }
+  return Object.keys(out).length ? out : null;
+}
 
 /** A dummy string whose countLines() == n (so LoC sub-scores are preserved). */
 function dummyLines(n: number): string {
@@ -180,6 +195,10 @@ export class Redactor {
       const tu: Record<string, unknown> = {};
       for (const k of ["status", "agentType", "agentId", "resolvedModel", "totalDurationMs", "totalTokens", "totalToolUseCount"]) if (k in t) tu[k] = t[k];
       out.toolUseResult = tu;
+    }
+    if (rec.permissionDecision && typeof rec.permissionDecision === "object") {
+      const pd = permissionCodes(rec.permissionDecision as Record<string, unknown>);
+      if (pd) out.permissionDecision = pd;
     }
     if ("message" in rec) out.message = this.message(rec.message);
     return out;

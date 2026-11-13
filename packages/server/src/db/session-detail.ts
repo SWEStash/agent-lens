@@ -5,7 +5,7 @@ import type { Finding, FileChangeRow, EventNode, Classification, ClassificationS
 import { tableExists, queryAll, queryGet, pushGrouped, metaJoin, metaProjection } from "../sql-util.js";
 import type { ToolCallProjection, ClassificationProjectionRow, EventProjectionRow, EventUsageRow, FindingProjectionRow, SessionChildRow, SessionParentRow, ToolResultRow } from "../rows.js";
 import { sessionUsage, usageBySession, splitOf, tokensOf, costOf, unpricedOf } from "../usage.js";
-import { type DB, SESSION_MODELS_SQL, displayTitle, safeJson } from "./common.js";
+import { type DB, SESSION_MODELS_SQL, displayTitle, permissionCols, safeJson, withPermission, type PermissionColumns } from "./common.js";
 
 /** The session's tool calls, with any spilled full output attached.
  *
@@ -13,15 +13,15 @@ import { type DB, SESSION_MODELS_SQL, displayTitle, safeJson } from "./common.js
  * transcript's 280-char stand-in), the un-truncated text is pulled from tool_results so the UI can
  * expand it. Keyed by (session_id, name); guarded for a pre-ingest DB. */
 function loadToolCalls(db: DB, id: string): ToolCallProjection[] {
-  const toolRows = queryAll<ToolCallProjection>(
+  const toolRows = queryAll<Omit<ToolCallProjection, "permission"> & PermissionColumns>(
     db,
     `SELECT id, event_uuid, tool_name, skill_name, skill_id, agent_type, spawned_session_id,
             workflow_run_id, workflow_name, status, error_type,
-            total_duration_ms, input_json, result_summary,
+            total_duration_ms, input_json, result_summary, ${permissionCols(db, "tool_calls")},
             (SELECT COUNT(*) FROM sessions s WHERE s.workflow_run_id = tool_calls.workflow_run_id) AS workflow_agent_count
      FROM tool_calls WHERE session_id = ?`,
     id,
-  );
+  ).map(withPermission);
 
   if (tableExists(db, "tool_results")) {
     const getFull = db.prepare("SELECT text, bytes FROM tool_results WHERE session_id = ? AND name = ?");

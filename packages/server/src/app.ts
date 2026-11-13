@@ -10,7 +10,7 @@ import fastifyStatic from "@fastify/static";
 import type { ApiError } from "@agent-lens/contracts";
 import { resolveVersion } from "@agent-lens/core";
 import { renderSessionExport, parseRedactionLevel } from "./export.js";
-import { type DB, lastIngested, schemaStatus, listSources, listProjects, listModels, listSessions, getSession, sessionLocation, getWorkflow, listSkills, getSkill, listFindings, openFindingIds, securitySummary, listFiles, getFileTimeline, safeJson, SESSION_SORTS, FILE_SORTS, FINDING_SORTS, FINDING_STATUSES } from "./db.js";
+import { type DB, lastIngested, schemaStatus, listSources, listProjects, listModels, listSessions, getSession, sessionLocation, getWorkflow, listSkills, getSkill, listFindings, openFindingIds, securitySummary, listFiles, getFileTimeline, safeJson, SESSION_SORTS, FILE_SORTS, FINDING_SORTS, FINDING_STATUSES, FINDING_APPROVALS } from "./db.js";
 import { dashboardOverview, dashboardTimeseries, dashboardBreakdowns, dashboardTime, dashboardAudit, type DashFilters } from "./dashboard.js";
 import { writeBlocked, runRefresh, LOOPBACK_HOSTS } from "./refresh.js";
 import { openTriage, dismiss, reopen, muteRule, unmute, listMutes, MUTE_SCOPES, type TriageDB } from "./triage.js";
@@ -253,6 +253,7 @@ export async function createApp(db: DB, opts: CreateAppOpts = {}): Promise<Fasti
     project: q.project,
     from: q.from,
     to: q.to,
+    approval: pickEnum(FINDING_APPROVALS, q.approval),
     status: pickEnum(FINDING_STATUSES, q.status),
   });
   app.get("/api/security/findings", async (req) => {

@@ -216,3 +216,22 @@ describe("redactor — drops the user's arguments from skill bodies", () => {
     expect(o).not.toContain("churn");
   });
 });
+
+describe("redactor — permission decisions (ADR-040)", () => {
+  const line = (pd: unknown) => new Redactor("fixed-test-salt").line({ uuid: "u1", type: "user", permissionDecision: pd }) as any;
+
+  it("keeps the known keys when every value is a closed code", () => {
+    const pd = { decision: "accept", source: "user_temporary", reasonType: "rule", ruleSource: "userSettings", grantScope: "once", reasonCode: "subcommands:bashMiss:no-rule-match+rule:userSettings" };
+    expect(line(pd).permissionDecision).toEqual(pd);
+  });
+
+  it("drops unknown keys and any value that is not a short code", () => {
+    const out = line({ decision: "reject", source: "hook", reasonCode: "blocked: rm -rf /home/alice/secret", note: "free text", grantScope: 3 });
+    expect(out.permissionDecision).toEqual({ decision: "reject", source: "hook" });
+  });
+
+  it("emits nothing for a missing or malformed object", () => {
+    expect(line(undefined)).not.toHaveProperty("permissionDecision");
+    expect(line("accept")).not.toHaveProperty("permissionDecision");
+  });
+});

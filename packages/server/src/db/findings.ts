@@ -1,13 +1,16 @@
 /** Security findings (ADR-017) and their triage state (ADR-018). */
 import { SECURITY_CATEGORIES } from "@agent-lens/core";
-import type { FindingListRow, SecuritySummary, FindingsPage, FindingSort, FindingStatus } from "@agent-lens/contracts";
+import type { FindingApproval, FindingListRow, SecuritySummary, FindingsPage, FindingSort, FindingStatus } from "@agent-lens/contracts";
 import { tableExists, queryAll, queryGet, orderBy, pushDateRange, whereClause, enumValues, type SortDir } from "../sql-util.js";
 import type { CountRow } from "../rows.js";
-import { type DB, severityRankSql } from "./common.js";
+import { type DB, hasPermissionColumns, permissionCols, severityRankSql, withPermission, type PermissionColumns } from "./common.js";
 
 // The values this endpoint accepts for `?sort=` and `?status=`; see SESSION_SORTS in sessions.ts.
 export const FINDING_SORTS = enumValues<FindingSort>({ severity: true, session: true, rule: true, category: true, time: true });
 export const FINDING_STATUSES = enumValues<FindingStatus>({ open: true, dismissed: true, muted: true, all: true });
+export const FINDING_APPROVALS = enumValues<FindingApproval>({
+  user: true, rule: true, mode: true, classifier: true, hook: true, safety_check: true, other: true, rejected: true, unknown: true,
+});
 
 export interface FindingFilters {
   severity?: string;
@@ -18,6 +21,8 @@ export interface FindingFilters {
   project?: string;
   from?: string;
   to?: string;
+  /** How the finding's tool call was approved (ADR-040); see FindingApproval. */
+  approval?: FindingApproval;
   /** open (default; excludes dismissed + muted) | dismissed | muted | all. */
   status?: FindingStatus;
   /** Sort the whole filtered list before pagination. Defaults to "severity" (most-severe first). */
@@ -44,8 +49,13 @@ function triageAttached(db: DB): boolean {
 /** The filter half of FindingFilters — what narrows the set, without status/sort/paging. */
 export type FindingScope = Omit<FindingFilters, "status" | "sort" | "dir" | "limit" | "offset">;
 
-/** WHERE fragments shared by list + summary: user filters (no status) over findings f / sessions s. */
-function findingWhere(f: FindingScope): { sql: string[]; params: unknown[] } {
+/** Every query that uses findingWhere joins the finding's tool call as `tc`, which the approval filter
+ *  reads. A LEFT JOIN: a finding without a tool call is "unknown", not dropped. */
+const TOOL_CALL_JOIN = "LEFT JOIN tool_calls tc ON tc.id = f.tool_call_id";
+
+/** WHERE fragments shared by list + bulk dismiss: user filters (no status) over findings f / sessions s
+ *  / tool_calls tc. */
+function findingWhere(db: DB, f: FindingScope): { sql: string[]; params: unknown[] } {
   const sql: string[] = [];
   const params: unknown[] = [];
   if (f.severity) (sql.push("f.severity = ?"), params.push(f.severity));
@@ -54,6 +64,12 @@ function findingWhere(f: FindingScope): { sql: string[]; params: unknown[] } {
   if (f.session) (sql.push("f.session_id = ?"), params.push(f.session));
   if (f.source) (sql.push("s.source_id = ?"), params.push(f.source));
   if (f.project) (sql.push("s.project_id = ?"), params.push(f.project));
+  // On a store that predates the columns every call is "not recorded": `unknown` matches everything.
+  if (f.approval && !hasPermissionColumns(db)) {
+    if (f.approval !== "unknown") sql.push("1 = 0");
+  } else if (f.approval === "rejected") sql.push("tc.permission_decision = 'reject'");
+  else if (f.approval === "unknown") sql.push("tc.permission_decision IS NULL");
+  else if (f.approval) (sql.push("tc.permission_decision = 'accept' AND tc.permission_via = ?"), params.push(f.approval));
   // Compare on the DATE part so a picked day is inclusive on both ends — `to = 2026-07-14` must include
   // 2026-07-14 events (a plain `started_at <= '2026-07-14'` would exclude that whole day's timestamps).
   pushDateRange(sql, params, "s.started_at", f.from, f.to);
@@ -89,7 +105,7 @@ export function listFindings(db: DB, f: FindingFilters): FindingsPage {
   if (!tableExists(db, "findings")) return { total: 0, findings: [] };
   const attached = triageAttached(db);
 
-  const w = findingWhere(f);
+  const w = findingWhere(db, f);
   const st = statusWhere(f.status ?? "open", attached);
   const where = [...w.sql, ...(st ? [st] : [])];
   const whereSql = whereClause(where);
@@ -100,7 +116,7 @@ export function listFindings(db: DB, f: FindingFilters): FindingsPage {
 
   const total = queryGet<CountRow>(
     db,
-    `SELECT COUNT(*) n FROM findings f JOIN sessions s ON s.id = f.session_id ${dismissJoin} ${whereSql}`,
+    `SELECT COUNT(*) n FROM findings f JOIN sessions s ON s.id = f.session_id ${TOOL_CALL_JOIN} ${dismissJoin} ${whereSql}`,
     ...w.params,
   )!.n;
 
@@ -112,16 +128,16 @@ export function listFindings(db: DB, f: FindingFilters): FindingsPage {
     time: "s.started_at",
   };
 
-  const findings = queryAll<FindingListRow>(
+  const rows = queryAll<Omit<FindingListRow, "permission"> & PermissionColumns>(
     db,
     `SELECT f.id, f.session_id, f.tool_call_id, f.event_uuid, f.turn_id, f.rule_id, f.category,
-            f.framework_ref, f.severity, f.title, f.evidence, tc.tool_name,
+            f.framework_ref, f.severity, f.title, f.evidence, tc.tool_name, ${permissionCols(db, "tc")},
             COALESCE(NULLIF(s.ai_title, ''), s.slug) AS session_title, s.source_id, s.is_sidechain,
             s.started_at, p.path AS project_path, s.project_id ${triageCols}
      FROM findings f
      JOIN sessions s ON s.id = f.session_id
      LEFT JOIN projects p ON p.id = s.project_id
-     LEFT JOIN tool_calls tc ON tc.id = f.tool_call_id
+     ${TOOL_CALL_JOIN}
      ${dismissJoin}
      ${whereSql}
      ORDER BY ${orderBy(ORDER, f.sort, "severity", f.dir)}, ${SEVERITY_RANK_SQL} DESC, f.id ASC
@@ -131,7 +147,7 @@ export function listFindings(db: DB, f: FindingFilters): FindingsPage {
     f.offset,
   );
 
-  return { total, findings };
+  return { total, findings: rows.map(withPermission) };
 }
 
 /**
@@ -145,7 +161,7 @@ export function openFindingIds(db: DB, f: FindingScope): string[] {
   if (!tableExists(db, "findings")) return [];
   const attached = triageAttached(db);
 
-  const w = findingWhere(f);
+  const w = findingWhere(db, f);
   const st = statusWhere("open", attached);
   const where = [...w.sql, ...(st ? [st] : [])];
 
@@ -154,6 +170,7 @@ export function openFindingIds(db: DB, f: FindingScope): string[] {
     `SELECT f.id
      FROM findings f
      JOIN sessions s ON s.id = f.session_id
+     ${TOOL_CALL_JOIN}
      ${dismissedJoin(attached)}
      ${whereClause(where)}`,
     ...w.params,

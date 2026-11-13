@@ -66,8 +66,11 @@ See the [usage guide](docs/USAGE.md) for every command and option.
 
 **Audit what the agent did**
 - **Security findings**: deterministic rules flag destructive commands, secret access,
-  exfiltration, and guardrail bypasses, anchored to OWASP Agentic and MITRE ATLAS. Mark findings
-  safe or mute a rule; triage survives rebuilds ([ADR-017](docs/decisions/ADR-017-security-findings.md)).
+  exfiltration, and guardrail bypasses, anchored to OWASP Agentic and MITRE ATLAS. Each shows how
+  the call was approved (by you, a rule, the permission mode, the classifier, or a hook) or that it
+  was rejected, where Claude Code recorded it. Mark findings safe or mute a rule; triage survives
+  rebuilds ([ADR-017](docs/decisions/ADR-017-security-findings.md),
+  [ADR-040](docs/decisions/ADR-040-tool-call-permission-decisions.md)).
 - **File provenance**: which session, and which turn, changed a file, with links to the exact tool
   call ([ADR-022](docs/decisions/ADR-022-file-modification-provenance.md)).
 - **Tool errors**: failed tool calls per session and over time, with your own rejections kept apart

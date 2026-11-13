@@ -1,6 +1,7 @@
 /** Connection setup, schema status, and the small helpers every query area shares. */
 import { DatabaseSync } from "node:sqlite";
 import { SCHEMA_VERSION, SEVERITY_ORDER } from "@agent-lens/core";
+import type { PermissionDecision, PermissionVia } from "@agent-lens/contracts";
 import { canonModelSql, queryGet } from "../sql-util.js";
 
 export type DB = DatabaseSync;
@@ -63,4 +64,45 @@ export function safeJson(s: string | null): unknown {
   } catch {
     return null;
   }
+}
+
+const permissionColumnsCache = new WeakMap<DB, boolean>();
+
+/** Whether `tool_calls` has the permission columns (schema v17, ADR-040). A store from an older build
+ *  lacks them until `ingest --full`; the server still serves it, with every call "not recorded". */
+export function hasPermissionColumns(db: DB): boolean {
+  let has = permissionColumnsCache.get(db);
+  if (has === undefined) {
+    has = queryGet<{ n: number }>(db, "SELECT COUNT(*) n FROM pragma_table_info('tool_calls') WHERE name = 'permission_decision'")!.n > 0;
+    permissionColumnsCache.set(db, has);
+  }
+  return has;
+}
+
+/** The permission columns of `tool_calls` (ADR-040), selected flat under `perm_*` aliases; NULLs on a
+ *  store that predates them. */
+export const permissionCols = (db: DB, alias: string): string =>
+  hasPermissionColumns(db)
+    ? `${alias}.permission_decision AS perm_decision, ${alias}.permission_via AS perm_via, ${alias}.permission_scope AS perm_scope,
+       ${alias}.permission_rule_source AS perm_rule_source, ${alias}.permission_reason AS perm_reason`
+    : "NULL AS perm_decision, NULL AS perm_via, NULL AS perm_scope, NULL AS perm_rule_source, NULL AS perm_reason";
+
+/** What `permissionCols` adds to a row. */
+export interface PermissionColumns {
+  perm_decision: string | null;
+  perm_via: string | null;
+  perm_scope: string | null;
+  perm_rule_source: string | null;
+  perm_reason: string | null;
+}
+
+/** Fold the flat `perm_*` columns into the response's `permission` object, and strip them. NULL
+ *  decision = not recorded = null (ADR-040). */
+export function withPermission<T extends PermissionColumns>(row: T): Omit<T, keyof PermissionColumns> & { permission: PermissionDecision | null } {
+  const { perm_decision, perm_via, perm_scope, perm_rule_source, perm_reason, ...rest } = row;
+  const permission: PermissionDecision | null =
+    perm_decision === "accept" || perm_decision === "reject"
+      ? { decision: perm_decision, via: (perm_via ?? "other") as PermissionVia, scope: perm_scope, rule_source: perm_rule_source, reason: perm_reason }
+      : null;
+  return { ...rest, permission };
 }

@@ -110,6 +110,7 @@ The corpus has three sources: `team-a` and `team-b` (redacted real sessions) and
 | Compaction and meta lines create no turn | `ingest.test.ts` | `sc-plain-0001` (2 turns) |
 | Resumed session: duplicate uuids deduplicated | `ingest.test.ts` | `sc-resumed-0005` (mirror and `.versions`, 3 events) |
 | Continued session: copied history owned once, copy links back (ADR-038) | `shared-history.test.ts` | `sc-handoff-0012` and `sc-handoff-0012-next` |
+| Tool-call approval: each channel, rejects, and "not recorded" (ADR-040) | `permission-decision.test.ts`, `permissions.test.ts` | `sc-approvals-0013` |
 | Cache tokens, read and write | `pricing.test.ts`, `classify.test.ts` | corpus totals |
 | Malformed or partial JSONL | `ingest.test.ts` | `sc-malformed-0004` (1 malformed line) |
 
