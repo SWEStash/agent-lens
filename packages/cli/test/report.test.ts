@@ -89,6 +89,13 @@ describe("report commands over the corpus", () => {
     expect(page.sessions[0]).toHaveProperty("token_split");
   });
 
+  it("sessions: a numeric --pr or --search is text, not a crash (cac parses numbers)", () => {
+    const byNumber = run("sessions", "--json", "--pr", "57");
+    expect(byNumber.status, byNumber.stderr).toBe(0);
+    expect(JSON.parse(byNumber.stdout).total).toBe(2);
+    expect(run("sessions", "--search", "404").status).toBe(0);
+  });
+
   it("sessions: a table with a header row, and a note when rows are cut", () => {
     const { status, stdout } = run("sessions", "--limit", "3");
     expect(status).toBe(0);
@@ -122,6 +129,17 @@ describe("report commands over the corpus", () => {
     expect(run("cost").stdout).toContain(`Cost all time: $${ov.cost.toFixed(2)}`);
     const none = JSON.parse(run("cost", "--json", "--since", "2099-01-01").stdout);
     expect(none.sessions).toBe(0);
+  });
+
+  it("export takes a unique id prefix, and names the matches when it is ambiguous", () => {
+    const md = run("export", "sc-appr"); // only sc-approvals-0013 starts with it
+    expect(md.status, md.stderr).toBe(0);
+    expect(md.stdout).toContain("sc-approvals-0013");
+    const many = run("export", "sc-pr-links-");
+    expect(many.status).toBe(1);
+    expect(many.stderr).toMatch(/'sc-pr-links-' matches more than one session \(sc-pr-links-0014, sc-pr-links-0015\)/);
+    expect(run("export", "zz-nothing").stderr).toMatch(/no session matches 'zz-nothing'/);
+    expect(run("export", "sc_pr").stderr).toMatch(/no session matches 'sc_pr'/); // _ is literal, not a wildcard
   });
 
   it("refuses bad input in one line, and a missing store", () => {

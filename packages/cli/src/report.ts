@@ -96,6 +96,23 @@ export function openStore(dbFlag?: string): DB {
   return db;
 }
 
+/**
+ * A session id from a full id or a unique prefix of one, so the short ids the tables print can be
+ * passed straight back (`agent-lens export 0a1b2c3d`). Ambiguous or unknown prefixes fail in one line.
+ */
+export function resolveSessionId(db: DB, v: string): string {
+  const id = String(v).trim();
+  if (!id) throw new UserError("no session id given");
+  if (db.prepare("SELECT 1 FROM sessions WHERE id = ?").get(id)) return id;
+  // LIKE's wildcards are escaped so a prefix only ever matches literally.
+  const pattern = id.replace(/[\\%_]/g, (c) => "\\" + c) + "%";
+  const hits = db.prepare("SELECT id FROM sessions WHERE id LIKE ? ESCAPE '\\' ORDER BY id LIMIT 6").all(pattern) as Array<{ id: string }>;
+  if (hits.length === 1) return hits[0].id;
+  if (!hits.length) throw new UserError(`no session matches '${id}'`);
+  const shown = hits.slice(0, 5).map((h) => h.id).join(", ");
+  throw new UserError(`'${id}' matches more than one session (${shown}${hits.length > 5 ? ", …" : ""}); use more of the id`);
+}
+
 /** `--project` as a project id: an id, a full path, or a path's last segment when only one matches. */
 export function resolveProject(db: DB, v: string | undefined): string | undefined {
   if (!v) return undefined;
@@ -106,6 +123,18 @@ export function resolveProject(db: DB, v: string | undefined): string | undefine
   if (byName.length === 1) return byName[0].id;
   if (byName.length > 1) throw new UserError(`--project '${v}' matches ${byName.length} projects; use the full path`);
   throw new UserError(`no project '${v}' (use its path, or the last part of it)`);
+}
+
+/**
+ * The text options as strings. cac turns a value that looks like a number into one (`--pr 57` → 57,
+ * `--search 404` → 404), and the queries expect text. Absent stays absent.
+ */
+export function textOpts<T extends object>(o: T): T {
+  const out = { ...o } as Record<string, unknown>;
+  for (const k of ["db", "since", "source", "project", "search", "pr", "kind", "severity", "status"]) {
+    if (out[k] !== undefined && out[k] !== null && typeof out[k] !== "boolean") out[k] = String(out[k]);
+  }
+  return out as T;
 }
 
 export interface ReportOpts {

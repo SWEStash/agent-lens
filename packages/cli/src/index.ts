@@ -31,7 +31,8 @@ import {
 import { runIngest, runMetrics } from "@agent-lens/ingest";
 import { startServer, openReadonly, renderSessionExport, parseRedactionLevel } from "@agent-lens/server";
 import { runWatch } from "./watch.js";
-import { costReport, findingsReport, openStore, printReport, sessionsReport, type ReportOpts } from "./report.js";
+import { runBrowse, type BrowseOpts } from "./browse/index.js";
+import { costReport, findingsReport, openStore, printReport, resolveSessionId, sessionsReport, textOpts, type ReportOpts } from "./report.js";
 
 // `agent-lens --version`. Shared with the server's /api/health so the CLI and the web UI can never
 // disagree about what build this is (ADR-027). A published install reports "0.9.6"; a clone reports
@@ -137,7 +138,7 @@ cli
   .option("--json", "Print the API's JSON payload")
   .option("--db <path>", DB_OPT)
   .action((opts: ReportOpts & { search?: string; pr?: string; kind?: string }) => {
-    const { page, text } = sessionsReport(openStore(opts.db), opts);
+    const { page, text } = sessionsReport(openStore(opts.db), textOpts(opts));
     printReport(opts.json, page, text);
   });
 
@@ -152,7 +153,7 @@ cli
   .option("--json", "Print the API's JSON payload")
   .option("--db <path>", DB_OPT)
   .action((opts: ReportOpts & { severity?: string; status?: string }) => {
-    const { page, text } = findingsReport(openStore(opts.db), opts);
+    const { page, text } = findingsReport(openStore(opts.db), textOpts(opts));
     printReport(opts.json, page, text);
   });
 
@@ -164,12 +165,24 @@ cli
   .option("--json", "Print the API's JSON payload")
   .option("--db <path>", DB_OPT)
   .action((opts: ReportOpts & { today?: boolean }) => {
-    const { overview, text } = costReport(openStore(opts.db), opts);
+    const { overview, text } = costReport(openStore(opts.db), textOpts(opts));
     printReport(opts.json, overview, text);
   });
 
 cli
-  .command("export <sessionId>", "Write a session to a shareable Markdown file (redacted by default)")
+  .command("browse", "Pick a session and read its transcript in the terminal; o opens it in the web UI")
+  .option("--since <when>", SINCE)
+  .option("--source <label>", "Only this source")
+  .option("--project <project>", "Only this project: its path, or the last part of it")
+  .option("--search <text>", "Full-text search over names, projects and transcripts")
+  .option("--pr <pr>", "Only sessions that touched this PR: a number, owner/repo#n, or its URL")
+  .option("--kind <kind>", "main (default), subagent, or all")
+  .option("--limit <n>", "Sessions to list (default 500)")
+  .option("--db <path>", DB_OPT)
+  .action((opts: BrowseOpts) => runBrowse(textOpts(opts)));
+
+cli
+  .command("export <sessionId>", "Write a session to a shareable Markdown file (redacted by default); a unique id prefix works")
   .option("--out <file>", "Write to this file (default: stdout)")
   .option("--level <level>", "Redaction level: secrets (default) | structure")
   .option("--no-redact", "Verbatim, UNREDACTED output (opt-out)")
@@ -182,7 +195,8 @@ cli
     }
     // cac sets `redact:false` for --no-redact. Otherwise the level flag (default: secrets).
     const level = opts.redact === false ? "off" : parseRedactionLevel(opts.level);
-    const out = renderSessionExport(openReadonly(dbPath), sessionId, level);
+    const db = openReadonly(dbPath);
+    const out = renderSessionExport(db, resolveSessionId(db, String(sessionId)), level);
     if (!out) {
       console.error(`agent-lens: session not found: ${sessionId}`);
       process.exit(1);

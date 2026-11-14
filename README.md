@@ -87,7 +87,8 @@ See the [usage guide](docs/USAGE.md) for every command and option.
 - Reported as observations, never as an efficiency score
   ([ADR-036](docs/decisions/ADR-036-dashboard-audit-endpoint.md)).
 - Quick answers in the terminal, as tables or JSON for scripts: `agent-lens sessions`, `findings`,
-  and `cost` ([ADR-042](docs/decisions/ADR-042-cli-read-surface.md)).
+  and `cost`. `agent-lens browse` reads a transcript in the terminal and opens it in the web UI on
+  one key ([ADR-042](docs/decisions/ADR-042-cli-read-surface.md)).
 
 ## Screenshots
 

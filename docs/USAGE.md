@@ -374,6 +374,51 @@ agent-lens cost --since 2026-11-01 --json    # for scripts
 - Cost is the same list-price estimate as the dashboard, and is marked as a lower bound when a model
   has no price.
 
+To read a session without the browser, `agent-lens browse` lists sessions, opens a transcript in a
+pager, and hands the session to the web UI on `o`. It takes the same filters as `sessions`.
+
+```bash
+agent-lens browse --since 7d
+agent-lens browse --pr 57
+```
+
+- The list shows each session's start, title, source, project and turns. `↑`/`↓` (or `j`/`k`) move,
+  `Space`/`b` page, and `Enter` reads.
+  - `/` is the search box: it narrows the list by title, project or id as you type, and `Enter`
+    searches transcripts too, like `--search`.
+  - `f` picks a source or a project, with each one's session count.
+  - `s` sorts by the next column (started, title, source, project, turns) and `r` reverses it. The
+    header marks the sorted column with `▼` or `▲`.
+  - `Esc` clears the search and filters; with none set, it quits.
+  - The list holds up to `--limit` sessions (500 by default), the first ones in the current sort
+    for the current search and filters; the header says so when there are more. Sorting by source
+    or project reorders the newest ones loaded.
+- A transcript opens each turn with a band showing its time and duration, and draws each run of
+  messages from you or from Claude as a card with the speaker, the time and a coloured bar.
+- In a transcript:
+  - `↑`/`↓` (or `j`/`k`) move from message to message and tool call to tool call; a bar marks the
+    selected one. `Enter` expands it: a tool call shows its full input (a Bash command, an edit's
+    removed and added lines, a file written) and its output, and a long message shows all its lines.
+  - `Space`/`b` page, and `[` / `]` jump to the previous or next turn.
+  - `/` finds text, highlighted; `n` and `N` go to the next and previous match. It also finds text
+    inside a collapsed tool call or a long message, and opens it.
+  - `t` shows thinking and `r` expands every tool call.
+  - `s` opens the selected `[s]` call's subagent (or the first one on screen), and `q` comes back to
+    the parent.
+- Messages are rendered from their markdown: headings, bold and italic, inline and fenced code,
+  lists, quotes, links and tables, without the `#`, `*` and backticks.
+- Anywhere: `o` opens the session in the web UI, `y` copies its id to the clipboard (in terminals that
+  allow OSC 52), `?` lists every key, and `q` goes back or quits.
+- A failed tool call is marked, and one that raised a finding shows its worst one, coloured by
+  severity. In the list, `●` marks a session with findings.
+- The selected row or item is tinted a shade off the terminal's background. Agent Lens reads
+  whether that background is light or dark from `COLORFGBG`; set `AGENT_LENS_THEME=light` or
+  `dark` if it guesses wrong.
+- Colours use your terminal's own palette. Set `NO_COLOR` to turn them off; the selected row is
+  then inverted, and a `▌` bar marks the selected item.
+- `o` needs `agent-lens serve` running; if it isn't, the footer says so and shows the URL.
+- It needs an interactive terminal. In scripts, use `sessions --json`.
+
 ## Export a session
 
 ```bash
@@ -382,6 +427,9 @@ agent-lens export <sessionId> --out session.md     # to a file
 agent-lens export <sessionId> --level structure    # no message text at all
 agent-lens export <sessionId> --no-redact          # verbatim
 ```
+
+`<sessionId>` can be a unique prefix of the id, such as the 8 characters `agent-lens sessions` prints. A
+prefix that matches more than one session fails and lists the matches.
 
 | Level | What's kept |
 |---|---|
@@ -424,6 +472,7 @@ beats the config file. The others are read from the environment only.
 | `AGENT_LENS_HOST` | config `server.host`, else `127.0.0.1` | Bind address (`--host` overrides) |
 | `AGENT_LENS_ALLOW_NONLOCAL` | unset | Set to `1` to allow a non-loopback bind address |
 | `AGENT_LENS_VERSIONS_KEEP_DAYS` | `90` | Retention window for `agent-lens prune` |
+| `AGENT_LENS_THEME` | from `COLORFGBG`, else `dark` | `light` or `dark`: the selection tint in `agent-lens browse` |
 | `CLAUDE_DIR` | unset | Legacy: collect a single source from this directory |
 | `AGENT_LENS_LABEL` | `default` | Legacy: the label for `CLAUDE_DIR` |
 

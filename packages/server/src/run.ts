@@ -19,7 +19,7 @@ export { openReadonly } from "./db.js";
 export { renderSessionExport, parseRedactionLevel } from "./export.js";
 // The read queries behind the CLI's report commands (`sessions`, `findings`, `cost`), so the
 // terminal answers with exactly what the web UI shows.
-export { type DB, schemaStatus, listProjects, listSessions, listFindings, getSession, FINDING_STATUSES } from "./db.js";
+export { type DB, schemaStatus, listProjects, listSources, listSessions, listFindings, getSession, FINDING_STATUSES } from "./db.js";
 export { dashboardOverview } from "./dashboard.js";
 
 /** Per-invocation overrides (from `serve --port/--host/--db`); each takes precedence over env + file. */
