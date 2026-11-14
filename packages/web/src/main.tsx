@@ -28,7 +28,10 @@ createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
     <ThemeProvider>
       <AppErrorBoundary>
-        <BrowserRouter basename={basename}>
+        <BrowserRouter
+          basename={basename}
+          future={{ v7_startTransition: true, v7_relativeSplatPath: true }}
+        >
           <Routes>
             <Route path="/" element={<App />}>
               <Route index element={<SessionsView />} />
