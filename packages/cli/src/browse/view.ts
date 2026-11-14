@@ -14,15 +14,34 @@ import { drawLine, SELECTED_BG, severityStyle, type Line, type Span, type Style,
 import { clean, wrap } from "./text.js";
 import { toolDetailLines, toolLine } from "./tools.js";
 
+export type SortColumn = "started" | "title" | "source" | "project" | "turns";
+export const SORT_COLUMNS: readonly SortColumn[] = ["started", "title", "source", "project", "turns"];
+
 export interface ListState {
   screen: "list";
   cursor: number;
   top: number;
-  /** Narrows the list to sessions whose title, project or id contains it. */
+  /** Narrows the loaded list to sessions whose title, project or id contains it, as it is typed. */
   filter: string;
-  /** Text being typed after `/`; the filter follows it live. */
+  /** Text being typed after `/`; the filter follows it live, and enter searches transcripts for it. */
   prompt?: string;
+  /** A full-text search over names, projects and transcripts, run by the store's query. */
+  search?: string;
+  /** Source and project ids the store's query filters by. */
+  source?: string;
+  project?: string;
+  sort: { column: SortColumn; desc: boolean };
+  /** The source and project picker, open over the list. */
+  picker?: { cursor: number; top: number };
   help?: boolean;
+}
+
+/** An entry in the source and project picker; `value` null means "all". */
+export interface PickerOption {
+  group: "source" | "project";
+  value: string | null;
+  label: string;
+  count?: number;
 }
 export interface PagerState {
   screen: "pager";
@@ -60,6 +79,8 @@ export type Effect =
   | { type: "open-subagent" }
   | { type: "copy" }
   | { type: "message"; text: string }
+  /** The list's search, source, project or sort changed: query the store again. */
+  | { type: "reload" }
   | null;
 
 /** A selectable piece of a transcript and the lines it spans (inclusive). */
@@ -85,6 +106,8 @@ export interface Ctx {
   texts?: string[];
   turns?: number[];
   items?: Item[];
+  /** The picker's entries, on the list. */
+  options?: PickerOption[];
 }
 
 export interface Match {
@@ -141,6 +164,8 @@ export function reduce(state: State, key: Key, ctx: Ctx): { state: State; effect
   const none = (s: State = state) => ({ state: s, effect: null as Effect });
   if (key.ctrl && name === "c") return { state, effect: { type: "quit" } };
   if (state.help) return none({ ...state, help: false });
+  // An open picker takes every key, so typing / or ? there doesn't reach the list.
+  if (state.screen === "list" && state.picker) return listKey(state, key, ctx);
 
   if (state.prompt !== undefined) return typing(state, key, ctx);
 
@@ -149,24 +174,7 @@ export function reduce(state: State, key: Key, ctx: Ctx): { state: State; effect
   if (seq === "/") return none({ ...state, prompt: state.screen === "list" ? state.filter : "" });
   const page = Math.max(1, ctx.height - 1);
 
-  if (state.screen === "list") {
-    const move = (to: number): State => {
-      const cursor = Math.max(0, Math.min(ctx.count - 1, to));
-      const top = cursor < state.top ? cursor : cursor >= state.top + ctx.height ? cursor - ctx.height + 1 : state.top;
-      return { ...state, cursor, top: Math.max(0, top) };
-    };
-    if (name === "escape" && state.filter) return none({ ...state, filter: "", cursor: 0, top: 0 });
-    if (name === "q" || name === "escape") return { state, effect: { type: "quit" } };
-    if (name === "return" || name === "right" || name === "l") return { state, effect: ctx.count ? { type: "open-pager" } : null };
-    if (name === "o") return { state, effect: ctx.count ? { type: "open-web" } : null };
-    if (name === "down" || name === "j") return none(move(state.cursor + 1));
-    if (name === "up" || name === "k") return none(move(state.cursor - 1));
-    if (name === "pagedown" || name === "space") return none(move(state.cursor + page));
-    if (name === "pageup" || name === "b") return none(move(state.cursor - page));
-    if (seq === "G" || name === "end") return none(move(ctx.count - 1));
-    if (name === "g" || name === "home") return none(move(0));
-    return none();
-  }
+  if (state.screen === "list") return listKey(state, key, ctx);
 
   const items = ctx.items ?? [];
   const texts = ctx.texts ?? [];
@@ -221,6 +229,90 @@ export function reduce(state: State, key: Key, ctx: Ctx): { state: State; effect
   return none();
 }
 
+/** Keys on the session list, including its picker. */
+function listKey(state: ListState, key: Key, ctx: Ctx): { state: State; effect: Effect } {
+  const name = key.name ?? "";
+  const seq = key.sequence ?? "";
+  const none = (s: State = state) => ({ state: s, effect: null as Effect });
+  const reload = (s: ListState) => ({ state: { ...s, cursor: 0, top: 0 } as State, effect: { type: "reload" } as Effect });
+  const page = Math.max(1, ctx.height - 1);
+  const scroll = (pos: { cursor: number; top: number }, count: number, to: number) => {
+    const cursor = Math.max(0, Math.min(count - 1, to));
+    const top = cursor < pos.top ? cursor : cursor >= pos.top + ctx.height ? cursor - ctx.height + 1 : pos.top;
+    return { cursor, top: Math.max(0, top) };
+  };
+  const moveBy = (pos: { cursor: number; top: number }, count: number): { cursor: number; top: number } | null => {
+    if (name === "down" || name === "j") return scroll(pos, count, pos.cursor + 1);
+    if (name === "up" || name === "k") return scroll(pos, count, pos.cursor - 1);
+    if (name === "pagedown" || name === "space") return scroll(pos, count, pos.cursor + page);
+    if (name === "pageup" || name === "b") return scroll(pos, count, pos.cursor - page);
+    if (seq === "G" || name === "end") return scroll(pos, count, count - 1);
+    if (name === "g" || name === "home") return scroll(pos, count, 0);
+    return null;
+  };
+
+  if (state.picker) {
+    const options = ctx.options ?? [];
+    if (name === "escape" || name === "q" || seq === "f") return none({ ...state, picker: undefined });
+    if (name === "return") {
+      const o = options[state.picker.cursor];
+      if (!o) return none({ ...state, picker: undefined });
+      const next: ListState = { ...state, picker: undefined, [o.group]: o.value ?? undefined };
+      return next[o.group] === state[o.group] ? none(next) : reload(next);
+    }
+    const moved = moveBy(state.picker, options.length);
+    return none(moved ? { ...state, picker: moved } : state);
+  }
+
+  if (name === "escape") {
+    if (state.filter) return none({ ...state, filter: "", cursor: 0, top: 0 });
+    if (state.search || state.source || state.project) return reload({ ...state, search: undefined, source: undefined, project: undefined });
+    return { state, effect: { type: "quit" } };
+  }
+  if (name === "q") return { state, effect: { type: "quit" } };
+  if (name === "return" || name === "right" || name === "l") return { state, effect: ctx.count ? { type: "open-pager" } : null };
+  if (name === "o") return { state, effect: ctx.count ? { type: "open-web" } : null };
+  if (seq === "f") {
+    // Open on the current source, so the cursor starts where the user is.
+    const options = ctx.options ?? [];
+    const at = Math.max(0, options.findIndex((o) => o.group === "source" && (o.value ?? undefined) === state.source));
+    return none({ ...state, picker: scroll({ cursor: 0, top: 0 }, options.length, at) });
+  }
+  if (seq === "s") {
+    const column = SORT_COLUMNS[(SORT_COLUMNS.indexOf(state.sort.column) + 1) % SORT_COLUMNS.length];
+    // Dates and counts read best largest first; names alphabetically.
+    return reload({ ...state, sort: { column, desc: column === "started" || column === "turns" } });
+  }
+  if (seq === "r") return reload({ ...state, sort: { ...state.sort, desc: !state.sort.desc } });
+  const moved = moveBy(state, ctx.count);
+  return none(moved ? { ...state, ...moved } : state);
+}
+
+/** The sessions in the list's sort order. Ties keep the newest first. */
+export function sortSessions(rows: SessionSummary[], sort: ListState["sort"]): SessionSummary[] {
+  const key = (x: SessionSummary): string | number => {
+    switch (sort.column) {
+      case "title":
+        return (x.title ?? x.id).toLowerCase();
+      case "source":
+        return (x.source_id ?? "").toLowerCase();
+      case "project":
+        return (x.project_path ? basename(x.project_path) : "").toLowerCase();
+      case "turns":
+        return x.turn_count;
+      default:
+        return x.started_at ?? "";
+    }
+  };
+  const dir = sort.desc ? -1 : 1;
+  return [...rows].sort((a, b) => {
+    const ka = key(a);
+    const kb = key(b);
+    if (ka !== kb) return (ka < kb ? -1 : 1) * dir;
+    return (b.started_at ?? "").localeCompare(a.started_at ?? "");
+  });
+}
+
 /** Go to a find match: its line on top (even near the end, as `less` does, so the next `n` searches
  * past it), its item selected, and that item opened when the match is in a part it hides. */
 function landOn(state: PagerState, hit: Match, items: Item[]): PagerState {
@@ -239,7 +331,12 @@ function typing(state: State, key: Key, ctx: Ctx): { state: State; effect: Effec
     return { state: state.screen === "list" ? { ...state, prompt: undefined, filter: "", cursor: 0, top: 0 } : { ...state, prompt: undefined }, effect: null };
   }
   if (key.name === "return") {
-    if (state.screen === "list") return { state: { ...state, prompt: undefined }, effect: null };
+    if (state.screen === "list") {
+      // Enter turns the live filter into a full-text search of the store, transcripts included.
+      const search = text.trim() || undefined;
+      const next: ListState = { ...state, prompt: undefined, filter: "", search, cursor: 0, top: 0 };
+      return { state: next, effect: search !== state.search ? { type: "reload" } : null };
+    }
     const next: PagerState = { ...state, prompt: undefined, find: text };
     if (!text) return { state: next, effect: null };
     const hit = nextMatch(ctx, text, state.top, 1, true) ?? nextMatch(ctx, text, 0, 1, true);
@@ -256,24 +353,68 @@ const footer = (text: string, width: number, color: boolean): string => drawLine
 const promptLine = (text: string, hint: string, width: number, color: boolean): string =>
   drawLine([["/", "bold"], [text], ["█", "dim"], [`   ${hint}`, "dim"]], width, color);
 
+const LIST_COLS = { when: 16, marker: 2, source: 10, project: 16, turns: 7 } as const; // turns fits "turns ▲"
+const titleWidth = (width: number): number =>
+  Math.max(4, width - LIST_COLS.when - 2 - LIST_COLS.marker - 2 - LIST_COLS.source - 2 - LIST_COLS.project - 2 - LIST_COLS.turns);
+
 /** One list row: when, a severity marker, title, source, project, turns. */
 function listRow(x: SessionSummary, width: number): Line {
   const marker: Span = x.finding_count ? ["● ", severityStyle(x.worst_severity)] : ["  "];
-  const source = pad(x.source_id ?? "", 10);
-  const project = pad(x.project_path ? basename(x.project_path) : "", 16);
-  const turns = String(x.turn_count).padStart(5);
-  const titleW = Math.max(4, width - 16 - 2 - 2 - 2 - 10 - 2 - 16 - 2 - 5);
+  const titleW = titleWidth(width);
   const title = clean(x.title ?? x.id).replace(/\n/g, " ");
   const titleSpan = [...title].length > titleW ? [...title].slice(0, titleW - 1).join("") + "…" : pad(title, titleW);
   return [
-    [fmtWhen(x.started_at).padEnd(16), "dim"], ["  "], marker, [titleSpan, "bold"], ["  "],
-    [source, "dim"], ["  "], [project, "project"], ["  "], [turns, "cost"],
+    [fmtWhen(x.started_at).padEnd(LIST_COLS.when), "dim"], ["  "], marker, [titleSpan, "bold"], ["  "],
+    [pad(x.source_id ?? "", LIST_COLS.source), "dim"], ["  "],
+    [pad(x.project_path ? basename(x.project_path) : "", LIST_COLS.project), "project"], ["  "],
+    [String(x.turn_count).padStart(LIST_COLS.turns), "cost"],
   ];
 }
 
-/** The list screen: a header, one row per visible session (the selected one inverted), and a footer
- * with the keys, the filter being typed, or a message. Exactly `height` lines of `width` columns.
- * `sessions` is the filtered list; `total` how many there are before the filter. */
+/** The column header row: labels over the row's columns, the sorted one marked ▼ or ▲. */
+function columnHeader(sort: ListState["sort"], width: number): Line {
+  const label = (c: SortColumn, w: number, right = false): Span => {
+    const text = c + (sort.column === c ? (sort.desc ? " ▼" : " ▲") : "");
+    return [right ? text.padStart(w) : pad(text, w), sort.column === c ? "bold" : "dim"];
+  };
+  return [
+    label("started", LIST_COLS.when), ["  "], [" ".repeat(LIST_COLS.marker)], label("title", titleWidth(width)), ["  "],
+    label("source", LIST_COLS.source), ["  "], label("project", LIST_COLS.project), ["  "], label("turns", LIST_COLS.turns, true),
+  ];
+}
+
+/** The picker over the list: every source, then every project, with counts; the current ones
+ * marked. */
+function renderPicker(s: ListState, options: PickerOption[], width: number, height: number, color: boolean, theme: Theme): string[] {
+  const p = s.picker!;
+  const body = Math.max(1, height - 2);
+  const lines = [drawLine([["Filter by source or project", "title"]], width, color)];
+  for (let i = p.top; i < p.top + body; i++) {
+    const o = options[i];
+    if (!o) {
+      lines.push(" ".repeat(width));
+      continue;
+    }
+    const current = (o.value ?? undefined) === s[o.group];
+    const row: Line = [
+      [current ? "● " : "  ", "turn"],
+      [pad(o.group, 9), "dim"],
+      [o.label, o.value ? "plain" : "italic"],
+      ...(o.count !== undefined ? ([[`  ${o.count}`, "dim"]] as Line) : []),
+    ];
+    lines.push(drawLine(row, width, color, i === p.cursor ? (color ? SELECTED_BG[theme] : "7") : ""));
+  }
+  lines.push(footer("↑↓ move · enter choose · esc close", width, color));
+  return lines;
+}
+
+/**
+ * The list screen: a header with the count and any active search, source or project; the column
+ * headers with the sort; one row per visible session (the selected one tinted or inverted); and a
+ * footer with the keys, the text being typed, or a message. Exactly `height` lines of `width`
+ * columns. `sessions` is the loaded list after the live filter and the sort; `loaded` is how many
+ * were loaded and `total` how many match in the store.
+ */
 export function renderList(
   sessions: SessionSummary[],
   s: ListState,
@@ -283,25 +424,33 @@ export function renderList(
   color = false,
   total = sessions.length,
   theme: Theme = "dark",
+  options: PickerOption[] = [],
+  loaded = sessions.length,
 ): string[] {
   if (s.help) return renderHelp("list", width, height, color);
-  const body = Math.max(1, height - 2);
-  const count = s.filter ? `${sessions.length} of ${total}` : String(total);
+  if (s.picker) return renderPicker(s, options, width, height, color, theme);
+  const body = Math.max(1, height - 3);
+  const count = s.filter ? `${sessions.length} of ${loaded}` : loaded < total ? `${loaded} of ${total}` : String(total);
   const head: Line = [[`Sessions (${count})`, "title"]];
-  const columns = `${"source".padEnd(10)}  ${"project".padEnd(16)}  turns`;
+  const labelOf = (group: "source" | "project", v: string) => options.find((o) => o.group === group && o.value === v)?.label ?? v;
+  if (s.search) head.push([`  search: ${s.search}`, "turn"]);
+  if (s.source) head.push([`  source: ${labelOf("source", s.source)}`, "turn"]);
+  if (s.project) head.push([`  project: ${labelOf("project", s.project)}`, "turn"]);
   if (s.filter && s.prompt === undefined) head.push([`  filter: ${s.filter}`, "turn"]);
-  head.push(["  ● has security findings", "dim"]);
-  const headW = head.reduce((n, [t]) => n + t.length, 0);
-  head.push([" ".repeat(Math.max(2, width - headW - columns.length)) + columns, "dim"]);
-  const lines = [drawLine(head, width, color)];
+  head.push(["  ● has findings", "dim"]);
+  const lines = [drawLine(head, width, color), drawLine(columnHeader(s.sort, width), width, color)];
   for (let i = s.top; i < s.top + body; i++) {
     const x = sessions[i];
     if (!x) lines.push(" ".repeat(width));
     // The selected row is tinted when colour is on, inverted without it.
     else lines.push(drawLine(listRow(x, width), width, color, i === s.cursor ? (color ? SELECTED_BG[theme] : "7") : ""));
   }
-  if (s.prompt !== undefined) lines.push(promptLine(s.prompt, "enter keep · esc clear", width, color));
-  else lines.push(footer(message || "↑↓ move · enter read · / filter · o web UI · y copy id · ? help · q quit", width, color));
+  if (s.prompt !== undefined) lines.push(promptLine(s.prompt, "filters as you type · enter searches transcripts · esc clears", width, color));
+  else if (message) lines.push(footer(message, width, color));
+  else {
+    const clear = s.search || s.source || s.project ? " · esc clear filters" : "";
+    lines.push(footer(`↑↓ move · enter read · / search · f filter · s sort${clear} · ? help · q quit`, width, color));
+  }
   return lines;
 }
 
@@ -368,10 +517,13 @@ const HELP: Record<"list" | "pager", Array<[string, string]>> = {
     ["space b  PgDn PgUp", "page"],
     ["g G  Home End", "first, last"],
     ["enter  →", "read the transcript"],
-    ["/", "filter by title, project or id (esc clears)"],
+    ["/", "filter by title, project or id as you type; enter searches transcripts too"],
+    ["f", "filter by source or project"],
+    ["s  r", "sort by the next column, reverse the order"],
+    ["esc", "clear the search and filters (quits when there are none)"],
     ["o", "open in the web UI (needs agent-lens serve)"],
     ["y", "copy the session id"],
-    ["q  esc", "quit"],
+    ["q", "quit"],
   ],
   pager: [
     ["↑ ↓  j k", "previous, next message or tool call"],

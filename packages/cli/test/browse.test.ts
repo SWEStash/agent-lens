@@ -20,14 +20,16 @@ import {
   type Key,
   type ListState,
   type PagerState,
+  type PickerOption,
   type State,
+  sortSessions,
 } from "../src/browse/view.js";
 import { detectTheme, drawLine, SELECTED_BG, useColor, type Line } from "../src/browse/style.js";
 import { osc52, sessionUrl, subagentAt } from "../src/browse/index.js";
 
 const plain = (s: string) => s.replace(/\x1b\[[0-9;]*m/g, "");
 const txt = (l: Line) => l.map(([t]) => t).join("");
-const LIST: ListState = { screen: "list", cursor: 0, top: 0, filter: "" };
+const LIST: ListState = { screen: "list", cursor: 0, top: 0, filter: "", sort: { column: "started", desc: true } };
 const pagerOf = (o: Partial<PagerState> = {}): PagerState => ({
   screen: "pager", sessionId: "s1", top: 0, list: LIST, expanded: [], find: "", thinking: false, results: false, ...o,
 });
@@ -98,11 +100,59 @@ describe("reduce: list", () => {
     expect(s).toMatchObject({ prompt: "api", filter: "api", cursor: 0 });
     s = reduce(s, { name: "backspace" }, ctx).state as ListState;
     expect(s.filter).toBe("ap");
-    s = reduce(s, { name: "return" }, ctx).state as ListState;
-    expect(s).toMatchObject({ prompt: undefined, filter: "ap" });
+    const searched = reduce(s, { name: "return" }, ctx);
+    // Enter turns the typed text into a full-text search, which needs a new query.
+    expect(searched.state).toMatchObject({ prompt: undefined, filter: "", search: "ap" });
+    expect(searched.effect).toEqual({ type: "reload" });
     // A typed "q" is text, not quit, while the prompt is open.
     expect(press(LIST, [{ sequence: "/" }, { name: "q", sequence: "q" }], ctx).effects).toEqual([]);
     expect((reduce(s, { name: "escape" }, ctx).state as ListState).filter).toBe("");
+  });
+
+  it("clears the search and filters on escape, and quits only when there are none", () => {
+    const filtered: ListState = { ...LIST, search: "auth", source: "team-a", project: "p1", cursor: 3 };
+    const r = reduce(filtered, { name: "escape" }, ctx);
+    expect(r.state).toMatchObject({ search: undefined, source: undefined, project: undefined, cursor: 0 });
+    expect(r.effect).toEqual({ type: "reload" });
+    expect(reduce(LIST, { name: "escape" }, ctx).effect).toEqual({ type: "quit" });
+  });
+
+  it("cycles the sort column with s and reverses it with r, asking for a new query", () => {
+    let r = reduce(LIST, { name: "s", sequence: "s" }, ctx);
+    expect((r.state as ListState).sort).toEqual({ column: "title", desc: false });
+    expect(r.effect).toEqual({ type: "reload" });
+    r = reduce(r.state, { name: "s", sequence: "s" }, ctx);
+    expect((r.state as ListState).sort.column).toBe("source");
+    const turns = press(r.state, [{ sequence: "s" }, { sequence: "s" }], ctx).state as ListState;
+    expect(turns.sort).toEqual({ column: "turns", desc: true });
+    expect((reduce(turns, { name: "r", sequence: "r" }, ctx).state as ListState).sort).toEqual({ column: "turns", desc: false });
+    expect((reduce(turns, { sequence: "s" }, ctx).state as ListState).sort.column).toBe("started"); // wraps
+  });
+
+  it("opens the picker with f, moves in it, and filters by the choice", () => {
+    const options: PickerOption[] = [
+      { group: "source", value: null, label: "all sources" },
+      { group: "source", value: "team-a", label: "team-a", count: 3 },
+      { group: "project", value: null, label: "all projects" },
+      { group: "project", value: "p1", label: "/w/api", count: 2 },
+    ];
+    const c: Ctx = { ...ctx, options };
+    let s = reduce(LIST, { sequence: "f" }, c).state as ListState;
+    expect(s.picker).toEqual({ cursor: 0, top: 0 });
+    // While the picker is open, / and ? are not the list's keys.
+    expect((reduce(s, { sequence: "/" }, c).state as ListState).prompt).toBeUndefined();
+    s = press(s, [{ name: "down" }, { name: "down" }, { name: "down" }], c).state as ListState;
+    const chose = reduce(s, { name: "return" }, c);
+    expect(chose.state).toMatchObject({ picker: undefined, project: "p1", cursor: 0 });
+    expect(chose.effect).toEqual({ type: "reload" });
+    // Choosing "all" clears that filter; choosing the current value needs no query.
+    const onSource: ListState = { ...LIST, source: "team-a", picker: { cursor: 1, top: 0 } };
+    expect(reduce(onSource, { name: "return" }, c).effect).toBeNull();
+    expect(reduce({ ...onSource, picker: { cursor: 0, top: 0 } }, { name: "return" }, c).state).toMatchObject({ source: undefined });
+    const closed = reduce(s, { name: "escape" }, c);
+    expect((closed.state as ListState).picker).toBeUndefined();
+    expect((closed.state as ListState).project).toBeUndefined();
+    expect(closed.effect).toBeNull(); // closing without choosing changes nothing
   });
 
   it("shows help on ?, and any key closes it", () => {
@@ -217,6 +267,24 @@ describe("reduce: items", () => {
 const session = (id: string, title: string, project = "/w/demo"): SessionSummary =>
   ({ id, title, started_at: null, project_path: project, cost: 1.5, unpriced_models: [] }) as unknown as SessionSummary;
 
+describe("sortSessions", () => {
+  const rows = [
+    { ...session("a", "Beta", "/w/zeta"), source_id: "b", turn_count: 3, started_at: "2026-01-02" },
+    { ...session("b", "alpha", "/w/acme"), source_id: "a", turn_count: 9, started_at: "2026-01-03" },
+    { ...session("c", "Gamma", "/w/mid"), source_id: "a", turn_count: 3, started_at: "2026-01-01" },
+  ] as SessionSummary[];
+  const ids = (column: ListState["sort"]["column"], desc: boolean) => sortSessions(rows, { column, desc }).map((r) => r.id);
+
+  it("sorts by each column, either way, ties newest first", () => {
+    expect(ids("started", true)).toEqual(["b", "a", "c"]);
+    expect(ids("title", false)).toEqual(["b", "a", "c"]); // any case: alpha, Beta, Gamma
+    expect(ids("source", false)).toEqual(["b", "c", "a"]); // a (newest first), then b
+    expect(ids("project", false)).toEqual(["b", "c", "a"]); // acme, mid, zeta
+    expect(ids("turns", true)).toEqual(["b", "a", "c"]); // 9, then the two 3s newest first
+    expect(ids("turns", false)).toEqual(["a", "c", "b"]);
+  });
+});
+
 describe("helpers", () => {
   it("nextMatch searches shown lines forward and back, any case", () => {
     const ctx: Ctx = { count: 3, height: 3, texts: ["Alpha", "beta", "ALPHA"], items: [] };
@@ -272,23 +340,43 @@ describe("screens", () => {
     const out = renderList(rows, { ...LIST, cursor: 1 }, 80, 6);
     expect(out).toHaveLength(6);
     for (const l of out) expect(displayWidth(plain(l))).toBe(80);
-    expect(out[2].startsWith("\x1b[7m")).toBe(true);
-    expect(plain(out[2])).toContain("second");
+    expect(out[3].startsWith("\x1b[7m")).toBe(true);
+    expect(plain(out[3])).toContain("second");
     expect(plain(out[5])).toContain("? help");
   });
 
   it("renderList shows source and turns, not cost", () => {
     const row = { ...session("a", "first"), source_id: "team-a", turn_count: 7 } as SessionSummary;
     const out = renderList([row], LIST, 100, 4).map(plain);
-    expect(out[0]).toMatch(/source +project +turns$/);
-    expect(out[1]).toMatch(/team-a +demo +7$/);
+    expect(out[1]).toMatch(/^started ▼ +title +source +project +turns$/);
+    expect(out[2]).toMatch(/team-a +demo +7$/);
     expect(out.join("\n")).not.toContain("$1.50");
+  });
+
+  it("renderList names the active search, source and project, and marks the sort", () => {
+    const options: PickerOption[] = [{ group: "source", value: "s1", label: "personal" }, { group: "project", value: "p1", label: "/w/api" }];
+    const head = renderList([session("a", "x")], { ...LIST, search: "auth", source: "s1", project: "p1", sort: { column: "turns", desc: false } }, 120, 5, "", false, 1, "dark", options).map((l) => plain(l).trimEnd());
+    expect(head[0]).toContain("search: auth  source: personal  project: /w/api");
+    expect(head[1]).toMatch(/turns ▲$/);
+    expect(head[4]).toContain("esc clear filters");
+  });
+
+  it("renderList draws the picker with counts and the current choice marked", () => {
+    const options: PickerOption[] = [
+      { group: "source", value: null, label: "all sources" },
+      { group: "source", value: "s1", label: "personal", count: 12 },
+    ];
+    const out = renderList([], { ...LIST, source: "s1", picker: { cursor: 0, top: 0 } }, 60, 5, "", false, 0, "dark", options).map((l) => plain(l).trimEnd());
+    expect(out[0]).toBe("Filter by source or project");
+    expect(out[1]).toBe("  source   all sources");
+    expect(out[2]).toBe("● source   personal  12");
   });
 
   it("renderList shows the filter and the prompt being typed", () => {
     const rows = [session("a", "first")];
-    expect(plain(renderList(rows, { ...LIST, filter: "fi" }, 70, 5, "", false, 9)[0])).toContain("Sessions (1 of 9)  filter: fi");
-    expect(plain(renderList(rows, { ...LIST, filter: "fi", prompt: "fi" }, 70, 5)[4])).toMatch(/^\/fi█ +enter keep · esc clear/);
+    expect(plain(renderList(rows, { ...LIST, filter: "fi" }, 70, 5, "", false, 9, "dark", [], 4)[0])).toContain("Sessions (1 of 4)  filter: fi");
+    expect(plain(renderList(rows, LIST, 70, 5, "", false, 9, "dark", [], 1)[0])).toContain("Sessions (1 of 9)");
+    expect(plain(renderList(rows, { ...LIST, filter: "fi", prompt: "fi" }, 90, 5)[4])).toMatch(/^\/fi█ +filters as you type · enter searches transcripts/);
   });
 
   it("renderPager shows a window of the transcript, highlights the find, and says where it is", () => {
@@ -467,8 +555,8 @@ describe("style", () => {
     expect(plain(tinted[2])).toBe("  line 1".padEnd(30)); // no bar when tinted
     expect(plain(renderPager("T", t, pagerOf({ sel: "a" }), 30, 6)[2])).toBe("▌ line 1".padEnd(30));
     const rows = [session("a", "first"), session("b", "second")];
-    expect(renderList(rows, LIST, 80, 5, "", true, 2, "dark")[1].startsWith(`\x1b[${SELECTED_BG.dark}m`)).toBe(true);
-    expect(renderList(rows, LIST, 80, 5)[1].startsWith("\x1b[7m")).toBe(true);
+    expect(renderList(rows, LIST, 80, 5, "", true, 2, "dark")[2].startsWith(`\x1b[${SELECTED_BG.dark}m`)).toBe(true);
+    expect(renderList(rows, LIST, 80, 5)[2].startsWith("\x1b[7m")).toBe(true);
   });
 
   it("colours a TTY unless NO_COLOR is set", () => {

@@ -6,7 +6,7 @@
 import { spawn } from "node:child_process";
 import { emitKeypressEvents } from "node:readline";
 import { resolveServerConfig, UserError } from "@agent-lens/core";
-import { getSession, listSessions } from "@agent-lens/server";
+import { getSession, listProjects, listSessions, listSources } from "@agent-lens/server";
 import type { SessionDetail } from "@agent-lens/contracts";
 import { openStore, parseSince, resolveProject, type ReportOpts } from "../report.js";
 import { detectTheme, useColor } from "./style.js";
@@ -15,6 +15,7 @@ import {
   GUTTER,
   reduce,
   selectedIndex,
+  sortSessions,
   renderList,
   renderPager,
   transcriptLines,
@@ -22,6 +23,7 @@ import {
   type Key,
   type ListState,
   type PagerState,
+  type PickerOption,
   type State,
   type Transcript,
 } from "./view.js";
@@ -84,25 +86,50 @@ export async function runBrowse(o: BrowseOpts): Promise<void> {
   if (!["main", "subagent", "all"].includes(kind)) throw new UserError(`invalid --kind '${kind}' (main, subagent or all)`);
   const limit = o.limit === undefined ? 500 : Number(o.limit);
   if (!Number.isInteger(limit) || limit < 1 || limit > 5000) throw new UserError(`invalid --limit '${o.limit}' (1 to 5000)`);
-  const { sessions: all } = listSessions(db, {
+  const from = o.since ? parseSince(o.since) : undefined;
+  let state: State = {
+    screen: "list",
+    cursor: 0,
+    top: 0,
+    filter: "",
+    search: o.search,
     source: o.source,
     project: resolveProject(db, o.project),
-    from: o.since ? parseSince(o.since) : undefined,
-    q: o.search,
-    pr: o.pr,
-    kind: kind === "all" ? undefined : (kind as "main" | "subagent"),
-    limit,
-    offset: 0,
-  });
+    sort: { column: "started", desc: true },
+  };
+  // The query the web UI's list runs, with the list's search, source, project and sort. The store
+  // sorts by started, title and turns, so the rows are the true top `limit`; source and project
+  // are sorted over the rows loaded.
+  const load = (l: ListState) => {
+    const page = listSessions(db, {
+      source: l.source,
+      project: l.project,
+      from,
+      q: l.search,
+      pr: o.pr,
+      kind: kind === "all" ? undefined : (kind as "main" | "subagent"),
+      sort: l.sort.column === "source" || l.sort.column === "project" ? "started" : l.sort.column,
+      dir: l.sort.desc ? "desc" : "asc",
+      limit,
+      offset: 0,
+    });
+    return { rows: sortSessions(page.sessions, l.sort), total: page.total };
+  };
+  let { rows: all, total } = load(state);
   if (!all.length) {
     stdout.write("No sessions match.\n");
     return;
   }
+  const options: PickerOption[] = [
+    { group: "source", value: null, label: "all sources" },
+    ...listSources(db).map((x) => ({ group: "source" as const, value: x.id, label: x.label, count: x.session_count })),
+    { group: "project", value: null, label: "all projects" },
+    ...listProjects(db).map((x) => ({ group: "project" as const, value: x.id, label: x.path ?? x.id, count: x.session_count })),
+  ];
   const { host, port } = resolveServerConfig();
   const color = useColor();
   const theme = detectTheme();
 
-  let state: State = { screen: "list", cursor: 0, top: 0, filter: "" };
   let message = "";
   const details = new Map<string, SessionDetail | null>();
   const detailOf = (id: string): SessionDetail | null => {
@@ -136,7 +163,7 @@ export async function runBrowse(o: BrowseOpts): Promise<void> {
     const { width, height } = size();
     let screen: string[];
     if (state.screen === "list") {
-      screen = renderList(visible(), state, width, height, message, color, all.length, theme);
+      screen = renderList(visible(), state, width, height, message, color, total, theme, options, all.length);
     } else {
       const t = transcript(state);
       // A toggle, an expansion or a resize moves lines around; keep the selected item on screen.
@@ -173,7 +200,7 @@ export async function runBrowse(o: BrowseOpts): Promise<void> {
       else resolve();
     };
     const ctx = (): Ctx => {
-      if (state.screen === "list") return { count: visible().length, height: body() };
+      if (state.screen === "list") return { count: visible().length, height: body(), options };
       const t = transcript(state);
       return { count: t.lines.length, height: body(), texts: t.lines.map((l) => l.map(([s]) => s).join("")), turns: t.turns, items: t.items };
     };
@@ -188,6 +215,11 @@ export async function runBrowse(o: BrowseOpts): Promise<void> {
           case "message":
             message = effect.text;
             break;
+          case "reload": {
+            ({ rows: all, total } = load(state as ListState));
+            if (!all.length) message = "No sessions match; esc clears the search and filters";
+            break;
+          }
           case "open-pager": {
             const s = state as ListState;
             const id = visible()[s.cursor]?.id;

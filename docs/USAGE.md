@@ -383,7 +383,16 @@ agent-lens browse --pr 57
 ```
 
 - The list shows each session's start, title, source, project and turns. `↑`/`↓` (or `j`/`k`) move,
-  `Space`/`b` page, `/` filters by title, project or id as you type, and `Enter` reads.
+  `Space`/`b` page, and `Enter` reads.
+  - `/` is the search box: it narrows the list by title, project or id as you type, and `Enter`
+    searches transcripts too, like `--search`.
+  - `f` picks a source or a project, with each one's session count.
+  - `s` sorts by the next column (started, title, source, project, turns) and `r` reverses it. The
+    header marks the sorted column with `▼` or `▲`.
+  - `Esc` clears the search and filters; with none set, it quits.
+  - The list holds up to `--limit` sessions (500 by default), the first ones in the current sort
+    for the current search and filters; the header says so when there are more. Sorting by source
+    or project reorders the newest ones loaded.
 - A transcript opens each turn with a band showing its time and duration, and draws each run of
   messages from you or from Claude as a card with the speaker, the time and a coloured bar.
 - In a transcript:
