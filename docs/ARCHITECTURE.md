@@ -14,7 +14,7 @@ is the source of truth, and the database can always be rebuilt from it (ADR-001)
 ```mermaid
 flowchart LR
   subgraph Sources["Agent config dirs (per account)"]
-    CC["~/.claude/projects/**.jsonl<br/>(rolling ~30-day window)"]
+    CC["~/.claude/projects/**.jsonl<br/>(deleted after cleanupPeriodDays, default 30)"]
   end
   CC -->|"Stage 1 · agent-lens collect<br/>append-verify + .versions (Node)"| AR[("data/archive/&lt;label&gt;/")]
   AR -->|"Stage 2 · agent-lens ingest (+ classify)<br/>dedupe by uuid, derive"| DB[("data/agent-lens.db<br/>SQLite + FTS5")]

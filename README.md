@@ -13,8 +13,8 @@
 
 </div>
 
-Claude Code records every session (what you asked, what the agent ran, what it changed) and prunes
-those records after a rolling 30-day window. Agent Lens copies them into a local archive before they
+Claude Code records every session (what you asked, what the agent ran, what it changed) and deletes
+those records after 30 days by default. Agent Lens copies them into a local archive before they
 expire, and gives you a transcript browser, usage and cost dashboards, and a deterministic, no-AI
 audit of what the agent did on your machine. Nothing leaves your machine.
 
