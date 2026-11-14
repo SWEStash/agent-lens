@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useRef, useState } from "react";
-import { useLocation, useParams } from "react-router-dom";
+import { startTransition, useEffect, useMemo, useRef, useState } from "react";
+import { useLocation, useParams } from "react-router";
 import { SessionHeader } from "./transcript/SessionHeader";
 import { TranscriptToolbar } from "./transcript/TranscriptToolbar";
 import { SearchBar } from "./transcript/SearchBar";
@@ -179,11 +179,15 @@ export default function SessionView() {
     const target = d.events.find((e) => e.uuid === hashUuid);
     const t = target?.timestamp ? Date.parse(target.timestamp) : NaN;
     if (Number.isNaN(t) || (t >= range[0] && t <= range[1])) return;
-    set({ from: "", to: "" });
-    setRangeCleared(true);
-    // Drive the jump explicitly rather than leaving it to the hash: patching the query navigates, and
-    // that drops the URL fragment, so `#ev-<uuid>` is gone by the time the message is on screen.
-    jumpTo(hashUuid);
+    // One transition for all three. The router runs navigation as a transition, so a jump queued as
+    // an urgent update would commit first, while the range still hides its target, and never re-fire.
+    startTransition(() => {
+      set({ from: "", to: "" });
+      setRangeCleared(true);
+      // Drive the jump explicitly rather than leaving it to the hash: patching the query navigates, and
+      // that drops the URL fragment, so `#ev-<uuid>` is gone by the time the message is on screen.
+      jumpTo(hashUuid);
+    });
   }, [hashUuid, range, d, set]);
   useEffect(() => {
     if (!rangeCleared) return;

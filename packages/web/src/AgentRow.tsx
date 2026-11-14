@@ -1,7 +1,7 @@
 /** One spawned-agent row, linking to its full transcript. Shared by the session page (subagents
  * fanned out by a turn) and the workflow page (agents fanned out by a run), which list the same
  * thing. */
-import { Link } from "react-router-dom";
+import { Link } from "react-router";
 import { fmtCost, fmtDuration, fmtTokens, sessionLabel, shortModel } from "./format";
 
 /** The fields both `SessionChild` and `WorkflowAgent` carry. `duration_ms` is workflow-only (the

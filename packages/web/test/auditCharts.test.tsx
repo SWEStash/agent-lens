@@ -6,7 +6,7 @@
  */
 import { describe, it, expect } from "vitest";
 import { render, screen } from "@testing-library/react";
-import { MemoryRouter } from "react-router-dom";
+import { MemoryRouter } from "react-router";
 import type { ReactElement } from "react";
 import { AUDIT_CHART_IDS, CHART_REGISTRY } from "../src/dashboard/registry";
 import { EditReliability, FileRework, FindingsOverTime, PlanRejections } from "../src/dashboard/charts/audit";

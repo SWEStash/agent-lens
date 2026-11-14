@@ -1,6 +1,6 @@
 import { act, cleanup, renderHook } from "@testing-library/react";
 import { createElement, type ReactNode } from "react";
-import { MemoryRouter, useLocation, useNavigationType } from "react-router-dom";
+import { MemoryRouter, useLocation, useNavigationType } from "react-router";
 import { afterEach, describe, expect, it } from "vitest";
 import { useQueryState } from "../src/useQueryState";
 

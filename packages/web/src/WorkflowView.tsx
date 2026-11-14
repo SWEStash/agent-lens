@@ -1,5 +1,5 @@
 import { Fragment } from "react";
-import { Link, useParams } from "react-router-dom";
+import { Link, useParams } from "react-router";
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { type WorkflowAgent, type WorkflowDetail, type WorkflowProgressEntry } from "./api";

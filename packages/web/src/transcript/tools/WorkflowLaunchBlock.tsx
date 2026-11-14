@@ -1,4 +1,4 @@
-import { Link } from "react-router-dom";
+import { Link } from "react-router";
 import type { ToolCall } from "../../api";
 
 /** A Workflow launch, rendered minimally in the transcript: the run name/status, the launch ack, and

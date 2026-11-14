@@ -1,4 +1,4 @@
-import { Link } from "react-router-dom";
+import { Link } from "react-router";
 import type { ToolCall } from "../../api";
 import { prettyJson } from "../../jsonish";
 import CopyButton from "../../CopyButton";

@@ -1,5 +1,5 @@
 import { useId, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link } from "react-router";
 import type { Finding } from "../api";
 import { SeverityTag, SEVERITIES } from "../severity";
 

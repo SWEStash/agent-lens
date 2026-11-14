@@ -8,7 +8,7 @@
  * scrolling to something the filter is hiding.
  */
 import { cleanup, render, screen, waitFor } from "@testing-library/react";
-import { MemoryRouter, Route, Routes } from "react-router-dom";
+import { MemoryRouter, Route, Routes } from "react-router";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { SessionDetail } from "../src/api";
 

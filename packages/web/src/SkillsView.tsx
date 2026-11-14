@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link } from "react-router";
 import { type Project, type SkillSummary, type Source } from "./api";
 import { useFetch, useLookup } from "./useFetch";
 import { useQueryState } from "./useQueryState";

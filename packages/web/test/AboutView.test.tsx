@@ -4,7 +4,7 @@
  * each one silently invalidates what the rest of the app is showing you.
  */
 import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
-import { MemoryRouter } from "react-router-dom";
+import { MemoryRouter } from "react-router";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AboutResponse } from "../src/api";
 

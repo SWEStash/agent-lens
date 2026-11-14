@@ -1,6 +1,6 @@
 import React, { lazy } from "react";
 import { createRoot } from "react-dom/client";
-import { BrowserRouter, Routes, Route } from "react-router-dom";
+import { BrowserRouter, Routes, Route } from "react-router";
 import App from "./App";
 import SessionsView from "./SessionsView";
 import { SNAPSHOT } from "./api";
@@ -28,10 +28,7 @@ createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
     <ThemeProvider>
       <AppErrorBoundary>
-        <BrowserRouter
-          basename={basename}
-          future={{ v7_startTransition: true, v7_relativeSplatPath: true }}
-        >
+        <BrowserRouter basename={basename}>
           <Routes>
             <Route path="/" element={<App />}>
               <Route index element={<SessionsView />} />

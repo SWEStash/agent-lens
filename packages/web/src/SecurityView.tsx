@@ -1,5 +1,5 @@
 import { useCallback, useMemo, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link } from "react-router";
 import { apiPost, SNAPSHOT, type FindingListRow, type FindingSort, type FindingsPage, type MuteRow, type Project, type SecuritySummary, type Source } from "./api";
 import { useFetch, useLookup } from "./useFetch";
 import { useQueryState } from "./useQueryState";
@@ -10,6 +10,7 @@ import { Pager } from "./Pager";
 import { toggleIn } from "./sets";
 import { APPROVAL_OPTIONS, PermissionTag } from "./permission";
 import { SourceSelect, ProjectSelect } from "./ListFilters";
+import { DateInput } from "./DateInput";
 import { fmtDate, projectLabel, sessionLabel } from "./format";
 import { SeverityTag, SEVERITIES } from "./severity";
 
@@ -194,8 +195,8 @@ export default function SecurityView() {
         </select>
         <SourceSelect value={source} sources={sources} onChange={(v) => setParam({ source: v })} />
         <ProjectSelect value={project} projects={projects} onChange={(v) => setParam({ project: v })} />
-        <label className="ctl">from <input type="date" value={from} onChange={(e) => setParam({ from: e.target.value })} /></label>
-        <label className="ctl">to <input type="date" value={to} onChange={(e) => setParam({ to: e.target.value })} /></label>
+        <label className="ctl">from <DateInput value={from} onChange={(v) => setParam({ from: v })} /></label>
+        <label className="ctl">to <DateInput value={to} onChange={(v) => setParam({ to: v })} /></label>
         {session && (
           <span className="tag filter-chip">
             session {session.slice(0, 8)}… <button type="button" className="linkish" onClick={() => setParam({ session: "" })}>✕</button>

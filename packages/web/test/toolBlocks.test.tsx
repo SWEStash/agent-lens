@@ -5,7 +5,7 @@
  * disclosure, the raw-JSON toggle, and the links that show even while collapsed.
  */
 import { cleanup, fireEvent, render, within } from "@testing-library/react";
-import { MemoryRouter } from "react-router-dom";
+import { MemoryRouter } from "react-router";
 import { afterEach, describe, expect, it } from "vitest";
 import type { ToolCall } from "../src/api";
 import { ToolChip } from "../src/transcript/tools/ToolChip";

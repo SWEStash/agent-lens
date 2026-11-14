@@ -7,7 +7,7 @@
  */
 import { describe, expect, it } from "vitest";
 import { render as rtlRender, screen, cleanup } from "@testing-library/react";
-import { MemoryRouter } from "react-router-dom";
+import { MemoryRouter } from "react-router";
 import type { ReactElement } from "react";
 import { CHART_REGISTRY } from "../src/dashboard/registry";
 

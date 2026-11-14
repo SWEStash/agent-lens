@@ -3,7 +3,7 @@
  * "not recorded" rather than guessing, and the approval filter goes to the API as `approval=`.
  */
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
-import { MemoryRouter } from "react-router-dom";
+import { MemoryRouter } from "react-router";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { FindingListRow, SecuritySummary } from "../src/api";
 

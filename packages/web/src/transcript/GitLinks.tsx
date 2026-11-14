@@ -1,6 +1,6 @@
 /** The PRs and pushed branches a session recorded (ADR-041), for the header's meta row. Each PR links
  * out to its page when a URL was recorded, and to the other sessions that touched it. */
-import { Link } from "react-router-dom";
+import { Link } from "react-router";
 import { SNAPSHOT, type SessionBranch, type SessionPr } from "../api";
 
 /** The `?pr=` value that finds a PR's sessions: its URL when known, else `owner/repo#n`. */

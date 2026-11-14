@@ -1,4 +1,4 @@
-import { Link } from "react-router-dom";
+import { Link } from "react-router";
 import { type FileSort, type FileSummary, type Project, type Source } from "./api";
 import { useFetch, useLookup } from "./useFetch";
 import { useQueryState } from "./useQueryState";

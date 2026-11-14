@@ -1,4 +1,4 @@
-import { Link } from "react-router-dom";
+import { Link } from "react-router";
 import type { SessionDetail } from "../api";
 import { AgentRow } from "../AgentRow";
 

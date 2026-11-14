@@ -4,7 +4,7 @@
  * where, so both directions of the link must be there.
  */
 import { cleanup, render, screen } from "@testing-library/react";
-import { MemoryRouter } from "react-router-dom";
+import { MemoryRouter } from "react-router";
 import { afterEach, describe, expect, it } from "vitest";
 import type { SessionDetail } from "../src/api";
 import { SessionHeader } from "../src/transcript/SessionHeader";

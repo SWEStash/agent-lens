@@ -1,4 +1,4 @@
-import { useNavigate } from "react-router-dom";
+import { useNavigate } from "react-router";
 import { datumField, type ChartDatum } from "./recharts-types";
 
 export interface Drilldown {

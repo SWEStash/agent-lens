@@ -2,7 +2,7 @@
  * button works. Each page had grown its own copy of "read a param", "patch the query", and "collect
  * the active filters into a query string". This is that trio, once. */
 import { useCallback } from "react";
-import { useSearchParams } from "react-router-dom";
+import { useSearchParams } from "react-router";
 
 export interface QueryState {
   /** The raw params, for the few places that need something the helpers don't cover. */
