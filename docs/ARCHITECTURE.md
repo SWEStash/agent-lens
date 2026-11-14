@@ -183,3 +183,4 @@ erDiagram
 | [039](decisions/ADR-039-otel-is-enrichment-not-source.md) | OpenTelemetry is an optional enrichment signal; the transcript archive stays the system of record |
 | [040](decisions/ADR-040-tool-call-permission-decisions.md) | Each tool call records how it was approved, as an agent-agnostic channel; missing means not recorded |
 | [041](decisions/ADR-041-session-pr-and-branch-links.md) | Sessions record the PRs and branches they touched, read from the transcript; keyed by repository and number |
+| [042](decisions/ADR-042-cli-read-surface.md) | The CLI answers questions from the store through the server's queries; JSON is the API contract; the terminal browser is our own module |

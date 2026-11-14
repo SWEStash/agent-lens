@@ -31,6 +31,7 @@ import {
 import { runIngest, runMetrics } from "@agent-lens/ingest";
 import { startServer, openReadonly, renderSessionExport, parseRedactionLevel } from "@agent-lens/server";
 import { runWatch } from "./watch.js";
+import { costReport, findingsReport, openStore, printReport, sessionsReport, type ReportOpts } from "./report.js";
 
 // `agent-lens --version`. Shared with the server's /api/health so the CLI and the web UI can never
 // disagree about what build this is (ADR-027). A published install reports "0.9.6"; a clone reports
@@ -118,6 +119,53 @@ cli
   .option("--db <path>", "SQLite DB path (overrides AGENT_LENS_DB / config db)")
   .action((opts: { db?: string }) => {
     runMetrics(opts.db ? ["--db", opts.db] : []);
+  });
+
+// Read-only reports over the store: a table by default, the API's JSON payload with --json.
+const SINCE = "Only sessions started since: 24h, 7d, 2w, or a YYYY-MM-DD date";
+const DB_OPT = "SQLite DB path (overrides AGENT_LENS_DB / config db)";
+
+cli
+  .command("sessions", "List recent sessions (table, or --json)")
+  .option("--since <when>", SINCE)
+  .option("--source <label>", "Only this source")
+  .option("--project <project>", "Only this project: its path, or the last part of it")
+  .option("--search <text>", "Full-text search over names, projects and transcripts")
+  .option("--pr <pr>", "Only sessions that touched this PR: a number, owner/repo#n, or its URL")
+  .option("--kind <kind>", "main (default), subagent, or all")
+  .option("--limit <n>", "Rows to show (default 20)")
+  .option("--json", "Print the API's JSON payload")
+  .option("--db <path>", DB_OPT)
+  .action((opts: ReportOpts & { search?: string; pr?: string; kind?: string }) => {
+    const { page, text } = sessionsReport(openStore(opts.db), opts);
+    printReport(opts.json, page, text);
+  });
+
+cli
+  .command("findings", "List security findings, open ones by default (table, or --json)")
+  .option("--since <when>", SINCE)
+  .option("--severity <level>", "critical, high, medium, low or info")
+  .option("--status <status>", "open (default), dismissed, muted, or all")
+  .option("--source <label>", "Only this source")
+  .option("--project <project>", "Only this project: its path, or the last part of it")
+  .option("--limit <n>", "Rows to show (default 50)")
+  .option("--json", "Print the API's JSON payload")
+  .option("--db <path>", DB_OPT)
+  .action((opts: ReportOpts & { severity?: string; status?: string }) => {
+    const { page, text } = findingsReport(openStore(opts.db), opts);
+    printReport(opts.json, page, text);
+  });
+
+cli
+  .command("cost", "Estimated cost, sessions and tokens (all time, --today, or --since)")
+  .option("--today", "Since local midnight")
+  .option("--since <when>", SINCE)
+  .option("--source <label>", "Only this source")
+  .option("--json", "Print the API's JSON payload")
+  .option("--db <path>", DB_OPT)
+  .action((opts: ReportOpts & { today?: boolean }) => {
+    const { overview, text } = costReport(openStore(opts.db), opts);
+    printReport(opts.json, overview, text);
   });
 
 cli

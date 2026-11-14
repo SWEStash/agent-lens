@@ -53,6 +53,7 @@
     "fastify": "^5.12.8"
   },
   "devDependencies": {
+    "@agent-lens/contracts": "workspace:*",
     "@agent-lens/core": "workspace:*",
     "@agent-lens/ingest": "workspace:*",
     "@agent-lens/server": "workspace:*",

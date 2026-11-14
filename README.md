@@ -86,6 +86,8 @@ See the [usage guide](docs/USAGE.md) for every command and option.
 - A heuristic, no-AI category and complexity for each session, with its inputs shown.
 - Reported as observations, never as an efficiency score
   ([ADR-036](docs/decisions/ADR-036-dashboard-audit-endpoint.md)).
+- Quick answers in the terminal, as tables or JSON for scripts: `agent-lens sessions`, `findings`,
+  and `cost` ([ADR-042](docs/decisions/ADR-042-cli-read-surface.md)).
 
 ## Screenshots
 
