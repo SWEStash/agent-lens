@@ -7,8 +7,8 @@ import type { SessionDetail, SessionSummary, ToolCall } from "@agent-lens/contra
 import { charWidth, clean, displayWidth, fit, wrap } from "../src/browse/text.js";
 import {
   filterSessions,
-  findLine,
   highlight,
+  nextMatch,
   reduce,
   renderHelp,
   renderList,
@@ -28,7 +28,7 @@ const plain = (s: string) => s.replace(/\x1b\[[0-9;]*m/g, "");
 const txt = (l: Line) => l.map(([t]) => t).join("");
 const LIST: ListState = { screen: "list", cursor: 0, top: 0, filter: "" };
 const pagerOf = (o: Partial<PagerState> = {}): PagerState => ({
-  screen: "pager", sessionId: "s1", top: 0, list: LIST, find: "", thinking: false, results: false, ...o,
+  screen: "pager", sessionId: "s1", top: 0, list: LIST, expanded: [], find: "", thinking: false, results: false, ...o,
 });
 /** Feed keys one at a time, returning the final state and every effect. */
 function press(state: State, keys: Key[], ctx: Ctx): { state: State; effects: unknown[] } {
@@ -171,16 +171,59 @@ describe("reduce: pager", () => {
   });
 });
 
+describe("reduce: items", () => {
+  const items = [
+    { key: "m1", kind: "message" as const, start: 3, end: 4, expandable: false, search: "l3 l4" },
+    { key: "t1", kind: "tool" as const, start: 5, end: 5, expandable: true, subagent: "agent-1", search: "bash\nsecret output" },
+    { key: "m2", kind: "message" as const, start: 9, end: 20, expandable: true, search: "m2" },
+    { key: "t2", kind: "tool" as const, start: 22, end: 22, expandable: true, search: "t2" },
+  ];
+  const texts = Array.from({ length: 24 }, (_, i) => (i === 21 ? "a needle here" : `l${i}`));
+  const ctx: Ctx = { count: 24, height: 6, texts, turns: [2, 8], items };
+
+  it("moves the selection between items and scrolls just enough to show each", () => {
+    let s = reduce(pagerOf(), { name: "down" }, ctx).state as PagerState;
+    expect(s).toMatchObject({ sel: "t1", top: 0 });
+    s = reduce(s, { name: "down" }, ctx).state as PagerState;
+    expect(s).toMatchObject({ sel: "m2", top: 9 }); // taller than the screen: its start goes on top
+    s = reduce(s, { name: "down" }, ctx).state as PagerState;
+    expect(s).toMatchObject({ sel: "t2", top: 17 });
+    expect((reduce(s, { name: "down" }, ctx).state as PagerState).sel).toBe("t2"); // the last stays
+    expect((reduce(s, { name: "up" }, ctx).state as PagerState).sel).toBe("m2");
+    expect(reduce(s, { name: "g", sequence: "g" }, ctx).state).toMatchObject({ sel: "m1", top: 0 });
+  });
+
+  it("expands and collapses the selected item with enter, and ignores one that can't expand", () => {
+    const on = reduce(pagerOf({ sel: "t1" }), { name: "return" }, ctx).state as PagerState;
+    expect(on.expanded).toEqual(["t1"]);
+    expect((reduce(on, { name: "return" }, ctx).state as PagerState).expanded).toEqual([]);
+    expect((reduce(pagerOf({ sel: "m1" }), { name: "return" }, ctx).state as PagerState).expanded).toEqual([]);
+  });
+
+  it("selects what a page, a turn jump or a find lands on", () => {
+    expect(reduce(pagerOf(), { name: "space" }, ctx).state).toMatchObject({ top: 5, sel: "t1" });
+    expect(reduce(pagerOf(), { sequence: "]" }, ctx).state).toMatchObject({ top: 2, sel: "m1" });
+    const found = press(pagerOf(), [{ sequence: "/" }, ...type("needle"), { name: "return" }], ctx).state;
+    expect(found).toMatchObject({ top: 21, find: "needle" });
+  });
+
+  it("finds text a collapsed tool call hides, and opens it", () => {
+    const r = press(pagerOf(), [{ sequence: "/" }, ...type("secret"), { name: "return" }], ctx).state as PagerState;
+    expect(r).toMatchObject({ top: 5, sel: "t1", expanded: ["t1"], find: "secret" });
+  });
+});
+
 const session = (id: string, title: string, project = "/w/demo"): SessionSummary =>
   ({ id, title, started_at: null, project_path: project, cost: 1.5, unpriced_models: [] }) as unknown as SessionSummary;
 
 describe("helpers", () => {
-  it("findLine searches forward and back, any case", () => {
-    const t = ["Alpha", "beta", "ALPHA"];
-    expect(findLine(t, "alpha", 1, 1)).toBe(2);
-    expect(findLine(t, "alpha", 1, -1)).toBe(0);
-    expect(findLine(t, "gamma", 0, 1)).toBeNull();
-    expect(findLine(t, "", 0, 1)).toBeNull();
+  it("nextMatch searches shown lines forward and back, any case", () => {
+    const ctx: Ctx = { count: 3, height: 3, texts: ["Alpha", "beta", "ALPHA"], items: [] };
+    expect(nextMatch(ctx, "alpha", 0, 1)).toEqual({ line: 2 });
+    expect(nextMatch(ctx, "alpha", 0, 1, true)).toEqual({ line: 0 });
+    expect(nextMatch(ctx, "alpha", 2, -1)).toEqual({ line: 0 });
+    expect(nextMatch(ctx, "gamma", 0, 1)).toBeNull();
+    expect(nextMatch(ctx, "", 0, 1)).toBeNull();
   });
 
   it("filterSessions matches title, project or id", () => {
@@ -199,7 +242,7 @@ describe("helpers", () => {
   });
 
   it("subagentAt picks the first [s] call on screen, else the next below", () => {
-    const t = { lines: [], turns: [], subagents: [{ line: 3, sessionId: "agent-a" }, { line: 30, sessionId: "agent-b" }] };
+    const t = { lines: [], turns: [], items: [], subagents: [{ line: 3, sessionId: "agent-a" }, { line: 30, sessionId: "agent-b" }] };
     expect(subagentAt(t, 0, 10)).toBe("agent-a");
     expect(subagentAt(t, 5, 10)).toBe("agent-b");
     expect(subagentAt(t, 31, 10)).toBeNull();
@@ -235,9 +278,12 @@ describe("screens", () => {
 
   it("renderPager shows a window of the transcript, highlights the find, and says where it is", () => {
     const lines: Line[] = Array.from({ length: 30 }, (_, i) => [[`line ${i + 1}`]]);
-    const out = renderPager("Title", lines, pagerOf({ top: 5 }), 60, 6);
-    expect(out.map((l) => plain(l).trimEnd())).toEqual(["Title", "line 6", "line 7", "line 8", "line 9", expect.stringMatching(/^6–9 of 30 · \[ \] turns/)]);
-    const found = renderPager("T", lines, pagerOf({ top: 5, find: "line 7" }), 60, 6);
+    const t = { lines, turns: [], subagents: [], items: [{ key: "a", kind: "message" as const, start: 6, end: 7, expandable: false, search: "" }] };
+    const out = renderPager("Title", t, pagerOf({ top: 5, sel: "a" }), 80, 6);
+    expect(out.map((l) => plain(l).trimEnd())).toEqual([
+      "Title", "  line 6", "▌ line 7", "▌ line 8", "  line 9", expect.stringMatching(/^6–9 of 30 · ↑↓ item · \[ \] turns/),
+    ]);
+    const found = renderPager("T", t, pagerOf({ top: 5, find: "line 7" }), 80, 6);
     expect(found[2]).toContain("\x1b[7mline 7\x1b[0m"); // inverted even without colour
     expect(plain(found[5])).toContain('"line 7": n next');
   });
@@ -251,11 +297,12 @@ describe("screens", () => {
 
   it("toolLine names the call, then its markers, then what it acted on", () => {
     const t = (o: Partial<ToolCall>): ToolCall => ({ tool_name: "Bash", input_json: null, status: null, skill_name: null, agent_type: null, ...o }) as ToolCall;
-    expect(txt(toolLine(t({ input_json: JSON.stringify({ command: "pnpm test\nmore" }) })))).toBe("⏺ Bash: pnpm test");
-    expect(txt(toolLine(t({ tool_name: "Edit", input_json: '{"file_path":"src/a.ts"}', status: "error" })))).toBe("⏺ Edit (failed): src/a.ts");
-    expect(txt(toolLine(t({ tool_name: "Task", agent_type: "Explore", spawned_session_id: "agent-1", input_json: "x" })))).toBe("⏺ Task → Explore [s]");
+    expect(txt(toolLine(t({ input_json: JSON.stringify({ command: "pnpm test\nmore" }) })))).toBe("▸ Bash: pnpm test");
+    expect(txt(toolLine(t({ input_json: '{"command":"ls"}' }), true))).toBe("▾ Bash: ls");
+    expect(txt(toolLine(t({ tool_name: "Edit", input_json: '{"file_path":"src/a.ts"}', status: "error" })))).toBe("▸ Edit (failed): src/a.ts");
+    expect(txt(toolLine(t({ tool_name: "Task", agent_type: "Explore", spawned_session_id: "agent-1", input_json: "x" })))).toBe("▸ Task → Explore [s]");
     const flagged = toolLine(t({ input_json: '{"command":"rm -rf /"}', findings: [{ severity: "critical", rule_id: "destructive.rm_rf" }] as never }));
-    expect(txt(flagged)).toBe("⏺ Bash ● critical destructive.rm_rf: rm -rf /");
+    expect(txt(flagged)).toBe("▸ Bash ● critical destructive.rm_rf: rm -rf /");
     expect(flagged).toContainEqual([" ● critical destructive.rm_rf", "critical"]);
   });
 });
@@ -281,7 +328,7 @@ describe("transcriptLines", () => {
   it("labels each speaker once per run, puts tool calls under claude, and passes no escapes through", () => {
     const out = transcriptLines(d, 40).lines.map(txt);
     expect(out.filter((l) => l === "claude:")).toHaveLength(1);
-    expect(out.slice(out.indexOf("claude:"), out.indexOf("claude:") + 3)).toEqual(["claude:", "  ⏺ Bash: ls", "  ⏺ Task → Explore [s]"]);
+    expect(out.slice(out.indexOf("claude:"), out.indexOf("claude:") + 3)).toEqual(["claude:", "  ▸ Bash: ls", "  ▸ Task → Explore [s]"]);
     expect(out.join("\n")).not.toContain("\x1b");
   });
 
@@ -293,13 +340,44 @@ describe("transcriptLines", () => {
     expect(t.subagents[0].sessionId).toBe("agent-9");
   });
 
-  it("styles headings and fenced code", () => {
+  it("renders messages as markdown: a heading without its hashes, code without its fences", () => {
     const lines = transcriptLines(d, 40).lines;
     const styleOf = (text: string) => lines.find((l) => txt(l).trim() === text)?.at(-1)?.[1];
     expect(styleOf("claude:")).toBe("claude");
-    expect(styleOf("## Plan")).toBe("heading");
-    expect(styleOf("ls")).toBe("code");
+    expect(styleOf("Plan")).toBe("heading");
+    expect(styleOf("│ ls")).toBe("code");
     expect(styleOf("done")).toBe("plain");
+    expect(lines.map(txt).join("\n")).not.toMatch(/##|```/);
+  });
+
+  it("lists each message, thinking block and tool call as an item spanning its lines", () => {
+    const t = transcriptLines(d, 40, { thinking: true });
+    expect(t.items.map((i) => i.kind)).toEqual(["message", "thinking", "tool", "tool", "message", "message"]);
+    for (const it of t.items) expect(it.end).toBeGreaterThanOrEqual(it.start);
+    const task = t.items.find((i) => i.subagent);
+    expect(task?.subagent).toBe("agent-9");
+    expect(txt(t.lines[task!.start])).toContain("Task → Explore");
+  });
+
+  it("expands one tool call by key, or every one with results", () => {
+    const key = transcriptLines(d, 40).items.find((i) => i.kind === "tool")!.key;
+    const one = transcriptLines(d, 40, { expanded: [key] }).lines.map(txt);
+    expect(one).toContain("  ▾ Bash: ls");
+    expect(one).toContain("    $ ls");
+    expect(one).toContain("    │ a.ts");
+    expect(one).toContain("  ▸ Task → Explore [s]");
+  });
+
+  it("cuts a long message to its first lines until it is expanded", () => {
+    const long = { ...d, events: [{ role: "assistant", type: "assistant", turn_id: "t0", uuid: "m1", text: Array.from({ length: 30 }, (_, i) => `para ${i}`).join("\n\n"), thinking: null, toolCalls: [] }] } as unknown as SessionDetail;
+    const cut = transcriptLines(long, 40);
+    const item = cut.items[0];
+    expect(item.expandable).toBe(true);
+    expect(txt(cut.lines[item.end])).toMatch(/^  … \d+ more lines · enter shows all$/);
+    const full = transcriptLines(long, 40, { expanded: [item.key] });
+    expect(full.lines.map(txt)).toContain("  para 29");
+    // A find reaches the hidden lines through the item's search text.
+    expect(item.search).toContain("para 29");
   });
 
   it("shows thinking and tool results only when asked", () => {
@@ -310,6 +388,7 @@ describe("transcriptLines", () => {
     const text = shown.map(txt);
     expect(text).toContain("  │ let me look");
     expect(text).toContain("    │ a.ts");
+    expect(text).toContain("    $ ls");
     expect(shown.find((l) => txt(l) === "  │ let me look")?.at(-1)?.[1]).toBe("thinking");
   });
 });

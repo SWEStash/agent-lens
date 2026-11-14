@@ -12,7 +12,9 @@ import { openStore, parseSince, resolveProject, type ReportOpts } from "../repor
 import { useColor } from "./style.js";
 import {
   filterSessions,
+  GUTTER,
   reduce,
+  selectedIndex,
   renderList,
   renderPager,
   transcriptLines,
@@ -111,12 +113,14 @@ export async function runBrowse(o: BrowseOpts): Promise<void> {
   const body = () => Math.max(1, size().height - 2);
   const visible = () => filterSessions(all, state.screen === "list" ? state.filter : state.list.filter);
   const transcript = (p: PagerState): Transcript => {
-    const key = `${p.sessionId}|${size().width}|${p.thinking}|${p.results}`;
+    const key = `${p.sessionId}|${size().width}|${p.thinking}|${p.results}|${p.expanded.join(",")}`;
     if (cache?.key !== key) {
       const d = detailOf(p.sessionId);
       cache = {
         key,
-        t: d ? transcriptLines(d, size().width, p) : { lines: [[["This session is no longer in the store."]]], turns: [], subagents: [] },
+        t: d
+          ? transcriptLines(d, size().width - GUTTER, p)
+          : { lines: [[["This session is no longer in the store."]]], turns: [], items: [], subagents: [] },
       };
     }
     return cache.t;
@@ -134,9 +138,11 @@ export async function runBrowse(o: BrowseOpts): Promise<void> {
       screen = renderList(visible(), state, width, height, message, color, all.length);
     } else {
       const t = transcript(state);
-      // A toggle or a resize can shorten the transcript under the current position.
+      // A toggle, an expansion or a resize moves lines around; keep the selected item on screen.
+      const it = t.items[selectedIndex(t.items, state.sel)];
+      if (it && (it.end < state.top || it.start >= state.top + body())) state = { ...state, top: Math.max(0, it.start) };
       if (state.top > Math.max(0, t.lines.length - 1)) state = { ...state, top: Math.max(0, t.lines.length - body()) };
-      screen = renderPager(titleOf(state), t.lines, state, width, height, message, color);
+      screen = renderPager(titleOf(state), t, state, width, height, message, color);
     }
     stdout.write("\x1b[H" + screen.join("\r\n"));
   };
@@ -168,7 +174,7 @@ export async function runBrowse(o: BrowseOpts): Promise<void> {
     const ctx = (): Ctx => {
       if (state.screen === "list") return { count: visible().length, height: body() };
       const t = transcript(state);
-      return { count: t.lines.length, height: body(), texts: t.lines.map((l) => l.map(([s]) => s).join("")), turns: t.turns };
+      return { count: t.lines.length, height: body(), texts: t.lines.map((l) => l.map(([s]) => s).join("")), turns: t.turns, items: t.items };
     };
     const onKey = (_: string, key: Key) => {
       try {
@@ -184,15 +190,17 @@ export async function runBrowse(o: BrowseOpts): Promise<void> {
           case "open-pager": {
             const s = state as ListState;
             const id = visible()[s.cursor]?.id;
-            if (id) state = { screen: "pager", sessionId: id, top: 0, list: s, find: "", thinking: false, results: false };
+            if (id) state = { screen: "pager", sessionId: id, top: 0, list: s, expanded: [], find: "", thinking: false, results: false };
             break;
           }
           case "open-subagent": {
             const p = state as PagerState;
-            const sub = subagentAt(transcript(p), p.top, body());
-            if (!sub) message = "No subagent call on screen; scroll to an [s] line";
+            const t = transcript(p);
+            // The selected call's subagent, else the first [s] call on screen.
+            const sub = t.items[selectedIndex(t.items, p.sel)]?.subagent ?? subagentAt(t, p.top, body());
+            if (!sub) message = "No subagent call on screen; select an [s] line";
             else if (!detailOf(sub)) message = `Subagent ${sub} isn't in the store`;
-            else state = { ...p, sessionId: sub, top: 0, parent: p, find: "", prompt: undefined };
+            else state = { ...p, sessionId: sub, top: 0, parent: p, sel: undefined, expanded: [], find: "", prompt: undefined };
             break;
           }
           case "copy": {

@@ -2,12 +2,17 @@
  * The screens of `agent-lens browse`, as pure functions from data to the exact lines to draw, and the
  * key handling as a reducer over a small state. The driver in index.ts only feeds them keys and
  * terminal sizes (ADR-042).
+ *
+ * A transcript is a list of items (each message, thinking block and tool call) with the lines they
+ * occupy. The pager keeps one item selected; `↑`/`↓` move between items and `Enter` expands one.
  */
 import { basename } from "node:path";
-import type { SessionDetail, SessionSummary, ToolCall } from "@agent-lens/contracts";
+import type { SessionDetail, SessionSummary } from "@agent-lens/contracts";
 import { fmtUsd, fmtWhen } from "../report.js";
-import { drawLine, severityStyle, type Line, type Span, type Style } from "./style.js";
+import { markdownLines } from "./markdown.js";
+import { drawLine, severityStyle, type Line, type Span } from "./style.js";
 import { clean, wrap } from "./text.js";
+import { toolDetailLines, toolLine } from "./tools.js";
 
 export interface ListState {
   screen: "list";
@@ -27,9 +32,14 @@ export interface PagerState {
   list: ListState;
   /** The transcript this subagent's was opened from; `q` returns there instead of the list. */
   parent?: PagerState;
+  /** The selected item's key; the first item when unset. */
+  sel?: string;
+  /** Items opened with Enter: tool calls show their input and output, long messages all their lines. */
+  expanded: string[];
   find: string;
   prompt?: string;
   thinking: boolean;
+  /** Expand every tool call. */
   results: boolean;
   help?: boolean;
 }
@@ -52,21 +62,57 @@ export type Effect =
   | { type: "message"; text: string }
   | null;
 
+/** A selectable piece of a transcript and the lines it spans (inclusive). */
+export interface Item {
+  key: string;
+  kind: "message" | "thinking" | "tool";
+  start: number;
+  end: number;
+  /** Whether Enter changes it: a tool call, or a message cut to its first lines. */
+  expandable: boolean;
+  /** For a call that spawned a subagent, that session's id. */
+  subagent?: string;
+  /** Everything the item holds, lowercased, including what a collapsed item doesn't show, so a find
+   * reaches it. */
+  search: string;
+}
+
 /** What the reducer needs to know about the screen: how many rows it has (sessions or transcript
- * lines), how many are visible, and for a transcript its plain text and where each turn starts. */
+ * lines), how many are visible, and for a transcript its plain text, turns and items. */
 export interface Ctx {
   count: number;
   height: number;
   texts?: string[];
   turns?: number[];
+  items?: Item[];
 }
 
-/** The next line at or after `from` (or before it, going back) that contains `query`, any case. */
-export function findLine(texts: string[], query: string, from: number, dir: 1 | -1): number | null {
+export interface Match {
+  line: number;
+  /** The item to open because the match is in a part it doesn't show yet. */
+  open?: string;
+}
+
+/**
+ * The next match for `query` past line `from` (`dir` 1), or before it (-1), with `inclusive` taking
+ * `from` itself. Shown lines match where they contain it; a collapsed item whose hidden text has it
+ * matches at its first line and asks to be opened.
+ */
+export function nextMatch(ctx: Ctx, query: string, from: number, dir: 1 | -1, inclusive = false): Match | null {
   const q = query.toLowerCase();
   if (!q) return null;
-  for (let i = from; i >= 0 && i < texts.length; i += dir) if (texts[i].toLowerCase().includes(q)) return i;
-  return null;
+  const texts = ctx.texts ?? [];
+  const items = ctx.items ?? [];
+  const hits: Match[] = [];
+  texts.forEach((t, i) => t.toLowerCase().includes(q) && hits.push({ line: i }));
+  for (const it of items) {
+    const shown = hits.some((h) => h.line >= it.start && h.line <= it.end);
+    if (!shown && it.expandable && it.search.includes(q)) hits.push({ line: it.start, open: it.key });
+  }
+  hits.sort((a, b) => a.line - b.line);
+  const ok = (l: number) => (dir === 1 ? (inclusive ? l >= from : l > from) : inclusive ? l <= from : l < from);
+  const pick = dir === 1 ? hits.find((h) => ok(h.line)) : [...hits].reverse().find((h) => ok(h.line));
+  return pick ?? null;
 }
 
 /** The sessions whose title, project path or id contains `filter`, any case. */
@@ -74,6 +120,13 @@ export function filterSessions(all: SessionSummary[], filter: string): SessionSu
   const q = filter.trim().toLowerCase();
   if (!q) return all;
   return all.filter((s) => [s.title, s.project_path, s.id].some((v) => v?.toLowerCase().includes(q)));
+}
+
+/** The index of the selected item: the one keyed `sel`, else the first. -1 when there are none. */
+export function selectedIndex(items: Item[], sel: string | undefined): number {
+  if (!items.length) return -1;
+  const i = sel ? items.findIndex((it) => it.key === sel) : -1;
+  return i < 0 ? 0 : i;
 }
 
 const printable = (key: Key): string | null => {
@@ -115,35 +168,65 @@ export function reduce(state: State, key: Key, ctx: Ctx): { state: State; effect
     return none();
   }
 
-  const last = Math.max(0, ctx.count - ctx.height);
-  const scroll = (to: number): State => ({ ...state, top: Math.max(0, Math.min(last, to)) });
+  const items = ctx.items ?? [];
   const texts = ctx.texts ?? [];
+  const last = Math.max(0, ctx.count - ctx.height);
+  const clampTop = (t: number) => Math.max(0, Math.min(last, t));
+  /** Select item `i` and scroll just enough to show it (its start, if it's taller than the screen). */
+  const select = (i: number): State => {
+    const it = items[Math.max(0, Math.min(items.length - 1, i))];
+    if (!it) return state;
+    let top = state.top;
+    if (it.start < top) top = it.start;
+    else if (it.end >= top + ctx.height) top = Math.min(it.start, it.end - ctx.height + 1);
+    return { ...state, sel: it.key, top: clampTop(top) };
+  };
+  /** Put line `top` at the top and select the first item that starts on screen (or covers the top). */
+  const scrollTo = (top: number, exact = false): State => {
+    const t = exact ? Math.max(0, top) : clampTop(top);
+    const it = items.find((x) => x.start >= t && x.start < t + ctx.height) ?? items.find((x) => x.start <= t && x.end >= t);
+    return { ...state, top: t, sel: it?.key ?? state.sel };
+  };
+  const cur = selectedIndex(items, state.sel);
+
   if (name === "escape" && state.find) return none({ ...state, find: "" });
   if (name === "q" || name === "escape" || name === "left" || name === "h") return none(state.parent ?? state.list);
   if (name === "o") return { state, effect: { type: "open-web" } };
   if (name === "s") return { state, effect: { type: "open-subagent" } };
   if (name === "t") return none({ ...state, thinking: !state.thinking });
   if (name === "r") return none({ ...state, results: !state.results });
+  if (name === "return" || name === "right" || name === "l") {
+    const it = items[cur];
+    if (!it?.expandable) return none();
+    const open = state.expanded.includes(it.key);
+    return none({ ...state, sel: it.key, expanded: open ? state.expanded.filter((k) => k !== it.key) : [...state.expanded, it.key] });
+  }
   if (seq === "n" || seq === "N") {
     if (!state.find) return { state, effect: { type: "message", text: "Press / to find text first" } };
-    const hit = seq === "n" ? findLine(texts, state.find, state.top + 1, 1) : findLine(texts, state.find, state.top - 1, -1);
-    if (hit === null) return { state, effect: { type: "message", text: `No more matches for "${state.find}"` } };
-    // The match goes on the top line even near the end (blank lines below, as `less` does), so the
-    // next `n` searches from past it instead of finding it again.
-    return none({ ...state, top: hit });
+    const hit = nextMatch(ctx, state.find, state.top, seq === "n" ? 1 : -1);
+    if (!hit) return { state, effect: { type: "message", text: `No more matches for "${state.find}"` } };
+    return none(landOn(state, hit, items));
   }
   if (seq === "]" || seq === "[") {
     const turns = ctx.turns ?? [];
     const next = seq === "]" ? turns.find((t) => t > state.top) : [...turns].reverse().find((t) => t < state.top);
-    return next === undefined ? none() : none({ ...state, top: next });
+    return next === undefined ? none() : none(scrollTo(next, true));
   }
-  if (name === "down" || name === "j" || name === "return") return none(scroll(state.top + 1));
-  if (name === "up" || name === "k") return none(scroll(state.top - 1));
-  if (name === "pagedown" || name === "space") return none(scroll(state.top + page));
-  if (name === "pageup" || name === "b") return none(scroll(state.top - page));
-  if (seq === "G" || name === "end") return none(scroll(last));
-  if (name === "g" || name === "home") return none(scroll(0));
+  if (name === "down" || name === "j") return none(items.length ? select(cur + 1) : scrollTo(state.top + 1));
+  if (name === "up" || name === "k") return none(items.length ? select(cur - 1) : scrollTo(state.top - 1));
+  if (name === "pagedown" || name === "space") return none(scrollTo(state.top + page));
+  if (name === "pageup" || name === "b") return none(scrollTo(state.top - page));
+  if (seq === "G" || name === "end") return none(items.length ? { ...select(items.length - 1), top: last } : scrollTo(last));
+  if (name === "g" || name === "home") return none(items.length ? { ...select(0), top: 0 } : scrollTo(0));
   return none();
+}
+
+/** Go to a find match: its line on top (even near the end, as `less` does, so the next `n` searches
+ * past it), its item selected, and that item opened when the match is in a part it hides. */
+function landOn(state: PagerState, hit: Match, items: Item[]): PagerState {
+  const it = items.find((x) => x.start <= hit.line && x.end >= hit.line);
+  const expanded = hit.open && !state.expanded.includes(hit.open) ? [...state.expanded, hit.open] : state.expanded;
+  return { ...state, top: hit.line, sel: it?.key ?? state.sel, expanded };
 }
 
 /** Keys while typing after `/`: text, backspace, enter to keep, escape to drop. On the list the
@@ -157,11 +240,11 @@ function typing(state: State, key: Key, ctx: Ctx): { state: State; effect: Effec
   }
   if (key.name === "return") {
     if (state.screen === "list") return { state: { ...state, prompt: undefined }, effect: null };
-    const hit = findLine(ctx.texts ?? [], text, state.top, 1) ?? findLine(ctx.texts ?? [], text, 0, 1);
     const next: PagerState = { ...state, prompt: undefined, find: text };
     if (!text) return { state: next, effect: null };
-    if (hit === null) return { state: next, effect: { type: "message", text: `No match for "${text}"` } };
-    return { state: { ...next, top: hit }, effect: null };
+    const hit = nextMatch(ctx, text, state.top, 1, true) ?? nextMatch(ctx, text, 0, 1, true);
+    if (!hit) return { state: next, effect: { type: "message", text: `No match for "${text}"` } };
+    return { state: landOn(next, hit, ctx.items ?? []), effect: null };
   }
   if (key.name === "backspace") return { state: set(text.slice(0, -1)), effect: null };
   const ch = printable(key);
@@ -231,11 +314,15 @@ export function highlight(line: Line, query: string): Line {
   return out;
 }
 
-/** The pager screen: the session title, a window of its transcript (find matches inverted), and a
- * footer with the position, the find being typed, or a message. */
+/** Columns the transcript gives up on the left for the selection bar. */
+export const GUTTER = 2;
+
+/** The pager screen: the session title, a window of its transcript with the selected item barred on
+ * the left and find matches inverted, and a footer with the position, the find being typed, or a
+ * message. */
 export function renderPager(
   title: string,
-  transcript: Line[],
+  t: Transcript,
   s: PagerState,
   width: number,
   height: number,
@@ -244,15 +331,22 @@ export function renderPager(
 ): string[] {
   if (s.help) return renderHelp("pager", width, height, color);
   const body = Math.max(1, height - 2);
+  const sel = t.items[selectedIndex(t.items, s.sel)];
   const lines = [drawLine([[clean(title).replace(/\n/g, " "), "title"]], width, color)];
-  for (let i = s.top; i < s.top + body; i++) lines.push(drawLine(highlight(transcript[i] ?? [], s.find), width, color));
-  const end = Math.min(transcript.length, s.top + body);
-  const pos = transcript.length ? `${s.top + 1}–${end} of ${transcript.length}` : "empty";
-  const shown = [s.thinking && "thinking", s.results && "results"].filter(Boolean).join(", ");
+  for (let i = s.top; i < s.top + body; i++) {
+    const bar: Span = sel && i >= sel.start && i <= sel.end ? ["▌ ", "gutter"] : ["  "];
+    lines.push(drawLine([bar, ...highlight(t.lines[i] ?? [], s.find)], width, color));
+  }
+  const end = Math.min(t.lines.length, s.top + body);
+  const pos = t.lines.length ? `${s.top + 1}–${end} of ${t.lines.length}` : "empty";
+  const shown = [s.thinking && "thinking", s.results && "all tool calls"].filter(Boolean).join(", ");
   if (s.prompt !== undefined) lines.push(promptLine(s.prompt, "enter find · esc cancel", width, color));
   else if (message) lines.push(footer(message, width, color));
   else if (s.find) lines.push(footer(`${pos} · "${s.find}": n next · N previous · esc clear`, width, color));
-  else lines.push(footer(`${pos}${shown ? ` · showing ${shown}` : ""} · [ ] turns · / find · ? help · q back`, width, color));
+  else {
+    const hint = sel?.expandable ? ` · enter ${s.expanded.includes(sel.key) || (sel.kind === "tool" && s.results) ? "collapse" : "expand"}` : "";
+    lines.push(footer(`${pos}${shown ? ` · showing ${shown}` : ""} · ↑↓ item${hint} · [ ] turns · / find · ? help · q back`, width, color));
+  }
   return lines;
 }
 
@@ -268,14 +362,15 @@ const HELP: Record<"list" | "pager", Array<[string, string]>> = {
     ["q  esc", "quit"],
   ],
   pager: [
-    ["↑ ↓  j k", "scroll"],
+    ["↑ ↓  j k", "previous, next message or tool call"],
+    ["enter  →", "expand or collapse it (a tool call's input and output)"],
     ["space b  PgDn PgUp", "page"],
     ["g G  Home End", "top, bottom"],
     ["[ ]", "previous, next turn"],
     ["/  n N", "find text, next, previous (esc clears)"],
     ["t", "show or hide thinking"],
-    ["r", "show or hide tool results"],
-    ["s", "open the subagent of the first [s] call on screen"],
+    ["r", "expand or collapse every tool call"],
+    ["s", "open the selected [s] call's subagent"],
     ["o", "open in the web UI (needs agent-lens serve)"],
     ["y", "copy the session id"],
     ["q  esc  ←", "back"],
@@ -292,61 +387,48 @@ export function renderHelp(screen: "list" | "pager", width: number, height: numb
   return lines;
 }
 
-/** A tool call as one line: its name, markers (subagent, failure, worst finding), and what it acted
- * on last, so a long command is what gets cut. */
-export function toolLine(t: ToolCall): Line {
-  let input: Record<string, unknown> = {};
-  try {
-    input = JSON.parse(t.input_json ?? "{}") ?? {};
-  } catch {
-    /* not JSON: name only */
-  }
-  const what = ["command", "file_path", "notebook_path", "pattern", "url", "query", "skill", "description", "prompt"]
-    .map((k) => input[k])
-    .find((v): v is string => typeof v === "string" && v.length > 0);
-  const name = t.skill_name ? `Skill ${t.skill_name}` : t.agent_type ? `${t.tool_name} → ${t.agent_type}` : t.tool_name;
-  const line: Line = [["⏺ ", "tool"], [name, "toolName"]];
-  if (t.spawned_session_id) line.push([" [s]", "turn"]);
-  if (t.status === "error") line.push([" (failed)", "error"]);
-  const worst = t.findings?.[0];
-  if (worst) line.push([` ● ${worst.severity} ${worst.rule_id}`, severityStyle(worst.severity)]);
-  if (what) line.push([`: ${clean(what).split("\n")[0]}`, "tool"]);
-  return line;
-}
+export { toolLine };
 
-/** Message text as styled lines: headings bold, fenced code in the code colour, prose in `prose`. */
-function messageLines(text: string, width: number, indent: string, prose: Style = "plain"): Line[] {
-  const out: Line[] = [];
-  let inCode = false;
-  for (const raw of text.split("\n")) {
-    const fence = /^\s*```/.test(raw);
-    const style: Style = fence || inCode ? "code" : /^#{1,6}\s/.test(raw) ? "heading" : prose;
-    for (const l of wrap(raw, Math.max(10, width - indent.length))) out.push([[indent], [l, style]]);
-    if (fence) inCode = !inCode;
-  }
-  return out;
-}
+/** Lines a message shows before "… N more lines" until it is expanded. */
+export const MESSAGE_PREVIEW = 12;
+/** Messages longer than this are cut to the preview. */
+export const MESSAGE_LONG = 20;
 
 export interface Transcript {
   lines: Line[];
   /** The line each turn's rule is on, in order. */
   turns: number[];
+  /** The messages, thinking blocks and tool calls, in order, with the lines they span. */
+  items: Item[];
   /** Tool calls that spawned a subagent: the line they are on and the subagent's session id. */
   subagents: Array<{ line: number; sessionId: string }>;
 }
 
+export interface TranscriptOpts {
+  thinking?: boolean;
+  /** Expand every tool call. */
+  results?: boolean;
+  /** Keys of the items opened one by one. */
+  expanded?: string[];
+}
+
 /**
- * A session's transcript as styled, wrapped lines: a short header, then each turn's messages and
- * tool calls, with each speaker labelled once per run. Thinking and tool results are left out, as
- * the web UI collapses them, unless asked for.
+ * A session's transcript as styled lines, `width` columns wide (the pager adds its gutter): a short
+ * header, then each turn's messages, rendered as markdown, and tool calls, each speaker labelled once
+ * per run. Thinking is left out unless asked for; tool calls are one line until expanded, and long
+ * messages show their first lines.
  */
-export function transcriptLines(d: SessionDetail, width: number, show: { thinking?: boolean; results?: boolean } = {}): Transcript {
+export function transcriptLines(d: SessionDetail, width: number, show: TranscriptOpts = {}): Transcript {
   const s = d.session;
   const out: Line[] = [];
   const turns: number[] = [];
+  const items: Item[] = [];
   const subagents: Transcript["subagents"] = [];
+  const open = new Set(show.expanded ?? []);
+  const inner = Math.max(10, width - 2);
   const meta = `${fmtWhen(s.started_at)} · ${s.project_path ?? ""} · ${d.turns.length} turns · ${fmtUsd(s.cost)}`;
   for (const l of wrap(meta, width)) out.push([[l, "dim"]]);
+  const indent = (l: Line): Line => [["  "], ...l];
   let turn: string | null = null;
   let n = 0;
   let speaker: string | null = null; // who the lines under the last label belong to
@@ -367,15 +449,30 @@ export function transcriptLines(d: SessionDetail, width: number, show: { thinkin
       out.push([], [[`${who}:`, who === "you" ? "you" : who === "claude" ? "claude" : "bold"]]);
       speaker = who;
     }
-    if (thinking) out.push([["  "], ["thinking", "thinking"]], ...messageLines(thinking, width, "  │ ", "thinking"));
-    if (text) out.push(...messageLines(text, width, "  "));
-    for (const t of e.toolCalls) {
-      if (t.spawned_session_id) subagents.push({ line: out.length, sessionId: t.spawned_session_id });
-      out.push([["  "], ...toolLine(t)]);
-      if (show.results && t.result_summary) {
-        for (const l of wrap(clean(t.result_summary), Math.max(10, width - 6))) out.push([["    │ ", "tool"], [l, "dim"]]);
-      }
+    if (thinking) {
+      const start = out.length;
+      out.push(indent([["thinking", "thinking"]]), ...markdownLines(thinking, inner - 2, "thinking").map((l) => indent([["│ ", "dim"], ...l])));
+      items.push({ key: `think:${e.uuid}`, kind: "thinking", start, end: out.length - 1, expandable: false, search: thinking.toLowerCase() });
     }
+    if (text) {
+      const key = `msg:${e.uuid}`;
+      const all = markdownLines(text, inner);
+      const cut = all.length > MESSAGE_LONG && !open.has(key);
+      const start = out.length;
+      out.push(...(cut ? all.slice(0, MESSAGE_PREVIEW) : all).map(indent));
+      if (cut) out.push(indent([[`… ${all.length - MESSAGE_PREVIEW} more lines · enter shows all`, "dim"]]));
+      items.push({ key, kind: "message", start, end: out.length - 1, expandable: all.length > MESSAGE_LONG, search: text.toLowerCase() });
+    }
+    e.toolCalls.forEach((t, i) => {
+      const key = `tool:${t.id ?? `${e.uuid}:${i}`}`;
+      const expanded = !!show.results || open.has(key);
+      const start = out.length;
+      if (t.spawned_session_id) subagents.push({ line: start, sessionId: t.spawned_session_id });
+      out.push(indent(toolLine(t, expanded)));
+      if (expanded) out.push(...toolDetailLines(t, inner - 2).map((l) => indent([["  "], ...l])));
+      const search = [t.tool_name, t.input_json, t.full_result?.text ?? t.result_summary].filter(Boolean).join("\n").toLowerCase();
+      items.push({ key, kind: "tool", start, end: out.length - 1, expandable: true, subagent: t.spawned_session_id ?? undefined, search });
+    });
   }
-  return { lines: out, turns, subagents };
+  return { lines: out, turns, items, subagents };
 }

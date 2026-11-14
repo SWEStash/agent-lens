@@ -8,7 +8,8 @@ import { charWidth } from "./text.js";
 export type Style =
   | "plain" | "dim" | "bold" | "title" | "you" | "claude" | "tool" | "toolName" | "error"
   | "turn" | "code" | "heading" | "project" | "cost"
-  | "critical" | "high" | "medium" | "low" | "info" | "thinking" | "match";
+  | "critical" | "high" | "medium" | "low" | "info" | "thinking" | "match"
+  | "italic" | "link" | "added" | "removed" | "gutter";
 
 export type Span = [text: string, style?: Style];
 export type Line = Span[];
@@ -35,6 +36,11 @@ const SGR: Record<Style, string> = {
   info: "2",
   thinking: "2;3",
   match: "7",
+  italic: "3",
+  link: "4;34",
+  added: "32",
+  removed: "31",
+  gutter: "1;36",
 };
 
 /** Styles drawn even without colour: inversion carries meaning (a find match), not decoration. */

@@ -385,10 +385,17 @@ agent-lens browse --pr 57
 - In the list: `↑`/`↓` (or `j`/`k`) to move, `Space`/`b` to page, `/` to filter by title, project or
   id as you type, `Enter` to read.
 - In a transcript:
-  - `[` / `]` jump to the previous or next turn.
-  - `/` finds text, highlighted; `n` and `N` go to the next and previous match.
-  - `t` shows thinking and `r` shows tool results, which are hidden by default.
-  - `s` opens the subagent of the first `[s]` tool call on screen, and `q` comes back to the parent.
+  - `↑`/`↓` (or `j`/`k`) move from message to message and tool call to tool call; a bar marks the
+    selected one. `Enter` expands it: a tool call shows its full input (a Bash command, an edit's
+    removed and added lines, a file written) and its output, and a long message shows all its lines.
+  - `Space`/`b` page, and `[` / `]` jump to the previous or next turn.
+  - `/` finds text, highlighted; `n` and `N` go to the next and previous match. It also finds text
+    inside a collapsed tool call or a long message, and opens it.
+  - `t` shows thinking and `r` expands every tool call.
+  - `s` opens the selected `[s]` call's subagent (or the first one on screen), and `q` comes back to
+    the parent.
+- Messages are rendered from their markdown: headings, bold and italic, inline and fenced code,
+  lists, quotes, links and tables, without the `#`, `*` and backticks.
 - Anywhere: `o` opens the session in the web UI, `y` copies its id to the clipboard (in terminals that
   allow OSC 52), `?` lists every key, and `q` goes back or quits.
 - A failed tool call is marked, and one that raised a finding shows its worst one, coloured by
