@@ -49,6 +49,23 @@ const SGR: Record<Style, string> = {
 /** Styles drawn even without colour: inversion carries meaning (a find match), not decoration. */
 const ALWAYS: ReadonlySet<Style> = new Set(["match"]);
 
+export type Theme = "dark" | "light";
+
+/**
+ * Whether the terminal's background is dark or light, so the selection tint stays subtle on either.
+ * `AGENT_LENS_THEME` decides when set; else `COLORFGBG` (set by many terminals as `fg;bg`), where
+ * background 7 or 9–15 is light. Dark when neither says.
+ */
+export function detectTheme(env: NodeJS.ProcessEnv = process.env): Theme {
+  const forced = env.AGENT_LENS_THEME?.toLowerCase();
+  if (forced === "light" || forced === "dark") return forced;
+  const bg = Number(env.COLORFGBG?.split(";").pop());
+  return Number.isInteger(bg) && (bg === 7 || (bg >= 9 && bg <= 15)) ? "light" : "dark";
+}
+
+/** The background of the selected row or item: a grey one step off the terminal's own (256-colour). */
+export const SELECTED_BG: Record<Theme, string> = { dark: "48;5;236", light: "48;5;254" };
+
 /** Whether to colour: an interactive terminal, unless NO_COLOR is set (https://no-color.org). */
 export function useColor(env: NodeJS.ProcessEnv = process.env, isTTY = !!process.stdout.isTTY): boolean {
   return isTTY && !env.NO_COLOR;

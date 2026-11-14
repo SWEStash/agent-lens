@@ -9,7 +9,7 @@ import { resolveServerConfig, UserError } from "@agent-lens/core";
 import { getSession, listSessions } from "@agent-lens/server";
 import type { SessionDetail } from "@agent-lens/contracts";
 import { openStore, parseSince, resolveProject, type ReportOpts } from "../report.js";
-import { useColor } from "./style.js";
+import { detectTheme, useColor } from "./style.js";
 import {
   filterSessions,
   GUTTER,
@@ -100,6 +100,7 @@ export async function runBrowse(o: BrowseOpts): Promise<void> {
   }
   const { host, port } = resolveServerConfig();
   const color = useColor();
+  const theme = detectTheme();
 
   let state: State = { screen: "list", cursor: 0, top: 0, filter: "" };
   let message = "";
@@ -135,14 +136,14 @@ export async function runBrowse(o: BrowseOpts): Promise<void> {
     const { width, height } = size();
     let screen: string[];
     if (state.screen === "list") {
-      screen = renderList(visible(), state, width, height, message, color, all.length);
+      screen = renderList(visible(), state, width, height, message, color, all.length, theme);
     } else {
       const t = transcript(state);
       // A toggle, an expansion or a resize moves lines around; keep the selected item on screen.
       const it = t.items[selectedIndex(t.items, state.sel)];
       if (it && (it.end < state.top || it.start >= state.top + body())) state = { ...state, top: Math.max(0, it.start) };
       if (state.top > Math.max(0, t.lines.length - 1)) state = { ...state, top: Math.max(0, t.lines.length - body()) };
-      screen = renderPager(titleOf(state), t, state, width, height, message, color);
+      screen = renderPager(titleOf(state), t, state, width, height, message, color, theme);
     }
     stdout.write("\x1b[H" + screen.join("\r\n"));
   };

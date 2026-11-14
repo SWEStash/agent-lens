@@ -10,7 +10,7 @@ import { basename } from "node:path";
 import type { SessionDetail, SessionSummary } from "@agent-lens/contracts";
 import { fmtUsd, fmtWhen } from "../report.js";
 import { markdownLines } from "./markdown.js";
-import { drawLine, severityStyle, type Line, type Span, type Style } from "./style.js";
+import { drawLine, SELECTED_BG, severityStyle, type Line, type Span, type Style, type Theme } from "./style.js";
 import { clean, wrap } from "./text.js";
 import { toolDetailLines, toolLine } from "./tools.js";
 
@@ -282,6 +282,7 @@ export function renderList(
   message = "",
   color = false,
   total = sessions.length,
+  theme: Theme = "dark",
 ): string[] {
   if (s.help) return renderHelp("list", width, height, color);
   const body = Math.max(1, height - 2);
@@ -296,7 +297,8 @@ export function renderList(
   for (let i = s.top; i < s.top + body; i++) {
     const x = sessions[i];
     if (!x) lines.push(" ".repeat(width));
-    else lines.push(drawLine(listRow(x, width), width, color, i === s.cursor ? "7" : ""));
+    // The selected row is tinted when colour is on, inverted without it.
+    else lines.push(drawLine(listRow(x, width), width, color, i === s.cursor ? (color ? SELECTED_BG[theme] : "7") : ""));
   }
   if (s.prompt !== undefined) lines.push(promptLine(s.prompt, "enter keep · esc clear", width, color));
   else lines.push(footer(message || "↑↓ move · enter read · / filter · o web UI · y copy id · ? help · q quit", width, color));
@@ -324,9 +326,9 @@ export function highlight(line: Line, query: string): Line {
 /** Columns the transcript gives up on the left for the selection bar. */
 export const GUTTER = 2;
 
-/** The pager screen: the session title, a window of its transcript with the selected item barred on
- * the left and find matches inverted, and a footer with the position, the find being typed, or a
- * message. */
+/** The pager screen: the session title, a window of its transcript with the selected item tinted
+ * (or, without colour, barred on the left) and find matches inverted, and a footer with the
+ * position, the find being typed, or a message. */
 export function renderPager(
   title: string,
   t: Transcript,
@@ -335,14 +337,17 @@ export function renderPager(
   height: number,
   message = "",
   color = false,
+  theme: Theme = "dark",
 ): string[] {
   if (s.help) return renderHelp("pager", width, height, color);
   const body = Math.max(1, height - 2);
   const sel = t.items[selectedIndex(t.items, s.sel)];
   const lines = [drawLine([[clean(title).replace(/\n/g, " "), "title"]], width, color)];
   for (let i = s.top; i < s.top + body; i++) {
-    const bar: Span = sel && i >= sel.start && i <= sel.end ? ["▌ ", "gutter"] : ["  "];
-    lines.push(drawLine([bar, ...highlight(t.lines[i] ?? [], s.find)], width, color));
+    const picked = !!sel && i >= sel.start && i <= sel.end;
+    const line = highlight(t.lines[i] ?? [], s.find);
+    if (picked && color) lines.push(drawLine([["  "], ...line], width, color, SELECTED_BG[theme]));
+    else lines.push(drawLine([picked ? ["▌ ", "gutter"] : ["  "], ...line], width, color));
   }
   const end = Math.min(t.lines.length, s.top + body);
   const pos = t.lines.length ? `${s.top + 1}–${end} of ${t.lines.length}` : "empty";

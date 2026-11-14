@@ -22,7 +22,7 @@ import {
   type PagerState,
   type State,
 } from "../src/browse/view.js";
-import { drawLine, useColor, type Line } from "../src/browse/style.js";
+import { detectTheme, drawLine, SELECTED_BG, useColor, type Line } from "../src/browse/style.js";
 import { osc52, sessionUrl, subagentAt } from "../src/browse/index.js";
 
 const plain = (s: string) => s.replace(/\x1b\[[0-9;]*m/g, "");
@@ -444,6 +444,31 @@ describe("style", () => {
     expect(out.startsWith("\x1b[7m")).toBe(true);
     expect(out).toContain("\x1b[0m\x1b[7m");
     expect(drawLine([["a"]], 2, false, "7")).toBe("\x1b[7ma \x1b[0m");
+  });
+
+  it("detects a light or dark background, and lets AGENT_LENS_THEME decide", () => {
+    expect(detectTheme({})).toBe("dark");
+    expect(detectTheme({ COLORFGBG: "15;0" })).toBe("dark");
+    expect(detectTheme({ COLORFGBG: "0;15" })).toBe("light");
+    expect(detectTheme({ COLORFGBG: "0;default;7" })).toBe("light");
+    expect(detectTheme({ COLORFGBG: "0;15", AGENT_LENS_THEME: "dark" })).toBe("dark");
+    expect(detectTheme({ AGENT_LENS_THEME: "LIGHT" })).toBe("light");
+    expect(detectTheme({ AGENT_LENS_THEME: "neon" })).toBe("dark");
+  });
+
+  it("tints the selected item and row with colour on, and bars or inverts them without", () => {
+    const lines: Line[] = Array.from({ length: 4 }, (_, i) => [[`line ${i}`]]);
+    const t = { lines, turns: [], subagents: [], items: [{ key: "a", kind: "message" as const, start: 1, end: 2, expandable: false, search: "" }] };
+    const lightTint = `\x1b[${SELECTED_BG.light}m`;
+    const tinted = renderPager("T", t, pagerOf({ sel: "a" }), 30, 6, "", true, "light");
+    expect(tinted[2].startsWith(lightTint)).toBe(true);
+    expect(tinted[3].startsWith(lightTint)).toBe(true);
+    expect(tinted[1]).not.toContain(lightTint);
+    expect(plain(tinted[2])).toBe("  line 1".padEnd(30)); // no bar when tinted
+    expect(plain(renderPager("T", t, pagerOf({ sel: "a" }), 30, 6)[2])).toBe("▌ line 1".padEnd(30));
+    const rows = [session("a", "first"), session("b", "second")];
+    expect(renderList(rows, LIST, 80, 5, "", true, 2, "dark")[1].startsWith(`\x1b[${SELECTED_BG.dark}m`)).toBe(true);
+    expect(renderList(rows, LIST, 80, 5)[1].startsWith("\x1b[7m")).toBe(true);
   });
 
   it("colours a TTY unless NO_COLOR is set", () => {

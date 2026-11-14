@@ -402,7 +402,11 @@ agent-lens browse --pr 57
   allow OSC 52), `?` lists every key, and `q` goes back or quits.
 - A failed tool call is marked, and one that raised a finding shows its worst one, coloured by
   severity. In the list, `●` marks a session with findings.
-- Colours use your terminal's own palette. Set `NO_COLOR` to turn them off.
+- The selected row or item is tinted a shade off the terminal's background. Agent Lens reads
+  whether that background is light or dark from `COLORFGBG`; set `AGENT_LENS_THEME=light` or
+  `dark` if it guesses wrong.
+- Colours use your terminal's own palette. Set `NO_COLOR` to turn them off; the selected row is
+  then inverted, and a `▌` bar marks the selected item.
 - `o` needs `agent-lens serve` running; if it isn't, the footer says so and shows the URL.
 - It needs an interactive terminal. In scripts, use `sessions --json`.
 
@@ -459,6 +463,7 @@ beats the config file. The others are read from the environment only.
 | `AGENT_LENS_HOST` | config `server.host`, else `127.0.0.1` | Bind address (`--host` overrides) |
 | `AGENT_LENS_ALLOW_NONLOCAL` | unset | Set to `1` to allow a non-loopback bind address |
 | `AGENT_LENS_VERSIONS_KEEP_DAYS` | `90` | Retention window for `agent-lens prune` |
+| `AGENT_LENS_THEME` | from `COLORFGBG`, else `dark` | `light` or `dark`: the selection tint in `agent-lens browse` |
 | `CLAUDE_DIR` | unset | Legacy: collect a single source from this directory |
 | `AGENT_LENS_LABEL` | `default` | Legacy: the label for `CLAUDE_DIR` |
 
