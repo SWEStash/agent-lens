@@ -148,8 +148,8 @@ subscription quota ([ADR-028](decisions/ADR-028-model-pricing.md)).
 
 ## Collect
 
-Copies each source's transcripts into `<dataDir>/archive/<label>/` before Claude Code prunes them
-(after a rolling 30-day window). It never deletes and never copies credentials. When a transcript
+Copies each source's transcripts into `<dataDir>/archive/<label>/` before Claude Code deletes them
+(see [Claude Code's deletion window](#claude-codes-deletion-window)). It never deletes and never copies credentials. When a transcript
 shrinks or diverges, the previous version is kept under `.versions/`. Transcripts that Claude Code
 sets aside itself (`<session>.orphaned-…jsonl`, `<session>.jsonl.superseded-…`) are copied too, and
 ingest reads them as earlier history of `<session>`.
@@ -174,6 +174,24 @@ agent-lens watch --poll            # polling, for network filesystems
 
 The service is a systemd user timer on Linux, a launchd agent on macOS, and Task Scheduler tasks on
 Windows. A lock file (`<dataDir>/.agent-lens.lock`) keeps scheduled and `watch` runs from overlapping.
+Collect at least as often as Claude Code's deletion window, below. The default schedule does, as
+long as it keeps running.
+
+### Claude Code's deletion window
+
+Claude Code deletes transcripts older than its `cleanupPeriodDays` setting: 30 days by default, 1 at
+the least. Agent Lens keeps only what `collect` copied before then. If no collect runs within that
+window, the transcripts that age out in that gap are gone for good, along with anything written to
+them since the last collect. So the longest gap between two collects has to be shorter than the
+window.
+
+- Each source has its own window: `cleanupPeriodDays` in that source's `<configDir>/settings.json`,
+  such as `~/.claude/settings.json`. Check it there; `"cleanupPeriodDays": 30` is the same as leaving
+  it out.
+- Claude Code runs the deletion itself. After a break longer than the window, with the machine off
+  or the collector not running, run `agent-lens collect` before you start Claude Code again.
+- A shorter window leaves less margin. With `cleanupPeriodDays` set to 7, a collector that stops for
+  a week can lose sessions.
 
 ## Ingest
 
