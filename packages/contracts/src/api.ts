@@ -386,6 +386,24 @@ export interface FileChangeRow {
   timestamp: string | null;
 }
 
+/** A pull/merge request the session touched, as the agent recorded it (ADR-041). */
+export interface SessionPr {
+  /** `owner/repo`; GitLab: the full group path. Pseudonymized in the redacted corpus. */
+  repository: string;
+  number: number;
+  /** http(s) only; null when no record carried one (the redacted corpus never does). */
+  url: string | null;
+  first_seen_at: string | null;
+  /** The session created it, rather than only linking, editing or closing it. */
+  opened_here: boolean;
+}
+
+/** A branch the session pushed (ADR-041). */
+export interface SessionBranch {
+  branch: string;
+  first_pushed_at: string | null;
+}
+
 /** The session row on a detail payload: the stored `sessions` columns (shared SessionRow) plus the
  *  fields getSession computes/joins on — project path, cost/token roll-ups, and the error split. */
 export interface SessionDetailData extends SessionRow {
@@ -421,6 +439,10 @@ export interface SessionDetail {
   /** File modifications derived from this session's file-tool calls and Bash shell writes (ADR-022),
    * chronological — for the "Files changed" header roll-up. Empty on a pre-v14 DB. */
   file_changes: FileChangeRow[];
+  /** PRs this session opened or touched (ADR-041), oldest sighting first. Empty on a pre-v18 DB. */
+  prs: SessionPr[];
+  /** Branches this session pushed (ADR-041), first push first. Empty on a pre-v18 DB. */
+  branches: SessionBranch[];
 }
 
 /** Where a session's transcript lives in the Agent Lens archive — served by

@@ -19,7 +19,7 @@
  * Bump SCHEMA_VERSION on any DDL change.
  */
 
-export const SCHEMA_VERSION = 17;
+export const SCHEMA_VERSION = 18;
 
 /**
  * Refresh the query planner's statistics. Run by ingest after every write pass. Without
@@ -122,6 +122,28 @@ CREATE TABLE IF NOT EXISTS session_continuations (
   PRIMARY KEY (session_id, origin_session_id, evidence)
 );
 CREATE INDEX IF NOT EXISTS idx_session_continuations_origin ON session_continuations(origin_session_id);
+
+-- Pull/merge requests and pushed branches a session touched (ADR-041), read by the adapter from what
+-- the agent recorded. Upserted at ingest, never deleted per file: a session's mirror and .versions/
+-- copies add to the same set. No foreign keys, like session_continuations.
+CREATE TABLE IF NOT EXISTS session_prs (
+  session_id    TEXT NOT NULL,
+  repository    TEXT NOT NULL,              -- owner/repo (GitLab: the full group path)
+  number        INTEGER NOT NULL,
+  url           TEXT,                       -- http(s) only; NULL when no record carried one
+  first_seen_at TEXT,
+  opened_here   INTEGER NOT NULL DEFAULT 0, -- 1 when this session created it
+  PRIMARY KEY (session_id, repository, number)
+);
+CREATE INDEX IF NOT EXISTS idx_session_prs_number ON session_prs(number);
+CREATE INDEX IF NOT EXISTS idx_session_prs_url ON session_prs(url);
+
+CREATE TABLE IF NOT EXISTS session_branches (
+  session_id      TEXT NOT NULL,
+  branch          TEXT NOT NULL,
+  first_pushed_at TEXT,
+  PRIMARY KEY (session_id, branch)
+);
 
 -- A turn = user prompt -> assistant completion within a session. ------------
 CREATE TABLE IF NOT EXISTS turns (

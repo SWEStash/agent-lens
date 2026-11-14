@@ -44,7 +44,7 @@ const SESSION_SUMMARY_KEYS = [
 
 const SESSION_DETAIL_KEYS = [
   "session", "turns", "events", "classification", "parent", "continued_from", "continued_in", "children", "workflow_runs", "findings",
-  "file_changes",
+  "file_changes", "prs", "branches",
 ];
 
 // `usage` is deliberately OMITTED rather than null on an event with no token_usage row (most user and

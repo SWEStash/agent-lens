@@ -9,6 +9,7 @@ import { ExportMenu } from "./ExportMenu";
 import { ClassificationBadge } from "./Classification";
 import { SecurityBanner } from "./Findings";
 import { FilesChangedPanel } from "./FilesChanged";
+import { GitLinks } from "./GitLinks";
 
 export function SessionHeader({ d }: { d: SessionDetail }) {
   const s = d.session;
@@ -46,6 +47,8 @@ export function SessionHeader({ d }: { d: SessionDetail }) {
             ))}
           </span>
         ) : null}
+        {/* Optional: an older server sends neither field (ADR-041). */}
+        <GitLinks prs={d.prs} branches={d.branches} />
         <span>{d.turns.length} turns</span>
         <span>{s.event_count} events</span>
         <span data-tip={tokenSplitTitle(s.token_split)}>{fmtTokens(s.tokens)} tok</span>

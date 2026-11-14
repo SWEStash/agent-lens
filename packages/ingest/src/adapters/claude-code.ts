@@ -4,8 +4,10 @@ import type {
   ParsedLine,
   SourceAdapter,
   SourceFile,
+  GitRefs,
   PermissionDecision,
   PermissionVia,
+  PrRef,
   ToolCallRow,
   ToolResultPatch,
 } from "@agent-lens/core";
@@ -136,6 +138,68 @@ export function parsePermissionDecision(v: unknown): PermissionDecision | null {
   };
 }
 
+/** `owner/repo` and number from a GitHub pull URL or a GitLab merge-request URL (any host, so GitHub
+ * Enterprise and self-hosted GitLab work too). Null for anything that is not an http(s) PR URL — the
+ * URL is rendered as a link, so nothing else may pass. */
+export function parsePrUrl(v: unknown): { url: string; repository: string; number: number } | null {
+  const s = asString(v);
+  if (!s) return null;
+  let u: URL;
+  try {
+    u = new URL(s);
+  } catch {
+    return null;
+  }
+  if (u.protocol !== "https:" && u.protocol !== "http:") return null;
+  const m = /^\/(.+?)\/(?:pull|-\/merge_requests)\/(\d+)\/?$/.exec(u.pathname);
+  if (!m) return null;
+  return { url: s, repository: decodeURIComponent(m[1]), number: Number(m[2]) };
+}
+
+function asPrNumber(v: unknown): number | null {
+  return typeof v === "number" && Number.isSafeInteger(v) && v > 0 ? v : null;
+}
+
+/** A PR reference from its parts. The URL wins for repository and number when it parses, since
+ * the two come from the same record. Null when there is no usable number. */
+function prRef(number: unknown, url: unknown, repository: unknown, action: unknown, at: string | null): PrRef | null {
+  const fromUrl = parsePrUrl(url);
+  const n = fromUrl?.number ?? asPrNumber(number);
+  if (n == null) return null;
+  return {
+    repository: fromUrl?.repository ?? asString(repository),
+    number: n,
+    url: fromUrl?.url ?? null,
+    action: asString(action),
+    at,
+  };
+}
+
+/**
+ * Git activity on a line (ADR-041): a `pr-link` record, or the `gitOperation` Claude Code attaches to
+ * a Bash result (a push's branch, a PR it created or changed). Null when there is none.
+ */
+export function parseGitRefs(r: Record<string, any>): GitRefs | null {
+  const at = asString(r.timestamp);
+  const prs: PrRef[] = [];
+  const pushed: { branch: string; at: string | null }[] = [];
+  if (r.type === "pr-link") {
+    const ref = prRef(r.prNumber, r.prUrl, r.prRepository, null, at);
+    if (ref) prs.push(ref);
+  }
+  const op = r.toolUseResult?.gitOperation;
+  if (op && typeof op === "object") {
+    if (op.pr && typeof op.pr === "object") {
+      const ref = prRef(op.pr.number, op.pr.url, null, op.pr.action, at);
+      if (ref) prs.push(ref);
+    }
+    const branch = op.push && typeof op.push === "object" ? asString(op.push.branch) : null;
+    if (branch) pushed.push({ branch, at });
+  }
+  if (!prs.length && !pushed.length) return null;
+  return { ...(prs.length ? { prs } : {}), ...(pushed.length ? { pushed_branches: pushed } : {}) };
+}
+
 function asInt(v: unknown): number {
   return typeof v === "number" && Number.isFinite(v) ? Math.trunc(v) : 0;
 }
@@ -251,8 +315,10 @@ export class ClaudeCodeAdapter implements SourceAdapter {
     if (r.type === "ai-title" && asString(r.aiTitle)) meta.ai_title = r.aiTitle;
     if (r.type === "continued-in" && asString(r.continuedInSessionId)) meta.continued_in_session_id = r.continuedInSessionId;
 
-    // Lines without a uuid (pointer/meta lines) contribute metadata only.
-    if (!asString(r.uuid)) return { meta };
+    const gitRefs = parseGitRefs(r);
+
+    // Lines without a uuid (pointer/meta lines, `pr-link`) contribute metadata and git refs only.
+    if (!asString(r.uuid)) return gitRefs ? { meta, gitRefs } : { meta };
 
     const message = (r.message ?? {}) as Record<string, any>;
     const queued = queuedPromptText(r.attachment);
@@ -261,6 +327,7 @@ export class ClaudeCodeAdapter implements SourceAdapter {
 
     const result: ParsedLine = {
       meta,
+      ...(gitRefs ? { gitRefs } : {}),
       event: {
         uuid: r.uuid,
         session_id: file.sessionId,

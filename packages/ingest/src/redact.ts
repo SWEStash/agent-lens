@@ -6,7 +6,8 @@
  *
  *   PRESERVE (so metrics are identical to the raw input): uuid, parentUuid, type, timestamp,
  *   isSidechain, isMeta, agentId (opaque hex, drives subagent linkage), message.{role,id,model,
- *   usage,stop_reason}, toolUseResult numeric/linkage fields, permissionDecision codes, tool_use
+ *   usage,stop_reason}, toolUseResult numeric/linkage fields, permissionDecision codes, PR numbers
+ *   and actions (repository and branch pseudonymized, URLs dropped — ADR-041), tool_use
  *   {id,name}, and — crucially — the *line count* of Edit/Write payloads + the *distinctness &
  *   extension* of file paths (these feed the LoC / files complexity sub-scores).
  *
@@ -35,6 +36,19 @@ const PLACEHOLDER = "[redacted]";
  * a command, a path or prose even if Claude Code starts writing one there. */
 const PERMISSION_KEYS = ["decision", "source", "reasonType", "ruleSource", "grantScope", "reasonCode", "classifierCategory", "circuitBreaker"];
 const PERMISSION_CODE = /^[A-Za-z0-9_:+.-]{1,80}$/;
+
+/** The parts of a Bash result's `gitOperation` the corpus keeps (ADR-041): a PR's number and action
+ * code, and a pushed branch's pseudonym. URLs, commit hashes and everything else are dropped. */
+function gitOperationCodes(v: unknown, branch: (b: string) => string): Record<string, unknown> | null {
+  if (!v || typeof v !== "object") return null;
+  const op = v as Record<string, any>;
+  const out: Record<string, unknown> = {};
+  if (op.pr && typeof op.pr === "object" && typeof op.pr.number === "number") {
+    out.pr = { number: op.pr.number, ...(typeof op.pr.action === "string" && PERMISSION_CODE.test(op.pr.action) ? { action: op.pr.action } : {}) };
+  }
+  if (op.push && typeof op.push === "object" && typeof op.push.branch === "string") out.push = { branch: branch(op.push.branch) };
+  return Object.keys(out).length ? out : null;
+}
 
 function permissionCodes(pd: Record<string, unknown>): Record<string, string> | null {
   const out: Record<string, string> = {};
@@ -190,10 +204,18 @@ export class Redactor {
     if (typeof rec.gitBranch === "string") out.gitBranch = this.ident("branch", rec.gitBranch);
     if (typeof rec.slug === "string") out.slug = this.ident("slug", rec.slug);
     if (rec.type === "ai-title") out.aiTitle = "Redacted session";
+    // PR links (ADR-041): the number survives, the repository is pseudonymized, the URL is dropped
+    // (the leak scan rejects any URL, and the repository comes from the pseudonym instead).
+    if (rec.type === "pr-link") {
+      if (typeof rec.prNumber === "number") out.prNumber = rec.prNumber;
+      if (typeof rec.prRepository === "string") out.prRepository = this.ident("repo", rec.prRepository);
+    }
     if (rec.toolUseResult && typeof rec.toolUseResult === "object") {
       const t = rec.toolUseResult as Record<string, unknown>;
       const tu: Record<string, unknown> = {};
       for (const k of ["status", "agentType", "agentId", "resolvedModel", "totalDurationMs", "totalTokens", "totalToolUseCount"]) if (k in t) tu[k] = t[k];
+      const op = gitOperationCodes(t.gitOperation, (b) => this.ident("branch", b));
+      if (op) tu.gitOperation = op;
       out.toolUseResult = tu;
     }
     if (rec.permissionDecision && typeof rec.permissionDecision === "object") {

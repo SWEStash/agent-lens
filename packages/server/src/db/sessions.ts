@@ -1,7 +1,7 @@
 /** The paged, filtered, sortable session list (GET /api/sessions). */
 import { activePricing, canonicalModel } from "@agent-lens/core";
 import type { SessionSummary, SessionsPage, SessionSort } from "@agent-lens/contracts";
-import { canonModelSql, queryAll, queryGet, orderBy, pushDateRange, placeholders, whereClause, enumValues, type SortDir } from "../sql-util.js";
+import { canonModelSql, tableExists, queryAll, queryGet, orderBy, pushDateRange, placeholders, whereClause, enumValues, type SortDir } from "../sql-util.js";
 import type { CountRow, SessionListRow } from "../rows.js";
 import { usageBySession, splitOf, tokensOf, costOf, unpricedOf } from "../usage.js";
 import { type DB, SESSION_MODELS_SQL, displayTitle, severityRankSql } from "./common.js";
@@ -25,6 +25,8 @@ export interface SessionFilters {
   severity?: string[];
   /** Keep only sessions that have ≥1 errored tool call of one of these error types. */
   errorType?: string[];
+  /** Keep only sessions that recorded this PR (ADR-041): a number, `owner/repo#n`, or the PR's URL. */
+  pr?: string;
   /** Column to sort the whole filtered list by (before pagination). Defaults to "started". */
   sort?: SessionSort;
   dir?: SortDir;
@@ -97,8 +99,23 @@ function ratesCte(): { sql: string; params: unknown[] } {
   };
 }
 
-/** The WHERE clause (over `sessions s`) and its bound params for the session list's filters. */
-function sessionListWhere(f: SessionFilters): { sql: string; params: unknown[] } {
+/** A `?pr=` value as a predicate on `session_prs p`. A bare number can match the same number in
+ * several repositories, which is what a user typing "#42" means. Null for a value that is none of
+ * the accepted forms, so it matches nothing rather than everything. */
+export function prFilter(v: string): { sql: string; params: unknown[] } | null {
+  const s = v.trim();
+  if (/^https?:\/\//i.test(s)) {
+    const url = s.replace(/\/+$/, "");
+    return { sql: "(p.url = ? OR p.url = ?)", params: [url, url + "/"] };
+  }
+  const m = /^(?:(.+)#)?#?(\d+)$/.exec(s);
+  if (!m) return null;
+  return m[1] ? { sql: "(p.repository = ? AND p.number = ?)", params: [m[1], Number(m[2])] } : { sql: "p.number = ?", params: [Number(m[2])] };
+}
+
+/** The WHERE clause (over `sessions s`) and its bound params for the session list's filters.
+ * `hasPrs` is false on a pre-v18 read-only DB, where a `pr` filter matches nothing. */
+function sessionListWhere(f: SessionFilters, hasPrs: boolean): { sql: string; params: unknown[] } {
   const where: string[] = [];
   const params: unknown[] = [];
   if (f.source) (where.push("s.source_id = ?"), params.push(f.source));
@@ -115,6 +132,11 @@ function sessionListWhere(f: SessionFilters): { sql: string; params: unknown[] }
   if (f.errorType?.length) {
     where.push(`EXISTS (SELECT 1 FROM tool_calls tc WHERE tc.session_id = s.id AND tc.error_type IN (${placeholders(f.errorType)}))`);
     params.push(...f.errorType);
+  }
+  if (f.pr) {
+    const pr = hasPrs ? prFilter(f.pr) : null;
+    if (pr) (where.push(`EXISTS (SELECT 1 FROM session_prs p WHERE p.session_id = s.id AND ${pr.sql})`), params.push(...pr.params));
+    else where.push("0");
   }
   if (f.model) {
     // Family match, not exact (ADR-037): canonical on both sides, so picking a model admits every
@@ -139,7 +161,7 @@ function sessionListWhere(f: SessionFilters): { sql: string; params: unknown[] }
 }
 
 export function listSessions(db: DB, f: SessionFilters): SessionsPage {
-  const { sql: whereSql, params } = sessionListWhere(f);
+  const { sql: whereSql, params } = sessionListWhere(f, !f.pr || tableExists(db, "session_prs"));
 
   const total = queryGet<CountRow>(db, `SELECT COUNT(*) n FROM sessions s ${whereSql}`, ...params)!.n;
 

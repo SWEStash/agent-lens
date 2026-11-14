@@ -134,6 +134,8 @@ erDiagram
   sessions ||--o| classifications : "category/complexity"
   tool_calls ||--o{ findings : "security findings"
   sessions }o--o| sessions : "parent (subagent linkage)"
+  sessions ||--o{ session_prs : "PRs touched"
+  sessions ||--o{ session_branches : "branches pushed"
 ```
 
 ## 4. Decisions index
@@ -180,3 +182,4 @@ erDiagram
 | [038](decisions/ADR-038-shared-session-history.md) | History shared between sessions has one owner, and the copy links to it |
 | [039](decisions/ADR-039-otel-is-enrichment-not-source.md) | OpenTelemetry is an optional enrichment signal; the transcript archive stays the system of record |
 | [040](decisions/ADR-040-tool-call-permission-decisions.md) | Each tool call records how it was approved, as an agent-agnostic channel; missing means not recorded |
+| [041](decisions/ADR-041-session-pr-and-branch-links.md) | Sessions record the PRs and branches they touched, read from the transcript; keyed by repository and number |

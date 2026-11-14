@@ -42,8 +42,8 @@ echo "=== scenario assertions (DB) ==="
 ok 1 "$(echo "$INGEST" | grep -oE 'malformed=[0-9]+' | head -1 | cut -d= -f2)" "malformed line counted"
 # multi-source: three labeled sources, no cross-source bleed.
 ok 3 "$(q "SELECT COUNT(DISTINCT source_id) FROM sessions;")" "multi-source (3 sources)"
-ok 50 "$(q "SELECT COUNT(*) FROM sessions;")" "total sessions"
-ok 41 "$(q "SELECT COUNT(*) FROM sessions WHERE is_sidechain=0;")" "main sessions"
+ok 52 "$(q "SELECT COUNT(*) FROM sessions;")" "total sessions"
+ok 43 "$(q "SELECT COUNT(*) FROM sessions WHERE is_sidechain=0;")" "main sessions"
 # sidecars: the workflow result (phase graph), per-subagent meta (type/description badges), and a
 # spilled full tool output ("Show full result") — the three sidecar ingest paths, exercised end-to-end.
 ok 1 "$(q "SELECT COUNT(*) FROM workflow_results WHERE run_id='wf_demo000abc';")" "workflow result sidecar ingested"
@@ -81,11 +81,14 @@ BD="$(curl -sf "http://127.0.0.1:$PORT/api/dashboard/breakdowns")"
 SK="$(curl -sf "http://127.0.0.1:$PORT/api/skills")"
 SKD="$(curl -sf "http://127.0.0.1:$PORT/api/skills/api-design")"
 REJ="$(curl -sf "http://127.0.0.1:$PORT/api/security/findings?approval=rejected&limit=100")"
+PRS="$(curl -sf "http://127.0.0.1:$PORT/api/sessions?kind=main&pr=https%3A%2F%2Fgithub.com%2Fdemo%2Facme-api%2Fpull%2F57")"
+PRD="$(curl -sf "http://127.0.0.1:$PORT/api/sessions/sc-pr-links-0014")"
 node -e '
   const ov = JSON.parse(process.argv[1]), bd = JSON.parse(process.argv[2]);
   const sk = JSON.parse(process.argv[3]), skd = JSON.parse(process.argv[4]), rej = JSON.parse(process.argv[5]);
+  const prs = JSON.parse(process.argv[6]), prd = JSON.parse(process.argv[7]);
   let bad = 0; const ok = (c, n) => { console.log(`  ${c ? "PASS" : "FAIL"}  ${n}`); if (!c) bad++; };
-  ok(ov.sessions === 50, "overview serves 50 sessions");
+  ok(ov.sessions === 52, "overview serves 52 sessions");
   ok(bd.by_source.length === 3, "breakdowns: 3 sources");
   ok(ov.cost > 0 && ov.tokens.cache_read > 0, "overview: cost + cache_read > 0");
   ok(bd.subagent_fanout.total_spawns >= 1, "breakdowns: subagent fan-out present");
@@ -93,8 +96,10 @@ node -e '
   ok(sk.length === 1 && sk[0].name === "api-design" && sk[0].version_count === 2, "skills list: api-design with 2 versions");
   ok(skd.versions.length === 2 && skd.versions.every(v => v.body && v.summary === "API Design"), "skill detail: 2 versions with bodies");
   ok(rej.findings.length >= 2 && rej.findings.every(f => f.permission && f.permission.decision === "reject"), "findings: approval=rejected lists only rejected calls (ADR-040)");
+  ok(prs.total === 2 && prs.sessions.every(s => s.id.startsWith("sc-pr-links-")), "sessions: pr=<url> finds both sessions that touched PR 57 (ADR-041)");
+  ok(prd.prs.length === 1 && prd.prs[0].opened_here === true && prd.branches[0]?.branch === "feat/webhook-retries", "session detail: lists its PR and pushed branch (ADR-041)");
   process.exit(bad ? 1 : 0);
-' "$OV" "$BD" "$SK" "$SKD" "$REJ" || fails=$((fails + 1))
+' "$OV" "$BD" "$SK" "$SKD" "$REJ" "$PRS" "$PRD" || fails=$((fails + 1))
 
 echo
 [ "$fails" -eq 0 ] && { echo "=== sandbox e2e PASS (all scenarios) ==="; } || { echo "=== sandbox e2e FAILED: $fails check(s) ==="; exit 1; }

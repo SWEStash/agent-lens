@@ -209,6 +209,7 @@ export async function createApp(db: DB, opts: CreateAppOpts = {}): Promise<Fasti
       kind: q.kind === "main" || q.kind === "subagent" ? q.kind : undefined,
       severity: q.severity ? q.severity.split(",").filter(Boolean) : undefined,
       errorType: q.error_type ? q.error_type.split(",").filter(Boolean) : undefined,
+      pr: q.pr || undefined,
       sort: pickEnum(SESSION_SORTS, q.sort),
       dir: pickEnum(SORT_DIRS, q.dir),
       limit: pageLimit(q.limit, 50, 200),

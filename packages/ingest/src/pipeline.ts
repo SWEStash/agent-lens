@@ -5,7 +5,7 @@
  */
 import { createHash } from "node:crypto";
 import type { StatementSync } from "node:sqlite";
-import { packRaw, runNamed, transaction, type SourceAdapter, type SourceFile, type TurnRow } from "@agent-lens/core";
+import { packRaw, runNamed, transaction, type PrRef, type SourceAdapter, type SourceFile, type TurnRow } from "@agent-lens/core";
 import { isCommandResultCarrier } from "@agent-lens/transcript-format";
 import { projectId, sessionCwd } from "./canonicalize.js";
 import { type DB } from "./db.js";
@@ -129,6 +129,7 @@ export function pruneExcluded(db: DB, excludedPaths: string[]): number {
       db.exec("DELETE FROM classifications WHERE scope = 'session' AND target_id IN (SELECT id FROM _prune)");
       db.exec("UPDATE sessions SET continued_from_session_id = NULL WHERE continued_from_session_id IN (SELECT id FROM _prune)");
       db.exec("DELETE FROM session_continuations WHERE session_id IN (SELECT id FROM _prune) OR origin_session_id IN (SELECT id FROM _prune)");
+      for (const t of ["session_prs", "session_branches"]) db.exec(`DELETE FROM ${t} WHERE session_id IN (SELECT id FROM _prune)`);
       db.exec("DELETE FROM sessions WHERE id IN (SELECT id FROM _prune)");
       const delState = db.prepare("DELETE FROM ingest_state WHERE file_path = ?");
       for (const f of files) delState.run(f);
@@ -537,6 +538,7 @@ function pruneOrphans(db: DB, scope: Scope, incremental: boolean): void {
   db.exec("DELETE FROM classifications WHERE scope = 'session' AND target_id NOT IN (SELECT id FROM sessions)");
   db.exec("DELETE FROM findings WHERE session_id NOT IN (SELECT id FROM sessions)");
   db.exec("DELETE FROM file_changes WHERE session_id NOT IN (SELECT id FROM sessions)");
+  for (const t of ["session_prs", "session_branches"]) db.exec(`DELETE FROM ${t} WHERE session_id NOT IN (SELECT id FROM sessions)`);
   // Sweep skill versions no longer referenced by any tool_call. Full path only: an incremental run
   // only re-derives dirty sessions, so a version could still be referenced by a non-dirty session.
   if (!incremental) {
@@ -604,6 +606,9 @@ export interface IngestStatements {
   upsertSession: Stmt;
   eventOwner: Stmt;
   upsertContinuation: Stmt;
+  upsertPr: Stmt;
+  prRepoByNumber: Stmt;
+  upsertBranch: Stmt;
 }
 
 export function prepareStatements(db: DB): IngestStatements {
@@ -671,6 +676,24 @@ export function prepareStatements(db: DB): IngestStatements {
        VALUES (@session_id, @origin_session_id, @evidence, @shared_events)
        ON CONFLICT(session_id, origin_session_id, evidence) DO UPDATE SET shared_events = excluded.shared_events`,
     ),
+    // A session's refs accumulate across its mirror and .versions/ copies, so these only ever add:
+    // the earliest sighting, any URL, and "opened here" once seen are kept whatever the file order.
+    upsertPr: db.prepare(
+      `INSERT INTO session_prs (session_id, repository, number, url, first_seen_at, opened_here)
+       VALUES (@session_id, @repository, @number, @url, @at, @opened_here)
+       ON CONFLICT(session_id, repository, number) DO UPDATE SET
+         url = COALESCE(url, excluded.url),
+         first_seen_at = CASE WHEN first_seen_at IS NULL OR excluded.first_seen_at < first_seen_at
+                              THEN excluded.first_seen_at ELSE first_seen_at END,
+         opened_here = MAX(opened_here, excluded.opened_here)`,
+    ),
+    prRepoByNumber: db.prepare("SELECT repository FROM session_prs WHERE session_id = ? AND number = ?"),
+    upsertBranch: db.prepare(
+      `INSERT INTO session_branches (session_id, branch, first_pushed_at) VALUES (@session_id, @branch, @at)
+       ON CONFLICT(session_id, branch) DO UPDATE SET
+         first_pushed_at = CASE WHEN first_pushed_at IS NULL OR excluded.first_pushed_at < first_pushed_at
+                                THEN excluded.first_pushed_at ELSE first_pushed_at END`,
+    ),
     upsertSession: db.prepare(
       `INSERT INTO sessions (id, agent_id, source_id, project_id, slug, ai_title, cli_version, entrypoint, git_branch, spawn_parent_id, workflow_run_id)
        VALUES (@id, @agent_id, @source_id, @project_id, @slug, @ai_title, @cli_version, @entrypoint, @git_branch, @spawn_parent_id, @workflow_run_id)
@@ -686,6 +709,40 @@ export function prepareStatements(db: DB): IngestStatements {
          workflow_run_id = COALESCE(excluded.workflow_run_id, workflow_run_id)`,
     ),
   };
+}
+
+/**
+ * Store the PRs and pushed branches one file recorded for its session (ADR-041). A ref that names
+ * only a number (a `gitOperation` close or merge carries no URL) takes its repository from a ref in
+ * this file with the same number, else from one already stored for the session. It is dropped when
+ * neither exists or the number is ambiguous, rather than guessed.
+ */
+function writeGitRefs(
+  stmts: IngestStatements,
+  sessionId: string,
+  prs: PrRef[],
+  branches: { branch: string; at: string | null }[],
+): void {
+  const reposByNumber = new Map<number, Set<string>>();
+  for (const p of prs) if (p.repository) (reposByNumber.get(p.number) ?? reposByNumber.set(p.number, new Set()).get(p.number)!).add(p.repository);
+  for (const p of prs) {
+    let repository = p.repository;
+    if (!repository) {
+      const local = reposByNumber.get(p.number);
+      const known = local?.size ? [...local] : (stmts.prRepoByNumber.all(sessionId, p.number) as Array<{ repository: string }>).map((r) => r.repository);
+      if (known.length !== 1) continue;
+      repository = known[0];
+    }
+    stmts.upsertPr.run({
+      session_id: sessionId,
+      repository,
+      number: p.number,
+      url: p.url,
+      at: p.at,
+      opened_here: p.action === "created" ? 1 : 0,
+    });
+  }
+  for (const b of branches) stmts.upsertBranch.run({ session_id: sessionId, branch: b.branch, at: b.at });
 }
 
 /**
@@ -715,6 +772,8 @@ export function ingestFile(
   let firstCwd: string | null = null;
   // Lines this file repeats that another session already owns, by owner (ADR-038).
   const sharedWith = new Map<string, number>();
+  const prRefs: PrRef[] = [];
+  const pushedBranches: { branch: string; at: string | null }[] = [];
 
   const tx = transaction(db, () => {
     // Ensure the session row exists before any event references it (FK).
@@ -738,6 +797,7 @@ export function ingestFile(
       // A line already stored (a re-read, a .versions/ copy, or history another session repeats)
       // adds none: its rows were written with the event, under the owner's session id.
       let inserted = false;
+      let foreign = false; // the line is history another session owns
       if (parsed.event) {
         // raw_json is stored gzip-compressed (ADR-011); compress at this single write chokepoint so
         // adapters stay agent-agnostic and emit a plain string.
@@ -753,8 +813,16 @@ export function ingestFile(
           eventsInFile++;
         } else {
           const owner = (stmts.eventOwner.get(parsed.event.uuid) as { session_id: string } | undefined)?.session_id;
-          if (owner && owner !== file.sessionId) sharedWith.set(owner, (sharedWith.get(owner) ?? 0) + 1);
+          if (owner && owner !== file.sessionId) {
+            foreign = true;
+            sharedWith.set(owner, (sharedWith.get(owner) ?? 0) + 1);
+          }
         }
+      }
+      // Git refs on a line another session owns are that session's history, not this one's (ADR-038).
+      if (parsed.gitRefs && !foreign) {
+        if (parsed.gitRefs.prs) prRefs.push(...parsed.gitRefs.prs);
+        if (parsed.gitRefs.pushed_branches) pushedBranches.push(...parsed.gitRefs.pushed_branches);
       }
       if (inserted && parsed.tokenUsage) runNamed(stmts.insTokens, parsed.tokenUsage);
       if (inserted && parsed.toolCalls) for (const tc of parsed.toolCalls) runNamed(stmts.insTool, tc);
@@ -813,6 +881,7 @@ export function ingestFile(
     if (sessionMeta.continued_in_session_id && sessionMeta.continued_in_session_id !== file.sessionId) {
       stmts.upsertContinuation.run({ session_id: sessionMeta.continued_in_session_id, origin_session_id: file.sessionId, evidence: "pointer", shared_events: 0 });
     }
+    writeGitRefs(stmts, file.sessionId, prRefs, pushedBranches);
 
     stmts.setState.run({
       file_path: file.path,

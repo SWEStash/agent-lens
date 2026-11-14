@@ -63,6 +63,8 @@ See the [usage guide](docs/USAGE.md) for every command and option.
 - Full-text search across all sessions, and find-in-session that also reaches collapsed turns and
   hidden tool calls.
 - Markdown export, redacted by default ([ADR-020](docs/decisions/ADR-020-redacted-export.md)).
+- The PRs and branches each session touched, linked both ways: open the PR from the session, or list
+  every session that worked on a PR ([ADR-041](docs/decisions/ADR-041-session-pr-and-branch-links.md)).
 
 **Audit what the agent did**
 - **Security findings**: deterministic rules flag destructive commands, secret access,
