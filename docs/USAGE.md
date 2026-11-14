@@ -382,8 +382,10 @@ agent-lens browse --since 7d
 agent-lens browse --pr 57
 ```
 
-- In the list: `↑`/`↓` (or `j`/`k`) to move, `Space`/`b` to page, `/` to filter by title, project or
-  id as you type, `Enter` to read.
+- The list shows each session's start, title, source, project and turns. `↑`/`↓` (or `j`/`k`) move,
+  `Space`/`b` page, `/` filters by title, project or id as you type, and `Enter` reads.
+- A transcript opens each turn with a band showing its time and duration, and draws each run of
+  messages from you or from Claude as a card with the speaker, the time and a coloured bar.
 - In a transcript:
   - `↑`/`↓` (or `j`/`k`) move from message to message and tool call to tool call; a bar marks the
     selected one. `Enter` expands it: a tool call shows its full input (a Bash command, an edit's

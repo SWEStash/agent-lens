@@ -10,7 +10,7 @@ import { basename } from "node:path";
 import type { SessionDetail, SessionSummary } from "@agent-lens/contracts";
 import { fmtUsd, fmtWhen } from "../report.js";
 import { markdownLines } from "./markdown.js";
-import { drawLine, severityStyle, type Line, type Span } from "./style.js";
+import { drawLine, severityStyle, type Line, type Span, type Style } from "./style.js";
 import { clean, wrap } from "./text.js";
 import { toolDetailLines, toolLine } from "./tools.js";
 
@@ -256,15 +256,19 @@ const footer = (text: string, width: number, color: boolean): string => drawLine
 const promptLine = (text: string, hint: string, width: number, color: boolean): string =>
   drawLine([["/", "bold"], [text], ["█", "dim"], [`   ${hint}`, "dim"]], width, color);
 
-/** One list row: when, a severity marker, title, project, cost. */
+/** One list row: when, a severity marker, title, source, project, turns. */
 function listRow(x: SessionSummary, width: number): Line {
   const marker: Span = x.finding_count ? ["● ", severityStyle(x.worst_severity)] : ["  "];
+  const source = pad(x.source_id ?? "", 10);
   const project = pad(x.project_path ? basename(x.project_path) : "", 16);
-  const cost = fmtUsd(x.cost).padStart(9);
-  const titleW = Math.max(4, width - 16 - 2 - 2 - 2 - 16 - 2 - 9);
+  const turns = String(x.turn_count).padStart(5);
+  const titleW = Math.max(4, width - 16 - 2 - 2 - 2 - 10 - 2 - 16 - 2 - 5);
   const title = clean(x.title ?? x.id).replace(/\n/g, " ");
   const titleSpan = [...title].length > titleW ? [...title].slice(0, titleW - 1).join("") + "…" : pad(title, titleW);
-  return [[fmtWhen(x.started_at).padEnd(16), "dim"], ["  "], marker, [titleSpan, "bold"], ["  "], [project, "project"], ["  "], [cost, "cost"]];
+  return [
+    [fmtWhen(x.started_at).padEnd(16), "dim"], ["  "], marker, [titleSpan, "bold"], ["  "],
+    [source, "dim"], ["  "], [project, "project"], ["  "], [turns, "cost"],
+  ];
 }
 
 /** The list screen: a header, one row per visible session (the selected one inverted), and a footer
@@ -283,8 +287,11 @@ export function renderList(
   const body = Math.max(1, height - 2);
   const count = s.filter ? `${sessions.length} of ${total}` : String(total);
   const head: Line = [[`Sessions (${count})`, "title"]];
+  const columns = `${"source".padEnd(10)}  ${"project".padEnd(16)}  turns`;
   if (s.filter && s.prompt === undefined) head.push([`  filter: ${s.filter}`, "turn"]);
   head.push(["  ● has security findings", "dim"]);
+  const headW = head.reduce((n, [t]) => n + t.length, 0);
+  head.push([" ".repeat(Math.max(2, width - headW - columns.length)) + columns, "dim"]);
   const lines = [drawLine(head, width, color)];
   for (let i = s.top; i < s.top + body; i++) {
     const x = sessions[i];
@@ -425,33 +432,52 @@ export function transcriptLines(d: SessionDetail, width: number, show: Transcrip
   const items: Item[] = [];
   const subagents: Transcript["subagents"] = [];
   const open = new Set(show.expanded ?? []);
-  const inner = Math.max(10, width - 2);
+  const inner = Math.max(10, width - 2); // inside a card's "│ " bar
   const meta = `${fmtWhen(s.started_at)} · ${s.project_path ?? ""} · ${d.turns.length} turns · ${fmtUsd(s.cost)}`;
   for (const l of wrap(meta, width)) out.push([[l, "dim"]]);
-  const indent = (l: Line): Line => [["  "], ...l];
+  const turnRows = new Map(d.turns.map((t) => [t.id, t]));
+
+  // A card is one speaker's run of messages and tool calls: a top border naming the speaker and the
+  // time, a bar in the speaker's colour down the left, and a closing corner.
+  // Held in an object so the helpers below can change it (TypeScript doesn't follow closure writes).
+  const at: { card: { who: string; bar: Style } | null } = { card: null };
+  const inCard = (l: Line): Line => [["│ ", at.card?.bar ?? "dim"], ...l];
+  const close = () => {
+    if (at.card) out.push([["╰─", at.card.bar]]);
+    at.card = null;
+  };
+  const openCard = (who: string, when: string | null) => {
+    close();
+    const bar: Style = who === "you" ? "youBar" : who === "claude" ? "claudeBar" : "dim";
+    const time = fmtClock(when);
+    const fill = Math.max(1, width - 4 - who.length - (time ? time.length + 1 : 0));
+    out.push([["╭─ ", bar], [who, who === "you" ? "you" : who === "claude" ? "claude" : "bold"], [` ${"─".repeat(fill)}`, bar], ...(time ? ([[` ${time}`, "dim"]] as Line) : [])]);
+    at.card = { who, bar };
+  };
+
   let turn: string | null = null;
   let n = 0;
-  let speaker: string | null = null; // who the lines under the last label belong to
   for (const e of d.events) {
     if (e.turn_id && e.turn_id !== turn) {
+      close();
       turn = e.turn_id;
       n++;
-      speaker = null;
+      const row = turnRows.get(e.turn_id);
+      const info = [fmtClock(row?.started_at ?? e.timestamp), row?.duration_ms ? fmtSpan(row.duration_ms) : ""].filter(Boolean).join(" · ");
+      const label = ` Turn ${n}${info ? ` · ${info}` : ""} `;
       out.push([]);
       turns.push(out.length);
-      out.push([[`── turn ${n} ${"─".repeat(Math.max(0, width - 12 - String(n).length))}`, "turn"]]);
+      out.push([["━━", "turn"], [label, "turnTitle"], ["━".repeat(Math.max(2, width - 2 - label.length)), "turn"]]);
+      out.push([]);
     }
     const text = e.text ? clean(e.text).trim() : "";
     const thinking = show.thinking && e.thinking ? clean(e.thinking).trim() : "";
     if (!text && !thinking && !e.toolCalls.length) continue;
     const who = e.role === "user" ? "you" : e.role === "assistant" ? "claude" : e.type;
-    if (who !== speaker) {
-      out.push([], [[`${who}:`, who === "you" ? "you" : who === "claude" ? "claude" : "bold"]]);
-      speaker = who;
-    }
+    if (at.card?.who !== who) openCard(who, e.timestamp);
     if (thinking) {
       const start = out.length;
-      out.push(indent([["thinking", "thinking"]]), ...markdownLines(thinking, inner - 2, "thinking").map((l) => indent([["│ ", "dim"], ...l])));
+      out.push(inCard([["thinking", "thinking"]]), ...markdownLines(thinking, inner - 2, "thinking").map((l) => inCard([["┆ ", "dim"], ...l])));
       items.push({ key: `think:${e.uuid}`, kind: "thinking", start, end: out.length - 1, expandable: false, search: thinking.toLowerCase() });
     }
     if (text) {
@@ -459,8 +485,8 @@ export function transcriptLines(d: SessionDetail, width: number, show: Transcrip
       const all = markdownLines(text, inner);
       const cut = all.length > MESSAGE_LONG && !open.has(key);
       const start = out.length;
-      out.push(...(cut ? all.slice(0, MESSAGE_PREVIEW) : all).map(indent));
-      if (cut) out.push(indent([[`… ${all.length - MESSAGE_PREVIEW} more lines · enter shows all`, "dim"]]));
+      out.push(...(cut ? all.slice(0, MESSAGE_PREVIEW) : all).map(inCard));
+      if (cut) out.push(inCard([[`… ${all.length - MESSAGE_PREVIEW} more lines · enter shows all`, "dim"]]));
       items.push({ key, kind: "message", start, end: out.length - 1, expandable: all.length > MESSAGE_LONG, search: text.toLowerCase() });
     }
     e.toolCalls.forEach((t, i) => {
@@ -468,11 +494,28 @@ export function transcriptLines(d: SessionDetail, width: number, show: Transcrip
       const expanded = !!show.results || open.has(key);
       const start = out.length;
       if (t.spawned_session_id) subagents.push({ line: start, sessionId: t.spawned_session_id });
-      out.push(indent(toolLine(t, expanded)));
-      if (expanded) out.push(...toolDetailLines(t, inner - 2).map((l) => indent([["  "], ...l])));
+      out.push(inCard(toolLine(t, expanded)));
+      if (expanded) out.push(...toolDetailLines(t, inner - 2).map((l) => inCard([["  "], ...l])));
       const search = [t.tool_name, t.input_json, t.full_result?.text ?? t.result_summary].filter(Boolean).join("\n").toLowerCase();
       items.push({ key, kind: "tool", start, end: out.length - 1, expandable: true, subagent: t.spawned_session_id ?? undefined, search });
     });
   }
+  close();
   return { lines: out, turns, items, subagents };
+}
+
+/** `14:05`, in the terminal's local time. */
+function fmtClock(iso: string | null | undefined): string {
+  if (!iso) return "";
+  const d = new Date(iso);
+  return Number.isNaN(d.getTime()) ? "" : `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+}
+
+/** A duration as `45s`, `3m 20s` or `1h 05m`. */
+export function fmtSpan(ms: number): string {
+  const sec = Math.round(ms / 1000);
+  if (sec < 60) return `${sec}s`;
+  const min = Math.floor(sec / 60);
+  if (min < 60) return `${min}m ${String(sec % 60).padStart(2, "0")}s`;
+  return `${Math.floor(min / 60)}h ${String(min % 60).padStart(2, "0")}m`;
 }

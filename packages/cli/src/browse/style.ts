@@ -9,7 +9,7 @@ export type Style =
   | "plain" | "dim" | "bold" | "title" | "you" | "claude" | "tool" | "toolName" | "error"
   | "turn" | "code" | "heading" | "project" | "cost"
   | "critical" | "high" | "medium" | "low" | "info" | "thinking" | "match"
-  | "italic" | "link" | "added" | "removed" | "gutter";
+  | "italic" | "link" | "added" | "removed" | "gutter" | "youBar" | "claudeBar" | "turnTitle";
 
 export type Span = [text: string, style?: Style];
 export type Line = Span[];
@@ -41,6 +41,9 @@ const SGR: Record<Style, string> = {
   added: "32",
   removed: "31",
   gutter: "1;36",
+  youBar: "32",
+  claudeBar: "35",
+  turnTitle: "1;36",
 };
 
 /** Styles drawn even without colour: inversion carries meaning (a find match), not decoration. */

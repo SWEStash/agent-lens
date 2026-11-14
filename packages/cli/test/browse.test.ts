@@ -7,6 +7,7 @@ import type { SessionDetail, SessionSummary, ToolCall } from "@agent-lens/contra
 import { charWidth, clean, displayWidth, fit, wrap } from "../src/browse/text.js";
 import {
   filterSessions,
+  fmtSpan,
   highlight,
   nextMatch,
   reduce,
@@ -248,6 +249,12 @@ describe("helpers", () => {
     expect(subagentAt(t, 31, 10)).toBeNull();
   });
 
+  it("fmtSpan reads as seconds, minutes or hours", () => {
+    expect(fmtSpan(45_000)).toBe("45s");
+    expect(fmtSpan(200_000)).toBe("3m 20s");
+    expect(fmtSpan(3_900_000)).toBe("1h 05m");
+  });
+
   it("osc52 base64-encodes the text for the clipboard", () => {
     expect(osc52("abc")).toBe("\x1b]52;c;YWJj\x07");
   });
@@ -268,6 +275,14 @@ describe("screens", () => {
     expect(out[2].startsWith("\x1b[7m")).toBe(true);
     expect(plain(out[2])).toContain("second");
     expect(plain(out[5])).toContain("? help");
+  });
+
+  it("renderList shows source and turns, not cost", () => {
+    const row = { ...session("a", "first"), source_id: "team-a", turn_count: 7 } as SessionSummary;
+    const out = renderList([row], LIST, 100, 4).map(plain);
+    expect(out[0]).toMatch(/source +project +turns$/);
+    expect(out[1]).toMatch(/team-a +demo +7$/);
+    expect(out.join("\n")).not.toContain("$1.50");
   });
 
   it("renderList shows the filter and the prompt being typed", () => {
@@ -327,14 +342,36 @@ describe("transcriptLines", () => {
 
   it("labels each speaker once per run, puts tool calls under claude, and passes no escapes through", () => {
     const out = transcriptLines(d, 40).lines.map(txt);
-    expect(out.filter((l) => l === "claude:")).toHaveLength(1);
-    expect(out.slice(out.indexOf("claude:"), out.indexOf("claude:") + 3)).toEqual(["claude:", "  ▸ Bash: ls", "  ▸ Task → Explore [s]"]);
+    const head = out.findIndex((l) => l.startsWith("╭─ claude"));
+    expect(out.filter((l) => l.startsWith("╭─ claude"))).toHaveLength(1);
+    expect(out.slice(head + 1, head + 3)).toEqual(["│ ▸ Bash: ls", "│ ▸ Task → Explore [s]"]);
     expect(out.join("\n")).not.toContain("\x1b");
+  });
+
+  it("draws each speaker's run as a card: a titled top border, a bar, and a closing corner", () => {
+    const lines = transcriptLines(d, 40).lines;
+    const out = lines.map(txt);
+    const tops = out.filter((l) => l.startsWith("╭─ "));
+    expect(tops.map((l) => l.split(" ")[1])).toEqual(["you", "claude", "you"]);
+    expect(out.filter((l) => l === "╰─")).toHaveLength(3);
+    for (const l of tops) expect(l.length).toBe(40); // the border fills the width
+    const youTop = lines.find((l) => txt(l).startsWith("╭─ you"))!;
+    expect(youTop[0][1]).toBe("youBar");
+    const claudeBody = lines.find((l) => txt(l) === "│ ▸ Bash: ls")!;
+    expect(claudeBody[0]).toEqual(["│ ", "claudeBar"]);
+  });
+
+  it("opens each turn with a band carrying its time and duration", () => {
+    const timed = { ...d, turns: [{ id: "t0", started_at: "2026-03-10T09:01:00.000Z", duration_ms: 200_000 }, { id: "t1" }] } as unknown as SessionDetail;
+    const t = transcriptLines(timed, 50);
+    const band = txt(t.lines[t.turns[0]]);
+    expect(band).toMatch(/^━━ Turn 1 · \d\d:\d\d · 3m 20s ━+$/);
+    expect(band.length).toBe(50);
   });
 
   it("records where each turn starts and which line spawned a subagent", () => {
     const t = transcriptLines(d, 40);
-    expect(t.turns.map((i) => txt(t.lines[i]).slice(0, 9))).toEqual(["── turn 1", "── turn 2"]);
+    expect(t.turns.map((i) => txt(t.lines[i]).slice(0, 9))).toEqual(["━━ Turn 1", "━━ Turn 2"]);
     expect(t.subagents).toHaveLength(1);
     expect(txt(t.lines[t.subagents[0].line])).toContain("Task → Explore");
     expect(t.subagents[0].sessionId).toBe("agent-9");
@@ -343,10 +380,9 @@ describe("transcriptLines", () => {
   it("renders messages as markdown: a heading without its hashes, code without its fences", () => {
     const lines = transcriptLines(d, 40).lines;
     const styleOf = (text: string) => lines.find((l) => txt(l).trim() === text)?.at(-1)?.[1];
-    expect(styleOf("claude:")).toBe("claude");
-    expect(styleOf("Plan")).toBe("heading");
-    expect(styleOf("│ ls")).toBe("code");
-    expect(styleOf("done")).toBe("plain");
+    expect(styleOf("│ Plan")).toBe("heading");
+    expect(styleOf("│ │ ls")).toBe("code");
+    expect(styleOf("│ done")).toBe("plain");
     expect(lines.map(txt).join("\n")).not.toMatch(/##|```/);
   });
 
@@ -362,10 +398,10 @@ describe("transcriptLines", () => {
   it("expands one tool call by key, or every one with results", () => {
     const key = transcriptLines(d, 40).items.find((i) => i.kind === "tool")!.key;
     const one = transcriptLines(d, 40, { expanded: [key] }).lines.map(txt);
-    expect(one).toContain("  ▾ Bash: ls");
-    expect(one).toContain("    $ ls");
-    expect(one).toContain("    │ a.ts");
-    expect(one).toContain("  ▸ Task → Explore [s]");
+    expect(one).toContain("│ ▾ Bash: ls");
+    expect(one).toContain("│   $ ls");
+    expect(one).toContain("│   │ a.ts");
+    expect(one).toContain("│ ▸ Task → Explore [s]");
   });
 
   it("cuts a long message to its first lines until it is expanded", () => {
@@ -373,9 +409,9 @@ describe("transcriptLines", () => {
     const cut = transcriptLines(long, 40);
     const item = cut.items[0];
     expect(item.expandable).toBe(true);
-    expect(txt(cut.lines[item.end])).toMatch(/^  … \d+ more lines · enter shows all$/);
+    expect(txt(cut.lines[item.end])).toMatch(/^│ … \d+ more lines · enter shows all$/);
     const full = transcriptLines(long, 40, { expanded: [item.key] });
-    expect(full.lines.map(txt)).toContain("  para 29");
+    expect(full.lines.map(txt)).toContain("│ para 29");
     // A find reaches the hidden lines through the item's search text.
     expect(item.search).toContain("para 29");
   });
@@ -386,10 +422,10 @@ describe("transcriptLines", () => {
     expect(hidden).not.toContain("a.ts");
     const shown = transcriptLines(d, 40, { thinking: true, results: true }).lines;
     const text = shown.map(txt);
-    expect(text).toContain("  │ let me look");
-    expect(text).toContain("    │ a.ts");
-    expect(text).toContain("    $ ls");
-    expect(shown.find((l) => txt(l) === "  │ let me look")?.at(-1)?.[1]).toBe("thinking");
+    expect(text).toContain("│ ┆ let me look");
+    expect(text).toContain("│   │ a.ts");
+    expect(text).toContain("│   $ ls");
+    expect(shown.find((l) => txt(l) === "│ ┆ let me look")?.at(-1)?.[1]).toBe("thinking");
   });
 });
 
