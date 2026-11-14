@@ -6,11 +6,8 @@
 import { basename } from "node:path";
 import type { SessionDetail, SessionSummary, ToolCall } from "@agent-lens/contracts";
 import { fmtUsd, fmtWhen } from "../report.js";
-import { clean, fit, wrap } from "./text.js";
-
-const INVERSE = "\x1b[7m";
-const DIM = "\x1b[2m";
-const RESET = "\x1b[0m";
+import { drawLine, severityStyle, type Line, type Span, type Style } from "./style.js";
+import { clean, wrap } from "./text.js";
 
 export interface ListState {
   screen: "list";
@@ -73,42 +70,47 @@ export function reduce(state: State, key: Key, count: number, height: number): {
   return { state, effect: null };
 }
 
+const pad = (s: string, w: number): string => (s.length >= w ? s.slice(0, w) : s + " ".repeat(w - s.length));
+const footer = (text: string, width: number, color: boolean): string => drawLine([[text, "dim"]], width, color);
+
+/** One list row: when, a severity marker, title, project, cost. */
+function listRow(x: SessionSummary, width: number): Line {
+  const marker: Span = x.finding_count ? ["● ", severityStyle(x.worst_severity)] : ["  "];
+  const project = pad(x.project_path ? basename(x.project_path) : "", 16);
+  const cost = fmtUsd(x.cost).padStart(9);
+  const titleW = Math.max(4, width - 16 - 2 - 2 - 2 - 16 - 2 - 9);
+  const title = clean(x.title ?? x.id).replace(/\n/g, " ");
+  const titleSpan = [...title].length > titleW ? [...title].slice(0, titleW - 1).join("") + "…" : pad(title, titleW);
+  return [[fmtWhen(x.started_at).padEnd(16), "dim"], ["  "], marker, [titleSpan, "bold"], ["  "], [project, "project"], ["  "], [cost, "cost"]];
+}
+
 /** The list screen: a header, one row per visible session (the selected one inverted), and a footer
  * with the keys and any message. Exactly `height` lines of exactly `width` columns. */
-export function renderList(sessions: SessionSummary[], s: ListState, width: number, height: number, message = ""): string[] {
+export function renderList(sessions: SessionSummary[], s: ListState, width: number, height: number, message = "", color = false): string[] {
   const body = Math.max(1, height - 2);
-  const row = (x: SessionSummary) => {
-    const when = fmtWhen(x.started_at).padEnd(16);
-    const cost = fmtUsd(x.cost).padStart(9);
-    const project = fit(x.project_path ? basename(x.project_path) : "", 16);
-    const title = fit(clean(x.title ?? x.id).replace(/\n/g, " "), Math.max(4, width - 16 - 9 - 16 - 6));
-    return fit(`${when}  ${title}  ${project}  ${cost}`, width);
-  };
-  const lines = [fit(`Sessions (${sessions.length})`, width)];
+  const lines = [drawLine([[`Sessions (${sessions.length})`, "title"], ["  ● has security findings", "dim"]], width, color)];
   for (let i = s.top; i < s.top + body; i++) {
     const x = sessions[i];
     if (!x) lines.push(" ".repeat(width));
-    else lines.push(i === s.cursor ? INVERSE + row(x) + RESET : row(x));
+    else lines.push(drawLine(listRow(x, width), width, color, i === s.cursor ? "7" : ""));
   }
-  lines.push(footer(message || "↑↓ move · enter read · o open in web UI · q quit", width));
+  lines.push(footer(message || "↑↓ move · enter read · o open in web UI · q quit", width, color));
   return lines;
 }
 
 /** The pager screen: the session title, a window of its transcript, and a footer with the position. */
-export function renderPager(title: string, transcript: string[], s: PagerState, width: number, height: number, message = ""): string[] {
+export function renderPager(title: string, transcript: Line[], s: PagerState, width: number, height: number, message = "", color = false): string[] {
   const body = Math.max(1, height - 2);
-  const lines = [fit(clean(title).replace(/\n/g, " "), width)];
-  for (let i = s.top; i < s.top + body; i++) lines.push(fit(transcript[i] ?? "", width));
+  const lines = [drawLine([[clean(title).replace(/\n/g, " "), "title"]], width, color)];
+  for (let i = s.top; i < s.top + body; i++) lines.push(drawLine(transcript[i] ?? [], width, color));
   const end = Math.min(transcript.length, s.top + body);
   const pos = transcript.length ? `${s.top + 1}–${end} of ${transcript.length}` : "empty";
-  lines.push(footer(message || `${pos} · ↑↓ space b scroll · o open in web UI · q back`, width));
+  lines.push(footer(message || `${pos} · ↑↓ space b scroll · o open in web UI · q back`, width, color));
   return lines;
 }
 
-const footer = (text: string, width: number): string => DIM + fit(text, width) + RESET;
-
-/** One line naming a tool call and what it acted on: `Bash: pnpm test`, `Edit: src/a.ts`. */
-export function toolLine(t: ToolCall): string {
+/** A tool call as one line: its name, a failure mark, its worst finding, and what it acted on. */
+export function toolLine(t: ToolCall): Line {
   let input: Record<string, unknown> = {};
   try {
     input = JSON.parse(t.input_json ?? "{}") ?? {};
@@ -119,38 +121,58 @@ export function toolLine(t: ToolCall): string {
     .map((k) => input[k])
     .find((v): v is string => typeof v === "string" && v.length > 0);
   const name = t.skill_name ? `Skill ${t.skill_name}` : t.agent_type ? `${t.tool_name} → ${t.agent_type}` : t.tool_name;
-  const failed = t.status === "error" ? " (failed)" : "";
-  return `⏺ ${name}${what ? `: ${clean(what).split("\n")[0]}` : ""}${failed}`;
+  // The failure mark and the worst finding come before the input, so a long command is what gets cut.
+  const line: Line = [["⏺ ", "tool"], [name, "toolName"]];
+  if (t.status === "error") line.push([" (failed)", "error"]);
+  const worst = t.findings?.[0];
+  if (worst) line.push([` ● ${worst.severity} ${worst.rule_id}`, severityStyle(worst.severity)]);
+  if (what) line.push([`: ${clean(what).split("\n")[0]}`, "tool"]);
+  return line;
 }
 
-/** A session's transcript as wrapped lines: a short header, then each turn's messages and tool calls.
- * Thinking is left out, as the web UI collapses it. */
-export function transcriptLines(d: SessionDetail, width: number): string[] {
+/** Message text as styled lines: headings bold, fenced code in the code colour, prose plain. */
+function messageLines(text: string, width: number, indent: string): Line[] {
+  const out: Line[] = [];
+  let inCode = false;
+  for (const raw of text.split("\n")) {
+    const fence = /^\s*```/.test(raw);
+    const style: Style = fence || inCode ? "code" : /^#{1,6}\s/.test(raw) ? "heading" : "plain";
+    for (const l of wrap(raw, Math.max(10, width - indent.length))) out.push([[indent], [l, style]]);
+    if (fence) inCode = !inCode;
+  }
+  return out;
+}
+
+/** A session's transcript as styled, wrapped lines: a short header, then each turn's messages and
+ * tool calls, with each speaker labelled once per run. Thinking is left out, as the web UI
+ * collapses it. */
+export function transcriptLines(d: SessionDetail, width: number): Line[] {
   const s = d.session;
-  const out: string[] = [];
-  const add = (text: string, indent = "") => {
-    for (const l of wrap(text, Math.max(10, width - indent.length))) out.push(indent + l);
-  };
-  add(`${fmtWhen(s.started_at)} · ${s.project_path ?? ""} · ${d.turns.length} turns · ${fmtUsd(s.cost)}`);
+  const out: Line[] = [];
+  const meta = `${fmtWhen(s.started_at)} · ${s.project_path ?? ""} · ${d.turns.length} turns · ${fmtUsd(s.cost)}`;
+  for (const l of wrap(meta, width)) out.push([[l, "dim"]]);
   let turn: string | null = null;
   let n = 0;
-  let speaker: string | null = null; // who the lines under the last header belong to
+  let speaker: string | null = null; // who the lines under the last label belong to
   for (const e of d.events) {
     if (e.turn_id && e.turn_id !== turn) {
       turn = e.turn_id;
       n++;
       speaker = null;
-      out.push("", `── turn ${n} ${"─".repeat(Math.max(0, width - 12 - String(n).length))}`);
+      out.push([], [[`── turn ${n} ${"─".repeat(Math.max(0, width - 12 - String(n).length))}`, "turn"]]);
     }
     const text = e.text ? clean(e.text).trim() : "";
     if (!text && !e.toolCalls.length) continue;
     const who = e.role === "user" ? "you" : e.role === "assistant" ? "claude" : e.type;
     if (who !== speaker) {
-      out.push("", `${who}:`);
+      out.push([], [[`${who}:`, who === "you" ? "you" : who === "claude" ? "claude" : "bold"]]);
       speaker = who;
     }
-    if (text) add(text, "  ");
-    for (const t of e.toolCalls) add(toolLine(t), "  ");
+    if (text) out.push(...messageLines(text, width, "  "));
+    for (const t of e.toolCalls) {
+      const [first, ...rest] = toolLine(t);
+      out.push([["  "], first, ...rest]);
+    }
   }
   return out;
 }

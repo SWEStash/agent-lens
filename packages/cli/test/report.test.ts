@@ -131,6 +131,17 @@ describe("report commands over the corpus", () => {
     expect(none.sessions).toBe(0);
   });
 
+  it("export takes a unique id prefix, and names the matches when it is ambiguous", () => {
+    const md = run("export", "sc-appr"); // only sc-approvals-0013 starts with it
+    expect(md.status, md.stderr).toBe(0);
+    expect(md.stdout).toContain("sc-approvals-0013");
+    const many = run("export", "sc-pr-links-");
+    expect(many.status).toBe(1);
+    expect(many.stderr).toMatch(/'sc-pr-links-' matches more than one session \(sc-pr-links-0014, sc-pr-links-0015\)/);
+    expect(run("export", "zz-nothing").stderr).toMatch(/no session matches 'zz-nothing'/);
+    expect(run("export", "sc_pr").stderr).toMatch(/no session matches 'sc_pr'/); // _ is literal, not a wildcard
+  });
+
   it("refuses bad input in one line, and a missing store", () => {
     expect(run("cost", "--today", "--since", "7d").stderr).toMatch(/--today or --since, not both/);
     const r = spawnSync(process.execPath, [CLI, "sessions", "--db", join(dir, "missing.db")], { encoding: "utf8" });

@@ -9,6 +9,7 @@ import { resolveServerConfig, UserError } from "@agent-lens/core";
 import { getSession, listSessions } from "@agent-lens/server";
 import type { SessionDetail } from "@agent-lens/contracts";
 import { openStore, parseSince, resolveProject, type ReportOpts } from "../report.js";
+import { useColor, type Line } from "./style.js";
 import { reduce, renderList, renderPager, transcriptLines, type Key, type State } from "./view.js";
 
 export type BrowseOpts = ReportOpts & { search?: string; pr?: string; kind?: string };
@@ -77,7 +78,8 @@ export async function runBrowse(o: BrowseOpts): Promise<void> {
 
   let state: State = { screen: "list", cursor: 0, top: 0 };
   let detail: SessionDetail | null = null;
-  let lines: string[] = [];
+  let lines: Line[] = [];
+  const color = useColor();
   let message = "";
   const size = () => ({ width: stdout.columns || 80, height: stdout.rows || 24 });
   const body = () => Math.max(1, size().height - 2);
@@ -87,8 +89,8 @@ export async function runBrowse(o: BrowseOpts): Promise<void> {
     const { width, height } = size();
     const screen =
       state.screen === "list"
-        ? renderList(sessions, state, width, height, message)
-        : renderPager(current().title ?? current().id, lines, state, width, height, message);
+        ? renderList(sessions, state, width, height, message, color)
+        : renderPager(current().title ?? current().id, lines, state, width, height, message, color);
     stdout.write("\x1b[H" + screen.join("\r\n"));
   };
 
@@ -129,7 +131,7 @@ export async function runBrowse(o: BrowseOpts): Promise<void> {
         if (effect?.type === "quit") return finish();
         if (effect?.type === "open-pager") {
           detail = getSession(db, current().id);
-          lines = detail ? transcriptLines(detail, size().width) : ["This session is no longer in the store."];
+          lines = detail ? transcriptLines(detail, size().width) : [[["This session is no longer in the store."]]];
           state = { screen: "pager", top: 0, list: state as Extract<State, { screen: "list" }> };
         }
         if (effect?.type === "open-web") {

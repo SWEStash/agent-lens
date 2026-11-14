@@ -385,6 +385,9 @@ agent-lens browse --pr 57
 - Keys: `↑`/`↓` (or `j`/`k`) to move, `Space`/`b` to page, `g`/`G` for the top and bottom, `Enter` to
   read, `o` to open in the web UI, `q` to go back or quit.
 - The pager shows messages and one line per tool call; thinking and tool results stay in the web UI.
+  A tool call that failed is marked, and one that raised a finding shows its worst one, coloured by
+  severity. In the list, `●` marks a session with findings.
+- Colours use your terminal's own palette. Set `NO_COLOR` to turn them off.
 - `o` needs `agent-lens serve` running; if it isn't, the footer says so and shows the URL.
 - It needs an interactive terminal. In scripts, use `sessions --json`.
 
@@ -396,6 +399,9 @@ agent-lens export <sessionId> --out session.md     # to a file
 agent-lens export <sessionId> --level structure    # no message text at all
 agent-lens export <sessionId> --no-redact          # verbatim
 ```
+
+`<sessionId>` can be a unique prefix of the id, such as the 8 characters `agent-lens sessions` prints. A
+prefix that matches more than one session fails and lists the matches.
 
 | Level | What's kept |
 |---|---|

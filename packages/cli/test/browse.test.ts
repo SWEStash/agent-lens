@@ -6,9 +6,11 @@ import { describe, it, expect } from "vitest";
 import type { SessionDetail, SessionSummary, ToolCall } from "@agent-lens/contracts";
 import { charWidth, clean, displayWidth, fit, wrap } from "../src/browse/text.js";
 import { reduce, renderList, renderPager, toolLine, transcriptLines, type ListState, type PagerState } from "../src/browse/view.js";
+import { drawLine, useColor, type Line } from "../src/browse/style.js";
 import { sessionUrl } from "../src/browse/index.js";
 
 const plain = (s: string) => s.replace(/\x1b\[[0-9;]*m/g, "");
+const txt = (l: Line) => l.map(([t]) => t).join("");
 
 describe("text", () => {
   it("clean strips escape sequences and control characters a transcript could carry", () => {
@@ -86,16 +88,21 @@ describe("screens", () => {
   });
 
   it("renderPager shows a window of the transcript and where it is", () => {
-    const lines = Array.from({ length: 30 }, (_, i) => `line ${i + 1}`);
+    const lines: Line[] = Array.from({ length: 30 }, (_, i) => [[`line ${i + 1}`]]);
     const out = renderPager("Title", lines, { screen: "pager", top: 5, list: { screen: "list", cursor: 0, top: 0 } }, 40, 6);
     expect(out.map((l) => plain(l).trimEnd())).toEqual(["Title", "line 6", "line 7", "line 8", "line 9", expect.stringMatching(/^6–9 of 30/)]);
   });
 
-  it("toolLine names the call and what it acted on, marking a failure", () => {
+  it("toolLine names the call, then its failure and worst finding, then what it acted on", () => {
     const t = (o: Partial<ToolCall>): ToolCall => ({ tool_name: "Bash", input_json: null, status: null, skill_name: null, agent_type: null, ...o }) as ToolCall;
-    expect(toolLine(t({ input_json: JSON.stringify({ command: "pnpm test\nmore" }) }))).toBe("⏺ Bash: pnpm test");
-    expect(toolLine(t({ tool_name: "Edit", input_json: JSON.stringify({ file_path: "src/a.ts" }), status: "error" }))).toBe("⏺ Edit: src/a.ts (failed)");
-    expect(toolLine(t({ tool_name: "Task", agent_type: "Explore", input_json: "not json" }))).toBe("⏺ Task → Explore");
+    expect(txt(toolLine(t({ input_json: JSON.stringify({ command: "pnpm test\nmore" }) })))).toBe("⏺ Bash: pnpm test");
+    const failed = toolLine(t({ tool_name: "Edit", input_json: JSON.stringify({ file_path: "src/a.ts" }), status: "error" }));
+    expect(txt(failed)).toBe("⏺ Edit (failed): src/a.ts");
+    expect(failed).toContainEqual([" (failed)", "error"]);
+    expect(txt(toolLine(t({ tool_name: "Task", agent_type: "Explore", input_json: "not json" })))).toBe("⏺ Task → Explore");
+    const flagged = toolLine(t({ input_json: '{"command":"rm -rf /"}', findings: [{ severity: "critical", rule_id: "destructive.rm_rf" }] as never }));
+    expect(txt(flagged)).toBe("⏺ Bash ● critical destructive.rm_rf: rm -rf /");
+    expect(flagged).toContainEqual([" ● critical destructive.rm_rf", "critical"]);
   });
 
   it("transcriptLines labels each speaker once per run, tool calls under claude, and never passes escapes through", () => {
@@ -108,10 +115,48 @@ describe("screens", () => {
         { role: "assistant", type: "assistant", turn_id: "t0", text: "done", toolCalls: [] },
       ],
     } as unknown as SessionDetail;
-    const out = transcriptLines(d, 40);
+    const out = transcriptLines(d, 40).map(txt);
     expect(out.filter((l) => l === "claude:")).toHaveLength(1);
     expect(out.slice(out.indexOf("claude:"))).toEqual(["claude:", "  ⏺ Bash: ls", "  done"]);
     expect(out.join("\n")).not.toContain("\x1b");
+  });
+});
+
+describe("style", () => {
+  it("drawLine colours spans only when colour is on, and measures width without the codes", () => {
+    const line: Line = [["ok ", "plain"], ["failed", "error"]];
+    expect(drawLine(line, 12, false)).toBe("ok failed   ");
+    const coloured = drawLine(line, 12, true);
+    expect(coloured).toBe("ok \x1b[31mfailed\x1b[0m   ");
+    expect(plain(coloured)).toBe("ok failed   ");
+    expect(drawLine(line, 6, false)).toBe("ok fa…");
+  });
+
+  it("keeps the inverted selection under every span, even without colour", () => {
+    const out = drawLine([["a", "error"], ["b"]], 3, true, "7");
+    expect(out.startsWith("\x1b[7m")).toBe(true);
+    expect(out).toContain("\x1b[0m\x1b[7m"); // the span's reset re-applies the inversion
+    expect(drawLine([["a"]], 2, false, "7")).toBe("\x1b[7ma \x1b[0m");
+  });
+
+  it("colours a TTY unless NO_COLOR is set", () => {
+    expect(useColor({}, true)).toBe(true);
+    expect(useColor({ NO_COLOR: "1" }, true)).toBe(false);
+    expect(useColor({}, false)).toBe(false);
+  });
+
+  it("transcript styles headings and fenced code, and labels speakers", () => {
+    const d = {
+      session: { started_at: null, project_path: "/w", cost: 0 },
+      turns: [{}],
+      events: [{ role: "assistant", type: "assistant", turn_id: "t0", text: "## Plan\n```\nls\n```\ndone", toolCalls: [] }],
+    } as unknown as SessionDetail;
+    const out = transcriptLines(d, 40);
+    const styleOf = (text: string) => out.find((l) => txt(l).trim() === text)?.at(-1)?.[1];
+    expect(styleOf("claude:")).toBe("claude");
+    expect(styleOf("## Plan")).toBe("heading");
+    expect(styleOf("ls")).toBe("code");
+    expect(styleOf("done")).toBe("plain");
   });
 });
 

@@ -32,7 +32,7 @@ import { runIngest, runMetrics } from "@agent-lens/ingest";
 import { startServer, openReadonly, renderSessionExport, parseRedactionLevel } from "@agent-lens/server";
 import { runWatch } from "./watch.js";
 import { runBrowse, type BrowseOpts } from "./browse/index.js";
-import { costReport, findingsReport, openStore, printReport, sessionsReport, textOpts, type ReportOpts } from "./report.js";
+import { costReport, findingsReport, openStore, printReport, resolveSessionId, sessionsReport, textOpts, type ReportOpts } from "./report.js";
 
 // `agent-lens --version`. Shared with the server's /api/health so the CLI and the web UI can never
 // disagree about what build this is (ADR-027). A published install reports "0.9.6"; a clone reports
@@ -182,7 +182,7 @@ cli
   .action((opts: BrowseOpts) => runBrowse(textOpts(opts)));
 
 cli
-  .command("export <sessionId>", "Write a session to a shareable Markdown file (redacted by default)")
+  .command("export <sessionId>", "Write a session to a shareable Markdown file (redacted by default); a unique id prefix works")
   .option("--out <file>", "Write to this file (default: stdout)")
   .option("--level <level>", "Redaction level: secrets (default) | structure")
   .option("--no-redact", "Verbatim, UNREDACTED output (opt-out)")
@@ -195,7 +195,8 @@ cli
     }
     // cac sets `redact:false` for --no-redact. Otherwise the level flag (default: secrets).
     const level = opts.redact === false ? "off" : parseRedactionLevel(opts.level);
-    const out = renderSessionExport(openReadonly(dbPath), sessionId, level);
+    const db = openReadonly(dbPath);
+    const out = renderSessionExport(db, resolveSessionId(db, String(sessionId)), level);
     if (!out) {
       console.error(`agent-lens: session not found: ${sessionId}`);
       process.exit(1);
