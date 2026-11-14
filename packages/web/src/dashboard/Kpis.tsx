@@ -1,5 +1,5 @@
 import { Fragment, type ReactNode } from "react";
-import { Link } from "react-router-dom";
+import { Link } from "react-router";
 import type { DashBreakdowns, DashOverview, SecuritySummary, TokenSplit } from "../api";
 import { fmtCost, fmtDuration, fmtPct, fmtTokens, shortModel } from "../format";
 import { Kpi, useChartTokens } from "../charts/theme";

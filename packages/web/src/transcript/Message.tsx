@@ -1,5 +1,5 @@
 import { useContext, useId, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link } from "react-router";
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { FormatContext, SearchContext, WorkflowMapContext } from "./contexts";

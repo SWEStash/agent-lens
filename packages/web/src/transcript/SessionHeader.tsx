@@ -1,6 +1,6 @@
 /** The transcript page header: back link, title, the session's stat row, and the three roll-up panels
  * (classification, security findings, files changed) that sit above the transcript itself. */
-import { Link } from "react-router-dom";
+import { Link } from "react-router";
 import type { SessionDetail } from "../api";
 import { costTitle, fmtCost, fmtDate, fmtDuration, fmtTokens, sessionLabel, tokenSplitTitle } from "../format";
 import { SessionLink } from "../SessionLink";

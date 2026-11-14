@@ -1,5 +1,6 @@
 import { api, SNAPSHOT, type DashOverview, type DashTimeseries, type DashBreakdowns, type DashTime, type DashAudit, type SecuritySummary, type Source } from "./api";
 import { MultiSelect } from "./MultiSelect";
+import { DateInput } from "./DateInput";
 import { shortModel } from "./format";
 import { useAsync, useLookup } from "./useFetch";
 import { useQueryState } from "./useQueryState";
@@ -96,10 +97,10 @@ export default function Dashboard() {
           }
         />
         <label className="ctl">
-          from <input type="date" value={get("from")} onChange={(e) => setParam({ from: e.target.value })} />
+          from <DateInput value={get("from")} onChange={(v) => setParam({ from: v })} />
         </label>
         <label className="ctl">
-          to <input type="date" value={get("to")} onChange={(e) => setParam({ to: e.target.value })} />
+          to <DateInput value={get("to")} onChange={(v) => setParam({ to: v })} />
         </label>
         <select aria-label="Time bucket" value={get("bucket")} onChange={(e) => setParam({ bucket: e.target.value })}>
           <option value="">bucket: auto{ts ? ` (${ts.bucket})` : ""}</option>

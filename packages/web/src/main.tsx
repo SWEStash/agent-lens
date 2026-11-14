@@ -1,6 +1,6 @@
 import React, { lazy } from "react";
 import { createRoot } from "react-dom/client";
-import { BrowserRouter, Routes, Route } from "react-router-dom";
+import { BrowserRouter, Routes, Route } from "react-router";
 import App from "./App";
 import SessionsView from "./SessionsView";
 import { SNAPSHOT } from "./api";
