@@ -39,6 +39,9 @@ importers:
         specifier: ^5.12.8
         version: 5.12.8
     devDependencies:
+      '@agent-lens/contracts':
+        specifier: workspace:*
+        version: link:../contracts
       '@agent-lens/core':
         specifier: workspace:*
         version: link:../core

@@ -4,7 +4,7 @@
  * rather than only through the endpoints that use it. Imports the BUILT dist.
  */
 import { describe, it, expect } from "vitest";
-import { enumValues, orderBy, pageLimit, pageOffset, pickEnum, pushGrouped, SORT_DIRS } from "../dist/sql-util.js";
+import { enumValues, orderBy, pageLimit, pageOffset, pickEnum, pushDateRange, pushGrouped, SORT_DIRS } from "../dist/sql-util.js";
 
 const COLUMNS = { started: "s.started_at", title: "COALESCE(s.ai_title, s.slug)", turns: "s.turn_count" };
 
@@ -102,5 +102,29 @@ describe("enumValues / pickEnum", () => {
     expect(pickEnum(SORT_DIRS, "ASC")).toBeUndefined();
     expect(pickEnum(SORT_DIRS, undefined)).toBeUndefined();
     expect(pickEnum(SORT_DIRS, ["asc"])).toBeUndefined();
+  });
+});
+
+describe("pushDateRange", () => {
+  const build = (from?: string, to?: string) => {
+    const clauses: string[] = [];
+    const params: unknown[] = [];
+    pushDateRange(clauses, params, "s.started_at", from, to);
+    return { clauses, params };
+  };
+
+  it("compares a bare date on the day, inclusive at both ends", () => {
+    expect(build("2026-11-01", "2026-11-13")).toEqual({
+      clauses: ["date(s.started_at) >= date(?)", "date(s.started_at) <= date(?)"],
+      params: ["2026-11-01", "2026-11-13"],
+    });
+  });
+
+  it("compares a full ISO timestamp exactly, for the CLI's relative --since", () => {
+    expect(build("2026-11-12T12:00:00.000Z")).toEqual({ clauses: ["s.started_at >= ?"], params: ["2026-11-12T12:00:00.000Z"] });
+  });
+
+  it("treats anything that isn't a full UTC timestamp as a date", () => {
+    expect(build("2026-11-12T12:00").clauses).toEqual(["date(s.started_at) >= date(?)"]);
   });
 });

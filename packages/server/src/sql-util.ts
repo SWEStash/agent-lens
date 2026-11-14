@@ -44,15 +44,19 @@ export const placeholders = (values: readonly unknown[]): string => values.map((
  * (e.g. `s.started_at`), never user input. Mutates `clauses`/`params` in place.
  */
 export function pushDateRange(clauses: string[], params: unknown[], col: string, from?: string, to?: string): void {
+  // A full ISO timestamp (the CLI's `--since 24h`) compares exactly; stored timestamps are the same
+  // `…T…Z` form, so a string comparison orders them. A bare date keeps the inclusive day compare.
   if (from) {
-    clauses.push(`date(${col}) >= date(?)`);
+    clauses.push(isTimestamp(from) ? `${col} >= ?` : `date(${col}) >= date(?)`);
     params.push(from);
   }
   if (to) {
-    clauses.push(`date(${col}) <= date(?)`);
+    clauses.push(isTimestamp(to) ? `${col} <= ?` : `date(${col}) <= date(?)`);
     params.push(to);
   }
 }
+
+const isTimestamp = (v: string): boolean => /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?Z$/.test(v);
 
 /**
  * The SQL twin of `canonicalModel` — strips a trailing `-YYYYMMDD` so a dated snapshot groups and

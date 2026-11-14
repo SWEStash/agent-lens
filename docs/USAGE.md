@@ -7,6 +7,7 @@ Agent Lens is a three-stage local pipeline: **collect** copies transcripts into 
 - [Configuration](#configuration)
 - [Collect](#collect) · [Ingest](#ingest) · [Serve](#serve)
 - [The web UI](#the-web-ui)
+- [Ask from the terminal](#ask-from-the-terminal)
 - [Export a session](#export-a-session)
 - [Retention](#retention)
 - [Reference](#reference): environment variables, paths, HTTP API
@@ -345,6 +346,33 @@ severity, and anchored to OWASP Agentic and MITRE ATLAS
 - Mark findings safe one by one or in bulk, or mute a rule globally or for one project or source.
   KPIs count only open findings. Triage is stored in `triage.db` and survives `ingest --full`
   ([ADR-018](decisions/ADR-018-security-triage-store.md)).
+
+## Ask from the terminal
+
+Quick answers without opening the browser. They read the store read-only, through the same queries
+as the web UI, so both give the same numbers
+([ADR-042](decisions/ADR-042-cli-read-surface.md)).
+
+```bash
+agent-lens sessions --since 24h              # recent main sessions
+agent-lens sessions --project acme-api --since 7d
+agent-lens sessions --pr 57                  # sessions that touched a PR
+agent-lens findings --since 7d               # open security findings
+agent-lens findings --severity critical --status all
+agent-lens cost --today                      # estimated cost, sessions and tokens
+agent-lens cost --since 2026-11-01 --json    # for scripts
+```
+
+- `--since` takes `24h`, `7d`, `2w`, or a `YYYY-MM-DD` date, and filters on when a session started.
+- `--project` takes a project's path, or its last segment when only one project has it. `--source`
+  takes a source label.
+- `findings` lists open findings, the same as the Security view: dismissed and muted ones are left
+  out when `triage.db` exists. `--status dismissed|muted|all` shows the others.
+- Tables fit the terminal width and have no colour, so they pipe. `--json` prints what the HTTP API
+  returns for the same filters: `/api/sessions`, `/api/security/findings`, or
+  `/api/dashboard/overview`.
+- Cost is the same list-price estimate as the dashboard, and is marked as a lower bound when a model
+  has no price.
 
 ## Export a session
 
