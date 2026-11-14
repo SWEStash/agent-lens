@@ -97,9 +97,19 @@ describe("committed corpus represents every pipeline scenario", () => {
     expect(one("SELECT COUNT(*) n FROM findings WHERE evidence LIKE '%/.claude/%'").n).toBe(0);
   });
 
-  it("session counts: 50 total, 41 main, 9 subagent", () => {
-    expect(one("SELECT COUNT(*) n FROM sessions").n).toBe(50);
-    expect(one("SELECT COUNT(*) n FROM sessions WHERE is_sidechain=0").n).toBe(41);
+  it("PR links (ADR-041): both sessions list PR 57, the opener marked, the merge resolved by number", () => {
+    const prs = (sid: string) => db.prepare(`SELECT repository, number, url, opened_here FROM session_prs WHERE session_id = ?`).all(sid);
+    const url = "https://github.com/demo/acme-api/pull/57";
+    expect(prs("sc-pr-links-0014")).toEqual([{ repository: "demo/acme-api", number: 57, url, opened_here: 1 }]);
+    expect(prs("sc-pr-links-0015")).toEqual([{ repository: "demo/acme-api", number: 57, url, opened_here: 0 }]);
+    expect(one("SELECT COUNT(DISTINCT session_id) n FROM session_branches WHERE branch = 'feat/webhook-retries'").n).toBe(2);
+    // The redacted sources carry no PR URLs: the redactor drops them.
+    expect(one("SELECT COUNT(*) n FROM session_prs WHERE url IS NOT NULL AND session_id NOT LIKE 'sc-%'").n).toBe(0);
+  });
+
+  it("session counts: 52 total, 43 main, 9 subagent", () => {
+    expect(one("SELECT COUNT(*) n FROM sessions").n).toBe(52);
+    expect(one("SELECT COUNT(*) n FROM sessions WHERE is_sidechain=0").n).toBe(43);
     expect(one("SELECT COUNT(*) n FROM sessions WHERE is_sidechain=1").n).toBe(9);
   });
 

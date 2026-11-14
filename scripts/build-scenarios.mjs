@@ -8,7 +8,7 @@
  * Scenarios covered (one source = three claude configs once team-a/team-b are added → multi-source):
  *   plain · subagents (Task, no double-count) · workflow fan-out (linked via subagents/ path) · compaction/meta
  *   · cache tokens · dup-uuid across mirror + .versions (dedup) · continued session (ADR-038) · malformed/partial JSONL
- *   · tool-call approvals (ADR-040)
+ *   · tool-call approvals (ADR-040) · PR and pushed-branch links (ADR-041)
  *
  * Output: test/fixtures/corpus/scenarios/{projects,.versions}/-demo-acme-api/…
  */
@@ -302,6 +302,36 @@ write(`projects/${PROJ}/sc-approvals-0013.jsonl`, [
   ], usage(300, 60, 0, 2800)),
   toolResText("ap13", 13, "tu_ap12", "(no output)"),
   asst("ap14", 14, OPUS, [{ type: "text", text: "Dev environment reset and hotfix pushed. I skipped removing ~/.aws and the piped installer." }], usage(200, 50, 0, 3000)),
+]);
+
+// PR LINKS (ADR-041): one session pushes a branch and opens a PR (the Bash result's `gitOperation`,
+//    then Claude Code's repeated `pr-link` record), and a later session pushes a fix to the same
+//    branch, edits that PR and merges it (a merge records no URL, so it resolves by number). Both
+//    sessions then list the PR, and `/?pr=` finds them together.
+const PR57 = "https://github.com/demo/acme-api/pull/57";
+const prLink = (t, sessionId) => ({ type: "pr-link", sessionId, timestamp: ts(t), prNumber: 57, prUrl: PR57, prRepository: "demo/acme-api" });
+const gitRes = (id, t, tuid, text, gitOperation) =>
+  u(id, { type: "user", timestamp: ts(t), message: { role: "user", content: [{ type: "tool_result", tool_use_id: tuid, content: text }] }, toolUseResult: { stdout: text, stderr: "", interrupted: false, isImage: false, gitOperation } });
+write(`projects/${PROJ}/sc-pr-links-0014.jsonl`, [
+  userMsg("pl1", 1, "Push the webhook retry branch and open a PR", { gitBranch: "feat/webhook-retries" }),
+  asst("pl2", 2, OPUS, [{ type: "tool_use", id: "tu_pl2", name: "Bash", input: { command: "git push -u origin feat/webhook-retries", description: "Push the branch" } }], usage(300, 60, 0, 1500)),
+  gitRes("pl3", 3, "tu_pl2", "branch 'feat/webhook-retries' set up to track 'origin/feat/webhook-retries'.", { push: { branch: "feat/webhook-retries" } }),
+  asst("pl4", 4, OPUS, [{ type: "tool_use", id: "tu_pl4", name: "Bash", input: { command: "gh pr create --fill", description: "Open the PR" } }], usage(300, 60, 0, 1700)),
+  gitRes("pl5", 5, "tu_pl4", PR57, { pr: { number: 57, url: PR57, action: "created" } }),
+  prLink(5, "sc-pr-links-0014"),
+  asst("pl6", 6, OPUS, [{ type: "text", text: "Opened demo/acme-api#57." }], usage(200, 40, 0, 1900)),
+  prLink(6, "sc-pr-links-0014"),
+]);
+write(`projects/${PROJ}/sc-pr-links-0015.jsonl`, [
+  userMsg("pm1", 1, "Address the review on #57 and merge it", { gitBranch: "feat/webhook-retries" }),
+  asst("pm2", 2, OPUS, [{ type: "tool_use", id: "tu_pm2", name: "Bash", input: { command: "git push", description: "Push the review fix" } }], usage(300, 60, 0, 1500)),
+  gitRes("pm3", 3, "tu_pm2", "   7b21e04..a1c3d90  feat/webhook-retries -> feat/webhook-retries", { push: { branch: "feat/webhook-retries" } }),
+  asst("pm4", 4, OPUS, [{ type: "tool_use", id: "tu_pm4", name: "Bash", input: { command: "gh pr edit 57 --add-label ready", description: "Mark the PR ready" } }], usage(300, 60, 0, 1700)),
+  gitRes("pm5", 5, "tu_pm4", PR57, { pr: { number: 57, url: PR57, action: "edited" } }),
+  prLink(5, "sc-pr-links-0015"),
+  asst("pm6", 6, OPUS, [{ type: "tool_use", id: "tu_pm6", name: "Bash", input: { command: "gh pr merge 57 --squash", description: "Merge the PR" } }], usage(300, 60, 0, 1900)),
+  gitRes("pm7", 7, "tu_pm6", "✓ Squashed and merged pull request demo/acme-api#57", { pr: { number: 57, action: "merged" } }),
+  asst("pm8", 8, OPUS, [{ type: "text", text: "Review addressed and #57 merged." }], usage(200, 40, 0, 2100)),
 ]);
 
 // 6) BASH CONSOLE: shows the shell-console transcript renderer — a $ prompt per logical command

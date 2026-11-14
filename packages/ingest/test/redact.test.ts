@@ -235,3 +235,34 @@ describe("redactor — permission decisions (ADR-040)", () => {
     expect(line("accept")).not.toHaveProperty("permissionDecision");
   });
 });
+
+describe("redactor — PR and branch links (ADR-041)", () => {
+  const r = () => new Redactor("fixed-test-salt");
+  const URL = "https://github.com/acme-corp/secret-repo/pull/42";
+
+  it("keeps a pr-link's number, pseudonymizes the repository and drops the URL", () => {
+    const out = r().line({ type: "pr-link", sessionId: "s", timestamp: "t", prNumber: 42, prUrl: URL, prRepository: "acme-corp/secret-repo" }) as any;
+    expect(out.prNumber).toBe(42);
+    expect(out.prRepository).toBe(r().ident("repo", "acme-corp/secret-repo"));
+    expect(out).not.toHaveProperty("prUrl");
+    expect(findLeak(JSON.stringify(out))).toBeNull();
+  });
+
+  it("keeps a gitOperation's PR number and action and a pushed branch's pseudonym, nothing else", () => {
+    const out = r().line({
+      uuid: "u",
+      type: "user",
+      toolUseResult: {
+        stdout: "pushed",
+        gitOperation: { pr: { number: 42, url: URL, action: "created" }, push: { branch: "alice/secret-feature" }, commit: { sha: "abc123", kind: "committed" } },
+      },
+    }) as any;
+    expect(out.toolUseResult.gitOperation).toEqual({ pr: { number: 42, action: "created" }, push: { branch: r().ident("branch", "alice/secret-feature") } });
+    expect(findLeak(JSON.stringify(out))).toBeNull();
+  });
+
+  it("emits no gitOperation when there is nothing to keep", () => {
+    const out = r().line({ uuid: "u", type: "user", toolUseResult: { gitOperation: { commit: { sha: "abc" } } } }) as any;
+    expect(out.toolUseResult).not.toHaveProperty("gitOperation");
+  });
+});

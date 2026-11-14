@@ -232,6 +232,7 @@ data.
 ### Sessions
 
 - **Filter** by source, project, model, kind (main or subagent), security severity, and error type.
+  A session's PR link filters to every session that touched that PR (`?pr=`).
 - **Search** the full text of every transcript. All words must appear. Opening a result carries the
   search into the session.
 - **Sort** by any column, and pick columns with the **Columns** control. Cost is hidden by default.
@@ -244,6 +245,9 @@ data.
   (with the signals behind it), and an error summary such as *3 failed · 1 declined/blocked
   of 40 tool calls*. Failed and declined are told apart by a heuristic
   ([ADR-019](decisions/ADR-019-tool-error-observability.md)).
+- **PRs and branches.** The header links each PR or merge request the session opened or touched
+  and lists the branches it pushed, as Claude Code recorded them. Only PRs handled through Claude
+  Code appear ([ADR-041](decisions/ADR-041-session-pr-and-branch-links.md)).
 - **Tokens per message.** Each message shows the tokens of the response it belongs to, with the full
   split on hover ([ADR-032](decisions/ADR-032-per-event-token-attribution.md)).
 - **Timeline.** A minimap of the session. Bar height is tokens, color is the message type, and a rail
@@ -408,7 +412,7 @@ The server is read-only and bound to `127.0.0.1`. Response types are defined in
 | `GET /api/projects` | Projects with session counts |
 | `GET /api/models` | Model ids, grouped by minor version ([ADR-037](decisions/ADR-037-canonical-model-key.md)), including Claude Code's `<synthetic>` marker |
 | `GET /api/sessions` | Filtered, paginated sessions |
-| `GET /api/sessions/:id` | A session's metadata, turns, events, and classification |
+| `GET /api/sessions/:id` | A session's metadata, turns, events, classification, and the PRs and branches it touched |
 | `GET /api/sessions/:id/export.md` | Markdown export |
 | `GET /api/sessions/:id/location` | The archived `.jsonl` path (not in the static demo) |
 | `GET /api/dashboard/overview` | KPI totals |
@@ -430,8 +434,8 @@ The server is read-only and bound to `127.0.0.1`. Response types are defined in
 Query parameters:
 
 - `/api/sessions`: `source`, `project`, `model`, `kind` (`main` or `subagent`), `q` (full text),
-  `from`, `to` (inclusive dates), `severity` and `error_type` (comma-separated), `sort`, `dir`,
-  `limit` (up to 200), `offset`.
+  `from`, `to` (inclusive dates), `severity` and `error_type` (comma-separated), `pr` (a PR number in
+  any repository, `owner/repo#n`, or the PR's URL), `sort`, `dir`, `limit` (up to 200), `offset`.
 - `/api/dashboard/*`: `source`, `from`, `to`, `models` (comma-separated; leaving it out means every
   model, [ADR-035](decisions/ADR-035-dashboard-model-filter.md)). `timeseries`, `time`, and `audit`
   also take `bucket` (`day`, `week`, or `month`; chosen from the date range otherwise).

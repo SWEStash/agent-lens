@@ -1,7 +1,7 @@
 /** One session's detail payload (GET /api/sessions/:id) and its archive location. */
 import { existsSync } from "node:fs";
 import { severityRank, errorKind, type ToolErrorType } from "@agent-lens/core";
-import type { Finding, FileChangeRow, EventNode, Classification, ClassificationSignals, SessionChild, SessionDetail, SessionDetailData, SessionLink, SessionLocation, SessionParent, SessionRow, TokenSplit, ToolCall, TurnRow, WorkflowRun } from "@agent-lens/contracts";
+import type { Finding, FileChangeRow, EventNode, Classification, ClassificationSignals, SessionBranch, SessionChild, SessionDetail, SessionDetailData, SessionLink, SessionLocation, SessionParent, SessionPr, SessionRow, TokenSplit, ToolCall, TurnRow, WorkflowRun } from "@agent-lens/contracts";
 import { tableExists, queryAll, queryGet, pushGrouped, metaJoin, metaProjection } from "../sql-util.js";
 import type { ToolCallProjection, ClassificationProjectionRow, EventProjectionRow, EventUsageRow, FindingProjectionRow, SessionChildRow, SessionParentRow, ToolResultRow } from "../rows.js";
 import { sessionUsage, usageBySession, splitOf, tokensOf, costOf, unpricedOf } from "../usage.js";
@@ -293,6 +293,26 @@ function loadFileChanges(db: DB, id: string): FileChangeRow[] {
   );
 }
 
+/** The PRs and pushed branches the session recorded (ADR-041). Guarded for a pre-v18 read-only DB. */
+function loadGitLinks(db: DB, id: string): { prs: SessionPr[]; branches: SessionBranch[] } {
+  const prs = tableExists(db, "session_prs")
+    ? queryAll<Omit<SessionPr, "opened_here"> & { opened_here: number }>(
+        db,
+        `SELECT repository, number, url, first_seen_at, opened_here FROM session_prs
+         WHERE session_id = ? ORDER BY first_seen_at, repository, number`,
+        id,
+      ).map((p) => ({ ...p, opened_here: p.opened_here === 1 }))
+    : [];
+  const branches = tableExists(db, "session_branches")
+    ? queryAll<SessionBranch>(
+        db,
+        "SELECT branch, first_pushed_at FROM session_branches WHERE session_id = ? ORDER BY first_pushed_at, branch",
+        id,
+      )
+    : [];
+  return { prs, branches };
+}
+
 /** Roll-ups written onto the session row for the detail header: token split + cost, display title, and
  * the tool-call error counts (computed from the already-fetched toolRows, so no extra query).
  *
@@ -357,6 +377,7 @@ export function getSession(db: DB, id: string): SessionDetail | null {
     workflow_runs: loadWorkflowRuns(db, id),
     findings,
     file_changes: loadFileChanges(db, id),
+    ...loadGitLinks(db, id),
   };
 }
 

@@ -101,6 +101,8 @@ export function resetSchema(db: DB, { bulk = false } = {}): void {
       DROP TABLE IF EXISTS events;
       DROP TABLE IF EXISTS turns;
       DROP TABLE IF EXISTS session_continuations;
+      DROP TABLE IF EXISTS session_prs;
+      DROP TABLE IF EXISTS session_branches;
       DROP TABLE IF EXISTS sessions;
       DROP TABLE IF EXISTS projects;
       DROP TABLE IF EXISTS sources;

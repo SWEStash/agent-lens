@@ -216,7 +216,8 @@ export default function SessionsView() {
     });
   }, []);
 
-  const qs = pick(["source", "project", "model", "q", "sort", "dir", "severity", "error_type"]);
+  const qs = pick(["source", "project", "model", "q", "sort", "dir", "severity", "error_type", "pr"]);
+  const pr = get("pr");
   // Default to main sessions only: subagents share their parent's slug, so listing them flat made
   // one task look like several "replicated" rows. They stay reachable via the filter and are nested
   // under their parent in the session detail view.
@@ -279,6 +280,13 @@ export default function SessionsView() {
           selected={get("error_type").split(",").filter(Boolean)}
           onChange={(next) => setParam({ error_type: next.join(",") })}
         />
+        {/* Set from a session's PR link; there is no picker, so the chip is how to clear it. */}
+        {pr && (
+          <span className="tag filter-chip">
+            PR {pr}{" "}
+            <button type="button" className="linkish" aria-label="Clear PR filter" onClick={() => setParam({ pr: "" })}>✕</button>
+          </span>
+        )}
       </div>
 
       <ErrorAlert error={error} />

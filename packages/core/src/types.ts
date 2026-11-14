@@ -53,6 +53,24 @@ export interface SessionMeta {
   continued_in_session_id?: string;
 }
 
+/** A pull/merge request a line says the session touched (ADR-041). `repository` is `owner/repo`
+ * (GitLab: the full group path); null when the line names only a number, which the pipeline then
+ * resolves against the session's other refs. `url` is only ever an http(s) URL. */
+export interface PrRef {
+  repository: string | null;
+  number: number;
+  url: string | null;
+  /** what the agent did to it (created, edited, closed, merged, commented), when recorded */
+  action: string | null;
+  at: string | null;
+}
+
+/** Git activity a line records. Unlike `meta`, a session accumulates many of these. */
+export interface GitRefs {
+  prs?: PrRef[];
+  pushed_branches?: { branch: string; at: string | null }[];
+}
+
 /** What an adapter produces for a single raw transcript line. */
 export interface ParsedLine {
   event?: EventRow;
@@ -60,6 +78,7 @@ export interface ParsedLine {
   toolCalls?: ToolCallRow[];
   toolResults?: ToolResultPatch[];
   meta?: SessionMeta;
+  gitRefs?: GitRefs;
 }
 
 /** A transcript file discovered in the archive. */

@@ -49,7 +49,8 @@ when parser or classifier logic changes. Run `--full` for that.
   history twice ([ADR-038](decisions/ADR-038-shared-session-history.md)); the rebuild also removes
   rows a v15 store already double-counted. v17 adds how each tool call was approved
   ([ADR-040](decisions/ADR-040-tool-call-permission-decisions.md)); until you rebuild, every call
-  shows "not recorded".
+  shows "not recorded". v18 adds the PRs and pushed branches each session recorded
+  ([ADR-041](decisions/ADR-041-session-pr-and-branch-links.md)); until you rebuild, sessions list none.
 - After a parser or classifier change that should apply to all history. This includes the ADR-019
   fix that maps a tool result's `is_error` to `status='error'`.
 - To recover from any doubt about derived tables. The archive rebuilds a clean store.
