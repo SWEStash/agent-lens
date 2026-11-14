@@ -9,8 +9,20 @@ import { resolveServerConfig, UserError } from "@agent-lens/core";
 import { getSession, listSessions } from "@agent-lens/server";
 import type { SessionDetail } from "@agent-lens/contracts";
 import { openStore, parseSince, resolveProject, type ReportOpts } from "../report.js";
-import { useColor, type Line } from "./style.js";
-import { reduce, renderList, renderPager, transcriptLines, type Key, type State } from "./view.js";
+import { useColor } from "./style.js";
+import {
+  filterSessions,
+  reduce,
+  renderList,
+  renderPager,
+  transcriptLines,
+  type Ctx,
+  type Key,
+  type ListState,
+  type PagerState,
+  type State,
+  type Transcript,
+} from "./view.js";
 
 export type BrowseOpts = ReportOpts & { search?: string; pr?: string; kind?: string };
 
@@ -21,6 +33,16 @@ const LEAVE_ALT = "\x1b[?25h\x1b[?1049l";
 export function sessionUrl(id: string, host: string, port: number): string {
   const h = host === "0.0.0.0" || host === "::" ? "127.0.0.1" : host.includes(":") ? `[${host}]` : host;
   return `http://${h}:${port}/session/${encodeURIComponent(id)}`;
+}
+
+/** The OSC 52 sequence that asks the terminal to put `text` on the clipboard. Terminals that don't
+ * support it ignore it. */
+export const osc52 = (text: string): string => `\x1b]52;c;${Buffer.from(text, "utf8").toString("base64")}\x07`;
+
+/** The subagent to open from a transcript: the first `[s]` call on screen, else the next one below. */
+export function subagentAt(t: Transcript, top: number, height: number): string | null {
+  const onScreen = t.subagents.find((s) => s.line >= top && s.line < top + height);
+  return (onScreen ?? t.subagents.find((s) => s.line >= top))?.sessionId ?? null;
 }
 
 async function serverUp(host: string, port: number): Promise<boolean> {
@@ -60,7 +82,7 @@ export async function runBrowse(o: BrowseOpts): Promise<void> {
   if (!["main", "subagent", "all"].includes(kind)) throw new UserError(`invalid --kind '${kind}' (main, subagent or all)`);
   const limit = o.limit === undefined ? 500 : Number(o.limit);
   if (!Number.isInteger(limit) || limit < 1 || limit > 5000) throw new UserError(`invalid --limit '${o.limit}' (1 to 5000)`);
-  const { sessions } = listSessions(db, {
+  const { sessions: all } = listSessions(db, {
     source: o.source,
     project: resolveProject(db, o.project),
     from: o.since ? parseSince(o.since) : undefined,
@@ -70,27 +92,52 @@ export async function runBrowse(o: BrowseOpts): Promise<void> {
     limit,
     offset: 0,
   });
-  if (!sessions.length) {
+  if (!all.length) {
     stdout.write("No sessions match.\n");
     return;
   }
   const { host, port } = resolveServerConfig();
-
-  let state: State = { screen: "list", cursor: 0, top: 0 };
-  let detail: SessionDetail | null = null;
-  let lines: Line[] = [];
   const color = useColor();
+
+  let state: State = { screen: "list", cursor: 0, top: 0, filter: "" };
   let message = "";
+  const details = new Map<string, SessionDetail | null>();
+  const detailOf = (id: string): SessionDetail | null => {
+    if (!details.has(id)) details.set(id, getSession(db, id));
+    return details.get(id)!;
+  };
+  let cache: { key: string; t: Transcript } | null = null;
   const size = () => ({ width: stdout.columns || 80, height: stdout.rows || 24 });
   const body = () => Math.max(1, size().height - 2);
-  const current = () => sessions[state.screen === "list" ? state.cursor : state.list.cursor];
+  const visible = () => filterSessions(all, state.screen === "list" ? state.filter : state.list.filter);
+  const transcript = (p: PagerState): Transcript => {
+    const key = `${p.sessionId}|${size().width}|${p.thinking}|${p.results}`;
+    if (cache?.key !== key) {
+      const d = detailOf(p.sessionId);
+      cache = {
+        key,
+        t: d ? transcriptLines(d, size().width, p) : { lines: [[["This session is no longer in the store."]]], turns: [], subagents: [] },
+      };
+    }
+    return cache.t;
+  };
+  const currentId = (): string | undefined => (state.screen === "pager" ? state.sessionId : visible()[state.cursor]?.id);
+  const titleOf = (p: PagerState): string => {
+    const t = detailOf(p.sessionId)?.session.title ?? p.sessionId;
+    return p.parent ? `↳ subagent: ${t}` : t;
+  };
 
   const draw = () => {
     const { width, height } = size();
-    const screen =
-      state.screen === "list"
-        ? renderList(sessions, state, width, height, message, color)
-        : renderPager(current().title ?? current().id, lines, state, width, height, message, color);
+    let screen: string[];
+    if (state.screen === "list") {
+      screen = renderList(visible(), state, width, height, message, color, all.length);
+    } else {
+      const t = transcript(state);
+      // A toggle or a resize can shorten the transcript under the current position.
+      if (state.top > Math.max(0, t.lines.length - 1)) state = { ...state, top: Math.max(0, t.lines.length - body()) };
+      screen = renderPager(titleOf(state), t.lines, state, width, height, message, color);
+    }
     stdout.write("\x1b[H" + screen.join("\r\n"));
   };
 
@@ -110,7 +157,7 @@ export async function runBrowse(o: BrowseOpts): Promise<void> {
   await new Promise<void>((resolve, reject) => {
     const finish = (err?: unknown) => {
       stdin.off("keypress", onKey);
-      stdout.off("resize", onResize);
+      stdout.off("resize", draw);
       process.off("SIGTERM", onSignal);
       process.off("SIGHUP", onSignal);
       process.off("exit", restore);
@@ -118,29 +165,55 @@ export async function runBrowse(o: BrowseOpts): Promise<void> {
       if (err) reject(err);
       else resolve();
     };
-    const onResize = () => {
-      if (state.screen === "pager" && detail) lines = transcriptLines(detail, size().width);
-      draw();
+    const ctx = (): Ctx => {
+      if (state.screen === "list") return { count: visible().length, height: body() };
+      const t = transcript(state);
+      return { count: t.lines.length, height: body(), texts: t.lines.map((l) => l.map(([s]) => s).join("")), turns: t.turns };
     };
     const onKey = (_: string, key: Key) => {
       try {
         message = "";
-        const count = state.screen === "list" ? sessions.length : lines.length;
-        const { state: next, effect } = reduce(state, key ?? {}, count, body());
+        const { state: next, effect } = reduce(state, key ?? {}, ctx());
         state = next;
-        if (effect?.type === "quit") return finish();
-        if (effect?.type === "open-pager") {
-          detail = getSession(db, current().id);
-          lines = detail ? transcriptLines(detail, size().width) : [[["This session is no longer in the store."]]];
-          state = { screen: "pager", top: 0, list: state as Extract<State, { screen: "list" }> };
-        }
-        if (effect?.type === "open-web") {
-          const url = sessionUrl(current().id, host, port);
-          void serverUp(host, port).then(async (up) => {
-            if (!up) message = `Start 'agent-lens serve', then press o again: ${url}`;
-            else message = (await openUrl(url)) ? `Opened ${url}` : `Couldn't start a browser; open ${url}`;
-            if (!restored) draw();
-          });
+        switch (effect?.type) {
+          case "quit":
+            return finish();
+          case "message":
+            message = effect.text;
+            break;
+          case "open-pager": {
+            const s = state as ListState;
+            const id = visible()[s.cursor]?.id;
+            if (id) state = { screen: "pager", sessionId: id, top: 0, list: s, find: "", thinking: false, results: false };
+            break;
+          }
+          case "open-subagent": {
+            const p = state as PagerState;
+            const sub = subagentAt(transcript(p), p.top, body());
+            if (!sub) message = "No subagent call on screen; scroll to an [s] line";
+            else if (!detailOf(sub)) message = `Subagent ${sub} isn't in the store`;
+            else state = { ...p, sessionId: sub, top: 0, parent: p, find: "", prompt: undefined };
+            break;
+          }
+          case "copy": {
+            const id = currentId();
+            if (id) {
+              stdout.write(osc52(id));
+              message = `Copied ${id} (if your terminal allows clipboard access)`;
+            }
+            break;
+          }
+          case "open-web": {
+            const id = currentId();
+            if (!id) break;
+            const url = sessionUrl(id, host, port);
+            void serverUp(host, port).then(async (up) => {
+              if (!up) message = `Start 'agent-lens serve', then press o again: ${url}`;
+              else message = (await openUrl(url)) ? `Opened ${url}` : `Couldn't start a browser; open ${url}`;
+              if (!restored) draw();
+            });
+            break;
+          }
         }
         draw();
       } catch (e) {
@@ -155,7 +228,7 @@ export async function runBrowse(o: BrowseOpts): Promise<void> {
     stdin.setRawMode(true);
     stdin.resume();
     stdin.on("keypress", onKey);
-    stdout.on("resize", onResize);
+    stdout.on("resize", draw);
     stdout.write(ENTER_ALT + "\x1b[2J");
     draw();
   });

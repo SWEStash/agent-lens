@@ -382,10 +382,16 @@ agent-lens browse --since 7d
 agent-lens browse --pr 57
 ```
 
-- Keys: `↑`/`↓` (or `j`/`k`) to move, `Space`/`b` to page, `g`/`G` for the top and bottom, `Enter` to
-  read, `o` to open in the web UI, `q` to go back or quit.
-- The pager shows messages and one line per tool call; thinking and tool results stay in the web UI.
-  A tool call that failed is marked, and one that raised a finding shows its worst one, coloured by
+- In the list: `↑`/`↓` (or `j`/`k`) to move, `Space`/`b` to page, `/` to filter by title, project or
+  id as you type, `Enter` to read.
+- In a transcript:
+  - `[` / `]` jump to the previous or next turn.
+  - `/` finds text, highlighted; `n` and `N` go to the next and previous match.
+  - `t` shows thinking and `r` shows tool results, which are hidden by default.
+  - `s` opens the subagent of the first `[s]` tool call on screen, and `q` comes back to the parent.
+- Anywhere: `o` opens the session in the web UI, `y` copies its id to the clipboard (in terminals that
+  allow OSC 52), `?` lists every key, and `q` goes back or quits.
+- A failed tool call is marked, and one that raised a finding shows its worst one, coloured by
   severity. In the list, `●` marks a session with findings.
 - Colours use your terminal's own palette. Set `NO_COLOR` to turn them off.
 - `o` needs `agent-lens serve` running; if it isn't, the footer says so and shows the URL.

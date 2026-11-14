@@ -8,7 +8,7 @@ import { charWidth } from "./text.js";
 export type Style =
   | "plain" | "dim" | "bold" | "title" | "you" | "claude" | "tool" | "toolName" | "error"
   | "turn" | "code" | "heading" | "project" | "cost"
-  | "critical" | "high" | "medium" | "low" | "info";
+  | "critical" | "high" | "medium" | "low" | "info" | "thinking" | "match";
 
 export type Span = [text: string, style?: Style];
 export type Line = Span[];
@@ -33,7 +33,12 @@ const SGR: Record<Style, string> = {
   medium: "33",
   low: "36",
   info: "2",
+  thinking: "2;3",
+  match: "7",
 };
+
+/** Styles drawn even without colour: inversion carries meaning (a find match), not decoration. */
+const ALWAYS: ReadonlySet<Style> = new Set(["match"]);
 
 /** Whether to colour: an interactive terminal, unless NO_COLOR is set (https://no-color.org). */
 export function useColor(env: NodeJS.ProcessEnv = process.env, isTTY = !!process.stdout.isTTY): boolean {
@@ -55,7 +60,8 @@ export function drawLine(line: Line, width: number, color: boolean, base = ""): 
       piece += ch;
       used += cw;
     }
-    if (piece) out += color && SGR[style] ? `\x1b[${SGR[style]}m${piece}\x1b[0m${base ? `\x1b[${base}m` : ""}` : piece;
+    const on = SGR[style] && (color || ALWAYS.has(style));
+    if (piece) out += on ? `\x1b[${SGR[style]}m${piece}\x1b[0m${base ? `\x1b[${base}m` : ""}` : piece;
     if (used >= room) break;
   }
   if (total > width) (out += "…"), used++;
