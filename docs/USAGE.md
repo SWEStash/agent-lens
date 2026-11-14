@@ -374,6 +374,20 @@ agent-lens cost --since 2026-11-01 --json    # for scripts
 - Cost is the same list-price estimate as the dashboard, and is marked as a lower bound when a model
   has no price.
 
+To read a session without the browser, `agent-lens browse` lists sessions, opens a transcript in a
+pager, and hands the session to the web UI on `o`. It takes the same filters as `sessions`.
+
+```bash
+agent-lens browse --since 7d
+agent-lens browse --pr 57
+```
+
+- Keys: `↑`/`↓` (or `j`/`k`) to move, `Space`/`b` to page, `g`/`G` for the top and bottom, `Enter` to
+  read, `o` to open in the web UI, `q` to go back or quit.
+- The pager shows messages and one line per tool call; thinking and tool results stay in the web UI.
+- `o` needs `agent-lens serve` running; if it isn't, the footer says so and shows the URL.
+- It needs an interactive terminal. In scripts, use `sessions --json`.
+
 ## Export a session
 
 ```bash

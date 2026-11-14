@@ -108,6 +108,18 @@ export function resolveProject(db: DB, v: string | undefined): string | undefine
   throw new UserError(`no project '${v}' (use its path, or the last part of it)`);
 }
 
+/**
+ * The text options as strings. cac turns a value that looks like a number into one (`--pr 57` → 57,
+ * `--search 404` → 404), and the queries expect text. Absent stays absent.
+ */
+export function textOpts<T extends object>(o: T): T {
+  const out = { ...o } as Record<string, unknown>;
+  for (const k of ["db", "since", "source", "project", "search", "pr", "kind", "severity", "status"]) {
+    if (out[k] !== undefined && out[k] !== null && typeof out[k] !== "boolean") out[k] = String(out[k]);
+  }
+  return out as T;
+}
+
 export interface ReportOpts {
   db?: string;
   since?: string;

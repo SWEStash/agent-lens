@@ -89,6 +89,13 @@ describe("report commands over the corpus", () => {
     expect(page.sessions[0]).toHaveProperty("token_split");
   });
 
+  it("sessions: a numeric --pr or --search is text, not a crash (cac parses numbers)", () => {
+    const byNumber = run("sessions", "--json", "--pr", "57");
+    expect(byNumber.status, byNumber.stderr).toBe(0);
+    expect(JSON.parse(byNumber.stdout).total).toBe(2);
+    expect(run("sessions", "--search", "404").status).toBe(0);
+  });
+
   it("sessions: a table with a header row, and a note when rows are cut", () => {
     const { status, stdout } = run("sessions", "--limit", "3");
     expect(status).toBe(0);
